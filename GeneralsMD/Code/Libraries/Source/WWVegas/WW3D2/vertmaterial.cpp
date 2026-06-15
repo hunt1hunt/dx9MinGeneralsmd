@@ -951,7 +951,23 @@ void VertexMaterialClass::Apply(void) const
 	int i;
 
 	DX8Wrapper::Set_DX8_Material(Material);
-
+// 若模型材质未设置高光且当前启用了光照，给一个全局最低高光默认值  
+// 这样即使旧模型也能有与太阳方向一致的高光  
+if (UseLighting) {  
+    if (Material->Specular.r < 0.01f &&   
+        Material->Specular.g < 0.01f &&   
+        Material->Specular.b < 0.01f) {  
+        // 使用一个较低的默认高光强度，避免过亮  
+        // 可通过 GlobalData 参数化这个默认值 
+        D3DMATERIAL8 matWithSpecular = *Material;  
+        matWithSpecular.Specular.r = 0.255f;  
+        matWithSpecular.Specular.g = 0.182f;  
+        matWithSpecular.Specular.b = 0.056f;  
+       // matWithSpecular.Power = (Material->Power < 1.0f) ? 20.0f : Material->Power;  
+	   matWithSpecular.Power = (Material->Power < 1.0f) ? 20.0f : Material->Power;
+        DX8Wrapper::Set_DX8_Material(&matWithSpecular);  
+    }  
+}
 	if (WW3D::Is_Coloring_Enabled())
 		DX8Wrapper::Set_DX8_Render_State(D3DRS_LIGHTING,FALSE);
 	else

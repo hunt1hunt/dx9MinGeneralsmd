@@ -95,6 +95,7 @@ class SnowManager : public SubsystemInterface
 	virtual void reset( void );
 	virtual void updateIniSettings (void);
 	void setVisible(Bool showWeather);	///<enable/disable rendering of weather - assuming it's available on map.
+	Bool isVisible(void) const { return m_isVisible; }	///<query current snow visibility state
 
   protected :
 

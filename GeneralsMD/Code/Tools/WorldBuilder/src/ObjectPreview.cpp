@@ -89,7 +89,7 @@ static UnsignedByte * saveSurface(IDirect3DSurface8 *surface)
 
 	HRESULT hr=m_pDev->CreateImageSurface(  desc.Width,desc.Height,desc.Format, &tempSurface);
 
-	hr=m_pDev->CopyRects(surface,NULL,0,tempSurface,NULL);
+	hr=m_pDev->UpdateSurface(surface,NULL,tempSurface,NULL);
  
 	D3DLOCKED_RECT lrect;
 

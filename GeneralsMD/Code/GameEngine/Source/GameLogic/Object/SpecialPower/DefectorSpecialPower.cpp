@@ -121,16 +121,16 @@ void DefectorSpecialPower::doSpecialPowerAtObject( Object *objectToMakeDefector,
 	// call the base class action cause we are *EXTENDING* functionality
   SpecialPowerModule::doSpecialPowerAtObject( objectToMakeDefector, commandOptions );
 
-	//AIUpdateInterface *hisAI = objectToMakeDefector->getAIUpdateInterface();
-	//if (hisAI)
-	//{			
+	AIUpdateInterface *hisAI = objectToMakeDefector->getAIUpdateInterface();
+	if (hisAI)
+	{			
 		// how do I get at SpecialPowerTemplate::getDetectionTime() from here?
 		const SpecialPowerTemplate *specPowTemp = getSpecialPowerTemplate();
 		UnsignedInt time = specPowTemp->getDetectionTime();
 
 
 		objectToMakeDefector->defect(self->getControllingPlayer()->getDefaultTeam(), time );// @todo lorenzen hook into the new AIUpdateI methods
-	//}
+	}
 
 }  
 

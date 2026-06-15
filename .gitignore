@@ -79,6 +79,7 @@ nohup.out
 [Uu]ntracked/
 /[Ss]tash/
 
+# EXCEPTION: claude skills directories (these use "build" as a name, not a build output)
 # OUTPUT DIRECTORIES (standard)
 [Bb]in/
 [Ll]ib/
@@ -107,6 +108,9 @@ nohup.out
 [Mm]ax4[Rr]elease/
 [Mm]ax4[Hh]ybrid/
 
+# EXCEPTION: claude skills directories (these use "build" as a name, not a build output)
+!.claude/skills/**
+
 # TEMPORARY EXCEPTIONS! (project specific)
 ![Ll]ib/
 **/[Ll]ib/**
@@ -133,3 +137,47 @@ nohup.out
 **/[Ee][Aa][Bb]rowser[Dd]ispatch/[Bb]rowser[Dd]ispatch_i.c
 
 **/wwshade/shd[678]*bump*.[vp]sh_code.h
+
+# THIRD-PARTY LIBRARIES (not included in dx9MinGeneralsmd)
+libraries/dxsdk/
+libraries/gamespy/
+libraries/stlport/
+libraries/000stlport/
+libraries/00stlport/
+libraries/00xstlport/
+libraries/11stlport/
+libraries/453stlport/
+libraries/11stlportOK.txt
+
+# GameSpy headers synced into GameEngine Include (third party)
+GeneralsMD/Code/GameEngine/Include/gamespy/
+
+# Backup / working copies / test artifacts
+*0.cpp
+*00.cpp
+*000.cpp
+*01.cpp
+*0.h
+*4.cpp
+*4.h
+*8.cpp
+*_tmp.*
+*_tmp_*
+
+# CLAUDE session data (user-local, not committed)
+.claude/session-env/
+.claude/sessions/
+.claude/backups/
+.claude/cache/
+.claude/file-history/
+.claude/paste-cache/
+.claude/plans/
+.claude/projects/
+.claude/telemetry/
+.claude/tasks/
+.claude/.last-cleanup
+.claude/.last-update-result.json
+.claude/history.jsonl
+
+# Codegraph local index
+.codegraph/

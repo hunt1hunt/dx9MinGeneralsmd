@@ -333,7 +333,31 @@ void GameClient::init( void )
 		TheDisplay->init();
  		TheDisplay->setName("TheDisplay");
 	}
-	
+
+	//
+	// D3D9 fullscreen device creation may internally dispatch window activation
+	// messages (WM_ACTIVATEAPP) that leave the game engine in an inactive state,
+	// causing mouse clicks on the main menu to be ignored. Alt+Tab works around
+	// this by generating a fresh WM_ACTIVATEAPP(TRUE). We ensure correct state
+	// here to avoid requiring Alt+Tab at startup.
+	//
+	// NOTE: The GameEngine was initialized with isActive=false in CreateGameEngine()
+	// because isWinMainActive defaults to false before the message loop runs.
+	//
+	{
+		extern HWND ApplicationHWnd;
+		if (GetForegroundWindow() == ApplicationHWnd) {
+			// Our window is in the foreground -- ensure engine knows it
+			if (TheGameEngine && !TheGameEngine->isActive()) {
+				TheGameEngine->setIsActive(TRUE);
+			}
+		}
+		// Ensure mouse limits reflect the actual display resolution
+		if (TheMouse && TheDisplay) {
+			TheMouse->setMouseLimits();
+		}
+	}
+
 	TheHeaderTemplateManager = MSGNEW("GameClientSubsystem") HeaderTemplateManager;
 	if(TheHeaderTemplateManager){
 		TheHeaderTemplateManager->init();

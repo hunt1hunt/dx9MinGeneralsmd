@@ -2564,7 +2564,35 @@ Bool Weapon::privateFireWeapon(
 			}
 
 			--m_maxShotCount;
-			--m_ammoInClip;	// so we can use the delay between shots on the mine clearing weapon
+						// 在 m_ammoInClip > 0 的代码块中，找到这两处减少弹药的位置：  
+			// 位置1: 约2339行 (用于清雷武器)  
+			// 位置2: 约2416行 (常规武器)  
+
+			// 修改为：  
+//#if defined(RTS_DEBUG) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)  
+		// Check if source player has unlimited ammo cheat enabled  
+//			Player* controllingPlayer = sourceObj->getControllingPlayer();
+//			Bool shouldConsumeAmmo = !controllingPlayer || !controllingPlayer->hasUnlimitedAmmo();
+
+//			if (shouldConsumeAmmo)
+//#endif  
+#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)  
+    // 首先判断物体类型是否为指定的导弹/投射物类型
+    if (sourceObj->isKindOf(KINDOF_PROJECTILE) ||sourceObj->isKindOf(KINDOF_SMALL_MISSILE) || sourceObj->isKindOf(KINDOF_BALLISTIC_MISSILE))
+    {
+        // Check if source player has unlimited ammo cheat enabled  
+        Player* controllingPlayer = sourceObj->getControllingPlayer();
+        Bool shouldConsumeAmmo = !controllingPlayer || !controllingPlayer->hasUnlimitedAmmo();
+
+        if (shouldConsumeAmmo)
+        
+		{
+				--m_ammoInClip;
+			}	
+    }
+#endif  
+		
+			//--m_ammoInClip;	// so we can use the delay between shots on the mine clearing weapon
 			if (m_ammoInClip <= 0 && m_template->getAutoReloadsClip())
 			{
 				reloadAmmo(sourceObj);
@@ -2639,7 +2667,35 @@ Bool Weapon::privateFireWeapon(
 		}
 		
 		m_lastFireFrame = now;
-		--m_ammoInClip;
+				// 在 m_ammoInClip > 0 的代码块中，找到这两处减少弹药的位置：  
+		// 位置1: 约2339行 (用于清雷武器)  
+		// 位置2: 约2416行 (常规武器)  
+
+		// 修改为：  
+//#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)  
+		// Check if source player has unlimited ammo cheat enabled  
+//		Player* controllingPlayer = sourceObj->getControllingPlayer();
+//		Bool shouldConsumeAmmo = !controllingPlayer || !controllingPlayer->hasUnlimitedAmmo();
+
+//		if (shouldConsumeAmmo)
+//#endif  
+#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)  
+    // 首先判断物体类型是否为指定的导弹/投射物类型
+    if (sourceObj->isKindOf(KINDOF_PROJECTILE) ||sourceObj->isKindOf(KINDOF_SMALL_MISSILE) || sourceObj->isKindOf(KINDOF_BALLISTIC_MISSILE))
+    {
+        // Check if source player has unlimited ammo cheat enabled  
+        Player* controllingPlayer = sourceObj->getControllingPlayer();
+        Bool shouldConsumeAmmo = !controllingPlayer || !controllingPlayer->hasUnlimitedAmmo();
+
+        if (shouldConsumeAmmo)
+        
+		{
+			--m_ammoInClip;
+		}
+    }
+#endif  
+		
+		//--m_ammoInClip;
 		--m_maxShotCount;
 		--m_numShotsForCurBarrel;
 		if (m_numShotsForCurBarrel <= 0)

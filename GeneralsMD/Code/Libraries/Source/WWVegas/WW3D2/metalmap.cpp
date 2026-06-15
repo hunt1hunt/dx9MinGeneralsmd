@@ -126,6 +126,9 @@ MetalMapManagerClass::MetalMapManagerClass(INIClass &ini) :
 			metal_params[i].AmbientColor.Update_Max(black);
 			float shininess = ini.Get_Float(section, "Shininess", 0.0f);
 			metal_params[i].Shininess = WWMath::Clamp(shininess, 0.0f, 127.0f);
+			float white_threshold = ini.Get_Float(section, "WhiteThreshold", 1.0f);  
+            // 默认 1.0 = 不启用白心效果（向后兼容）  
+            metal_params[i].WhiteThreshold = WWMath::Clamp(white_threshold, 0.0f, 1.0f);
 		}
 
 		initialize_metal_params(lp, metal_params);
@@ -311,11 +314,12 @@ void MetalMapManagerClass::Update_Textures(void)
 		int pitch;
 		unsigned char *map=(unsigned char *) metal_map_surface->Lock(&pitch);
 		int idx=0;
+/*
 		for (int y = 0; y < METALMAP_SIZE; y++) {			
 			for (int x = 0; x < METALMAP_SIZE; x++) {				
 				Vector3 result = ambient_color + (diffuse_color * n_dot_l[idx]) + (specular_color * specular[idx]);
 				result.Update_Min(white);	// Clamp to white
-				
+
 				unsigned char b,g,r,a;
 				b= (unsigned char)WWMath::Floor(result.Z * 255.99f);	// B
 				g= (unsigned char)WWMath::Floor(result.Y * 255.99f);	// G
@@ -334,6 +338,47 @@ void MetalMapManagerClass::Update_Textures(void)
 					map[4*x+1]=g;
 					map[4*x+2]=r;
 					map[4*x+3]=a;
+*/
+for (int y = 0; y < METALMAP_SIZE; y++) {  
+    for (int x = 0; x < METALMAP_SIZE; x++) {  
+        float s = specular[idx];  
+        float white_threshold = cur_params.WhiteThreshold;  
+  
+        Vector3 spec_contrib;  
+        if (s >= white_threshold && white_threshold < 1.0f) {  
+            // 白色核心区：从阳光色线性插值到纯白  
+            float blend = (s - white_threshold) / (1.0f - white_threshold);  
+            // blend=0 → 阳光色，blend=1 → 纯白  
+            spec_contrib.X = specular_color.X * s * (1.0f - blend) + blend;  
+            spec_contrib.Y = specular_color.Y * s * (1.0f - blend) + blend;  
+            spec_contrib.Z = specular_color.Z * s * (1.0f - blend) + blend;  
+        } else {  
+            // 渐变区：正常 Phong，阳光色 × 亮度  
+            spec_contrib = specular_color * s;  
+        }  
+  
+        Vector3 result = ambient_color + (diffuse_color * n_dot_l[idx]) + spec_contrib;  
+        result.Update_Min(white);  // 最终安全截断  
+  
+        unsigned char b, g, r, a;  
+        b = (unsigned char)WWMath::Floor(result.Z * 255.99f);  
+        g = (unsigned char)WWMath::Floor(result.Y * 255.99f);  
+        r = (unsigned char)WWMath::Floor(result.X * 255.99f);  
+        a = 0xFF; 
+		
+		if (Use16Bit) {					
+					unsigned short tmp;
+					tmp=(a&0xf0)<<8;
+					tmp|=(r&0xf0)<<4;
+					tmp|=(g&0xf0);
+					tmp|=(b&0xf0)>>4;
+					*(unsigned short*)&map[2*x]=tmp;
+				} else {
+					map[4*x]=b;
+					map[4*x+1]=g;
+					map[4*x+2]=r;
+					map[4*x+3]=a; 
+        
 				}
 				idx++;
 			}
@@ -420,6 +465,8 @@ void MetalMapManagerClass::initialize_metal_params(int map_count, MetalParams *m
 			assert(MetalParameters[i].SpecularColor.Y >= 0.0f && MetalParameters[i].SpecularColor.Y <= 1.0f);
 			assert(MetalParameters[i].SpecularColor.Z >= 0.0f && MetalParameters[i].SpecularColor.Z <= 1.0f);
 			assert(MetalParameters[i].Shininess > 0.0f);
+			// 新增：  
+assert(MetalParameters[i].WhiteThreshold >= 0.0f && MetalParameters[i].WhiteThreshold <= 1.0f);
 		}
 	}
 }

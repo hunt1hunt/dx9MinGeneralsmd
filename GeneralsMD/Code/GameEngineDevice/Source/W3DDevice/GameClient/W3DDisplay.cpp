@@ -504,8 +504,8 @@ Int W3DDisplay::getDisplayModeCount(void)
 	for (int res = 0; res < resolutions.Count ();  res ++)
 	{
 		// Is this the resolution we are looking for?
-		if (resolutions[res].BitDepth >= 24 && resolutions[res].Width >= MIN_DISPLAY_RESOLUTION_X 
-      && IS_FOUR_BY_THREE_ASPECT( (Real)resolutions[res].Width, (Real)resolutions[res].Height ) )	//only accept 4:3 aspect ratio modes.
+	//	if (resolutions[res].BitDepth >= 24 && resolutions[res].Width >= MIN_DISPLAY_RESOLUTION_X 
+   //   && IS_FOUR_BY_THREE_ASPECT( (Real)resolutions[res].Width, (Real)resolutions[res].Height ) )	//only accept 4:3 aspect ratio modes.
 		{	
 			numResolutions++;
 		}
@@ -523,8 +523,8 @@ void W3DDisplay::getDisplayModeDescription(Int modeIndex, Int *xres, Int *yres, 
 	for (int res = 0; res < resolutions.Count ();  res ++)
 	{
 		// Is this the resolution we are looking for?
-		if ( resolutions[res].BitDepth >= 24 && resolutions[res].Width >= MIN_DISPLAY_RESOLUTION_X 
-      && IS_FOUR_BY_THREE_ASPECT( (Real)resolutions[res].Width, (Real)resolutions[res].Height ) )	//only accept 4:3 aspect ratio modes.
+	//	if ( resolutions[res].BitDepth >= 24 && resolutions[res].Width >= MIN_DISPLAY_RESOLUTION_X 
+    //  && IS_FOUR_BY_THREE_ASPECT( (Real)resolutions[res].Width, (Real)resolutions[res].Height ) )	//only accept 4:3 aspect ratio modes.
 		{	
 			if (numResolutions == modeIndex)
 			{	//found the mode
@@ -547,32 +547,32 @@ void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate
 }
 
 /*Giant hack in order to keep the game from getting stuck when alt-tabbing*/
-void Reset_D3D_Device(bool active)
-{
-	if (TheDisplay && WW3D::Is_Initted() && !TheDisplay->getWindowed())
-	{
-		if (active)
-		{	
-			//switch back to desired mode when user alt-tabs back into game
-			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),TheDisplay->getWindowed(),true, true);
-			OSVERSIONINFO	osvi;
-			osvi.dwOSVersionInfoSize=sizeof(OSVERSIONINFO);
-			if (GetVersionEx(&osvi))
-			{	//check if we're running Win9x variant since they have buggy alt-tab that requires
+//void Reset_D3D_Device(bool active)
+//{
+//	if (TheDisplay && WW3D::Is_Initted() && !TheDisplay->getWindowed())
+//	{
+//		if (active)
+//		{	
+//			//switch back to desired mode when user alt-tabs back into game
+//			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),TheDisplay->getWindowed(),true, true);
+//			OSVERSIONINFO	osvi;
+//			osvi.dwOSVersionInfoSize=sizeof(OSVERSIONINFO);
+//			if (GetVersionEx(&osvi))
+//			{	//check if we're running Win9x variant since they have buggy alt-tab that requires
 				//reloading all textures.
-				if (osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
-				{	//only do this on Win9x boxes because it makes alt-tab very slow.
-						WW3D::_Invalidate_Textures();
-				}
-			}
-		}
-		else
-		{
+//				if (osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
+//				{	//only do this on Win9x boxes because it makes alt-tab very slow.
+//						WW3D::_Invalidate_Textures();
+//				}
+//			}
+//		}
+//		else
+//		{
 			//switch to windowed mode whenever the user alt-tabs out of game. Don't restore assets after reset since we'll do it when returning.
-			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),1,true, true, false);
-		}
-	}
-}
+//			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),1,true, true, false);
+//		}
+//	}
+//}
 
 /** Set resolution of display */
 //=============================================================================
@@ -1869,11 +1869,7 @@ AGAIN:
 		Int numRenderTargetVertices=Debug_Statistics::Get_DX8_Vertices();
 
 		// start render block
-		#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
-    if ( (TheGameLogic->getFrame() % 30 == 1) || ( ! ( !TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode) ) )
-		#else
-	    if ( (TheGameLogic->getFrame() % 30 == 1) || ( ! (!TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode && TheGameLogic->isInReplayGame())) )
-    #endif
+    if ( (TheGameLogic->getFrame() % 30 == 1) || ( ! (!TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode) ) )
 		{
 			//USE_PERF_TIMER(BigAssRenderLoop)
 			static Bool couldRender = true;
@@ -2162,10 +2158,15 @@ void W3DDisplay::setTimeOfDay( TimeOfDay tod )
 
 			m_myLight[i]->Set_Ambient( Vector3( 0.0f, 0.0f, 0.0f ) );
 			m_myLight[i]->Set_Diffuse( Vector3(ol->diffuse.red, ol->diffuse.green, ol->diffuse.blue ) );
-			m_myLight[i]->Set_Specular( Vector3(0,0,0) );
+			//m_myLight[i]->Set_Specular( Vector3(0,0,0) );
+// (gth) C&C3 specular is based on time of day, so set it here.  MW 8-06-03	
+			m_myLight[i]->Set_Specular( Vector3(ol->specular.red, ol->specular.green, ol->specular.blue) );
+			
 			Matrix3D mtx;
 			mtx.Set(Vector3(1,0,0), Vector3(0,1,0), Vector3(ol->lightPos.x, ol->lightPos.y, ol->lightPos.z), Vector3(0,0,0));
 			m_myLight[i]->Set_Transform(mtx);
+			// 存储 shininess 供后续渲染使用（可写入 LightClass 扩展字段，或存为 W3DDisplay 成员）  
+            m_sunShininess[i] = ol->shininess;
 		}
 	}
 	if(TheTerrainRenderObject) {

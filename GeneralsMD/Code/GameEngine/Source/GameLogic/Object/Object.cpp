@@ -6241,6 +6241,22 @@ void Object::defect( Team* newTeam, UnsignedInt detectionTime )
 		}
 	}
 
+// 如果策反的是建筑物，触发建筑物被占领的EVA事件  
+//if( isKindOf( KINDOF_STRUCTURE ) && myTeam->getControllingPlayer()->isLocallyControlled() )  
+//{  
+//    TheEva->setShouldPlay( EVA_BuildingStolen );  
+//}  
+  
+// 如果策反的是建筑物，记录建筑物占领统计  
+//if( isKindOf( KINDOF_STRUCTURE ) )  
+//{  
+//    Player* newPlayer = newTeam->getControllingPlayer();  
+//    if( newPlayer )  
+//    {  
+//        newPlayer->getAcademyStats()->recordBuildingCapture();  
+ //   }  
+//}
+
 }
 
 //=============================================================================

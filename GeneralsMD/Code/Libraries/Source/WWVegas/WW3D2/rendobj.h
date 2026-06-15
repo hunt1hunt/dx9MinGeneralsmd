@@ -48,10 +48,10 @@
 
 #include "always.h"
 #include "refcount.h"
-#include "sphere.h"
+#include "WWMath/sphere.h"
 #include "coltype.h"
-#include "aabox.h"
-#include "persist.h"
+#include "WWMath/aabox.h"
+#include "WWSaveLoad/persist.h"
 #include "multilist.h"
 #include "robjlist.h"
 #include <float.h>

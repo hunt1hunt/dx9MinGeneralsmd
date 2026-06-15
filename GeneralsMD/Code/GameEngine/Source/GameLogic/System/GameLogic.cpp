@@ -1921,7 +1921,381 @@ void GameLogic::startNewGame( Bool loadingSaveGame )
 			}
 
 		}	// for, loading map objects
+//
+// ---- BEGIN: Auto-insert BloomBox objects ----  
+/*	{  
+		Bool bIsSnowMap  = (TheGlobalData->m_weather == WEATHER_SNOWY);  
+		Bool bIsNightMap = (TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT);  
+  
+		Bool bExcludeBloomBoxB = FALSE;  
+		{
+			AsciiString lowerMapName = TheGlobalData->m_mapName;
+			lowerMapName.toLower();
+			if( strstr(lowerMapName.str(), "tournament lake") != NULL ||
+			    strstr(lowerMapName.str(), "tournament desert") != NULL )
+			{
+				bExcludeBloomBoxB = TRUE;
+			}
+		}
+  
+		if( bIsSnowMap || bIsNightMap )  
+		{  
+			const ThingTemplate* pBloomBoxATemplate =  
+				TheThingFactory->findTemplate( AsciiString("BloomBoxA"), FALSE ); //
+			if( pBloomBoxATemplate != NULL )  
+			{  
+				Team* pNeutralTeam = ThePlayerList->getNeutralPlayer()->getDefaultTeam();  
+				Object* pBloomObjA = TheThingFactory->newObject( pBloomBoxATemplate, pNeutralTeam );  
+				if( pBloomObjA )  
+				{  
+					Region3D bloomExtentA;  
+					TheTerrainLogic->getExtent( &bloomExtentA );  
+					Coord3D bloomPosA;  
+					bloomPosA.x = (bloomExtentA.lo.x + bloomExtentA.hi.x) * 0.5f;  
+					bloomPosA.y = (bloomExtentA.lo.y + bloomExtentA.hi.y) * 0.5f;  
+					bloomPosA.z = TheTerrainLogic->getGroundHeight( bloomPosA.x, bloomPosA.y ) - 50.0f;  
+				//	bloomPosA.z = TheTerrainLogic->getGroundHeight( bloomPosA.x, bloomPosA.y ) + 7.0f; 
+					pBloomObjA->setPosition( &bloomPosA );  
+					for( BehaviorModule** m = pBloomObjA->getBehaviorModules(); *m; ++m )  
+					{  
+						CreateModuleInterface* create = (*m)->getCreate();  
+						if( !create ) continue;  
+						create->onBuildComplete();  
+					}  
+					pNeutralTeam->setActive();  
+					TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjA );  
+					if( !bExcludeBloomBoxB )
+					{
+						// Insert BloomBoxC at water surface height
+						{
+							const ThingTemplate* pBloomBoxCTemplate =
+								TheThingFactory->findTemplate( AsciiString("BloomBoxC"), FALSE );
+							if( pBloomBoxCTemplate != NULL )
+							{
+								Object* pBloomObjC = TheThingFactory->newObject( pBloomBoxCTemplate, pNeutralTeam );
+								if( pBloomObjC )
+								{
+									Coord3D bloomPosC;
+									bloomPosC.x = (bloomExtentA.lo.x + bloomExtentA.hi.x) * 0.5f;
+									bloomPosC.y = (bloomExtentA.lo.y + bloomExtentA.hi.y) * 0.5f;
+									// Find lowest water surface height across all map water, fall back to ground height
+									{
+										Real lowestWaterZ = 0.0f;
+										Bool foundWater = FALSE;
+										for( PolygonTrigger *pTrig = PolygonTrigger::getFirstPolygonTrigger(); pTrig != NULL; pTrig = pTrig->getNext() )
+										{
+											if( !pTrig->isWaterArea() ) continue;
+											Int numPts = pTrig->getNumPoints();
+											for( Int i = 0; i < numPts; i++ )
+											{
+												Real z = pTrig->getPoint( i )->z;
+												if( !foundWater || z < lowestWaterZ )
+												{
+													lowestWaterZ = z;
+													foundWater = TRUE;
+												}
+											}
+										}
+										Real gridZ;
+										if( TheTerrainVisual->getWaterGridHeight( bloomPosC.x, bloomPosC.y, &gridZ ) )
+										{
+											if( !foundWater || gridZ < lowestWaterZ )
+												lowestWaterZ = gridZ;
+											foundWater = TRUE;
+										}
+										bloomPosC.z = foundWater ? lowestWaterZ : TheTerrainLogic->getGroundHeight( bloomPosC.x, bloomPosC.y );
+									}
+									pBloomObjC->setPosition( &bloomPosC );
+									for( BehaviorModule** m = pBloomObjC->getBehaviorModules(); *m; ++m )
+									{
+										CreateModuleInterface* create = (*m)->getCreate();
+										if( !create ) continue;
+										create->onBuildComplete();
+									}
+									pNeutralTeam->setActive();
+									TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjC );
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if( !bExcludeBloomBoxB )
+		{
+			const ThingTemplate* pBloomBoxBTemplate =
+				TheThingFactory->findTemplate( AsciiString("BloomBoxB"), FALSE ); //
+			if( pBloomBoxBTemplate != NULL )
+			{
+				Team* pNeutralTeam = ThePlayerList->getNeutralPlayer()->getDefaultTeam();
+				Object* pBloomObjB = TheThingFactory->newObject( pBloomBoxBTemplate, pNeutralTeam );
+				if( pBloomObjB )
+				{
+					Region3D bloomExtentB;
+					TheTerrainLogic->getExtent( &bloomExtentB );
+					Coord3D bloomPosB;
+					bloomPosB.x = (bloomExtentB.lo.x + bloomExtentB.hi.x) * 0.5f;
+					bloomPosB.y = (bloomExtentB.lo.y + bloomExtentB.hi.y) * 0.5f;
+					bloomPosB.z = TheTerrainLogic->getGroundHeight( bloomPosB.x, bloomPosB.y ) - 50.0f;
+					//	bloomPosB.z = TheTerrainLogic->getGroundHeight( bloomPosB.x, bloomPosB.y ) + 7.0f;
+					pBloomObjB->setPosition( &bloomPosB );
+					for( BehaviorModule** m = pBloomObjB->getBehaviorModules(); *m; ++m )
+					{
+						CreateModuleInterface* create = (*m)->getCreate();
+						if( !create ) continue;
+						create->onBuildComplete();
+					}
+					pNeutralTeam->setActive();
+					TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjB );
+					// Insert BloomBoxC at water surface height
+					{
+						const ThingTemplate* pBloomBoxCTemplate =
+							TheThingFactory->findTemplate( AsciiString("BloomBoxC"), FALSE );
+						if( pBloomBoxCTemplate != NULL )
+						{
+							Object* pBloomObjC = TheThingFactory->newObject( pBloomBoxCTemplate, pNeutralTeam );
+							if( pBloomObjC )
+							{
+								Coord3D bloomPosC;
+								bloomPosC.x = (bloomExtentB.lo.x + bloomExtentB.hi.x) * 0.5f;
+								bloomPosC.y = (bloomExtentB.lo.y + bloomExtentB.hi.y) * 0.5f;
+								// Find lowest water surface height across all map water, fall back to ground height
+								{
+									Real lowestWaterZ = 0.0f;
+									Bool foundWater = FALSE;
+									for( PolygonTrigger *pTrig = PolygonTrigger::getFirstPolygonTrigger(); pTrig != NULL; pTrig = pTrig->getNext() )
+									{
+										if( !pTrig->isWaterArea() ) continue;
+										Int numPts = pTrig->getNumPoints();
+										for( Int i = 0; i < numPts; i++ )
+										{
+											Real z = pTrig->getPoint( i )->z;
+											if( !foundWater || z < lowestWaterZ )
+											{
+												lowestWaterZ = z;
+												foundWater = TRUE;
+											}
+										}
+									}
+									Real gridZ;
+									if( TheTerrainVisual->getWaterGridHeight( bloomPosC.x, bloomPosC.y, &gridZ ) )
+									{
+										if( !foundWater || gridZ < lowestWaterZ )
+											lowestWaterZ = gridZ;
+										foundWater = TRUE;
+									}
+									bloomPosC.z = foundWater ? lowestWaterZ : TheTerrainLogic->getGroundHeight( bloomPosC.x, bloomPosC.y );
+								}
+								pBloomObjC->setPosition( &bloomPosC );
+								for( BehaviorModule** m = pBloomObjC->getBehaviorModules(); *m; ++m )
+								{
+									CreateModuleInterface* create = (*m)->getCreate();
+									if( !create ) continue;
+									create->onBuildComplete();
+								}
+								pNeutralTeam->setActive();
+								TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjC );
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	*/// ---- END: Auto-insert BloomBox objects ----
+	//
+	// ---- BEGIN: Auto-insert BloomBox objects ----  
+{  
+	Bool bIsSnowMap  = (TheGlobalData->m_weather == WEATHER_SNOWY);  
+	Bool bIsNightMap = (TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT);  
 
+	Bool bExcludeBloomBoxB = FALSE;  
+	{
+		AsciiString lowerMapName = TheGlobalData->m_mapName;
+		lowerMapName.toLower();
+		if( strstr(lowerMapName.str(), "tournament lake") != NULL ||
+			strstr(lowerMapName.str(), "tournament desert") != NULL )
+		{
+			bExcludeBloomBoxB = TRUE;
+		}
+	}
+
+	// 雪地/夜晚：生成 BloomBoxA，C 由 bExcludeBloomBoxB 控制
+	if( bIsSnowMap || bIsNightMap )  
+	{  
+		const ThingTemplate* pBloomBoxATemplate =  
+			TheThingFactory->findTemplate( AsciiString("BloomBoxA"), FALSE );
+		if( pBloomBoxATemplate != NULL )  
+		{  
+			Team* pNeutralTeam = ThePlayerList->getNeutralPlayer()->getDefaultTeam();  
+			Object* pBloomObjA = TheThingFactory->newObject( pBloomBoxATemplate, pNeutralTeam );  
+			if( pBloomObjA )  
+			{  
+				Region3D bloomExtentA;  
+				TheTerrainLogic->getExtent( &bloomExtentA );  
+				Coord3D bloomPosA;  
+				bloomPosA.x = (bloomExtentA.lo.x + bloomExtentA.hi.x) * 0.5f;  
+				bloomPosA.y = (bloomExtentA.lo.y + bloomExtentA.hi.y) * 0.5f;  
+				bloomPosA.z = TheTerrainLogic->getGroundHeight( bloomPosA.x, bloomPosA.y ) - 50.0f;  
+				//	bloomPosA.z = TheTerrainLogic->getGroundHeight( bloomPosA.x, bloomPosA.y ) + 7.0f; 
+				pBloomObjA->setPosition( &bloomPosA );  
+				for( BehaviorModule** m = pBloomObjA->getBehaviorModules(); *m; ++m )  
+				{  
+					CreateModuleInterface* create = (*m)->getCreate();  
+					if( !create ) continue;  
+					create->onBuildComplete();  
+				}  
+				pNeutralTeam->setActive();  
+				TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjA );  
+
+				// 仅用标记控制 BloomBoxC，不影响 BloomBoxA
+				if( !bExcludeBloomBoxB )
+				{
+					// Insert BloomBoxC at water surface height
+					{
+						const ThingTemplate* pBloomBoxCTemplate =
+							TheThingFactory->findTemplate( AsciiString("BloomBoxC"), FALSE );
+						if( pBloomBoxCTemplate != NULL )
+						{
+							Object* pBloomObjC = TheThingFactory->newObject( pBloomBoxCTemplate, pNeutralTeam );
+							if( pBloomObjC )
+							{
+								Coord3D bloomPosC;
+								bloomPosC.x = (bloomExtentA.lo.x + bloomExtentA.hi.x) * 0.5f;
+								bloomPosC.y = (bloomExtentA.lo.y + bloomExtentA.hi.y) * 0.5f;
+								// Find lowest water surface height across all map water, fall back to ground height
+								{
+									Real lowestWaterZ = 0.0f;
+									Bool foundWater = FALSE;
+									for( PolygonTrigger *pTrig = PolygonTrigger::getFirstPolygonTrigger(); pTrig != NULL; pTrig = pTrig->getNext() )
+									{
+										if( !pTrig->isWaterArea() ) continue;
+										Int numPts = pTrig->getNumPoints();
+										for( Int i = 0; i < numPts; i++ )
+										{
+											Real z = pTrig->getPoint( i )->z;
+											if( !foundWater || z < lowestWaterZ )
+											{
+												lowestWaterZ = z;
+												foundWater = TRUE;
+											}
+										}
+									}
+									Real gridZ;
+									if( TheTerrainVisual->getWaterGridHeight( bloomPosC.x, bloomPosC.y, &gridZ ) )
+									{
+										if( !foundWater || gridZ < lowestWaterZ )
+											lowestWaterZ = gridZ;
+										foundWater = TRUE;
+									}
+									bloomPosC.z = foundWater ? lowestWaterZ : TheTerrainLogic->getGroundHeight( bloomPosC.x, bloomPosC.y );
+								}
+								pBloomObjC->setPosition( &bloomPosC );
+								for( BehaviorModule** m = pBloomObjC->getBehaviorModules(); *m; ++m )
+								{
+									CreateModuleInterface* create = (*m)->getCreate();
+									if( !create ) continue;
+									create->onBuildComplete();
+								}
+								pNeutralTeam->setActive();
+								TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjC );
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// ========== 核心改动：BloomBoxB 条件改为【非雪地 且 非夜晚】 ==========
+	if( !bIsSnowMap && !bIsNightMap )
+	{
+		const ThingTemplate* pBloomBoxBTemplate =
+			TheThingFactory->findTemplate( AsciiString("BloomBoxB"), FALSE );
+		if( pBloomBoxBTemplate != NULL )
+		{
+			Team* pNeutralTeam = ThePlayerList->getNeutralPlayer()->getDefaultTeam();
+			Object* pBloomObjB = TheThingFactory->newObject( pBloomBoxBTemplate, pNeutralTeam );
+			if( pBloomObjB )
+			{
+				Region3D bloomExtentB;
+				TheTerrainLogic->getExtent( &bloomExtentB );
+				Coord3D bloomPosB;
+				bloomPosB.x = (bloomExtentB.lo.x + bloomExtentB.hi.x) * 0.5f;
+				bloomPosB.y = (bloomExtentB.lo.y + bloomExtentB.hi.y) * 0.5f;
+				bloomPosB.z = TheTerrainLogic->getGroundHeight( bloomPosB.x, bloomPosB.y ) - 50.0f;
+				//	bloomPosB.z = TheTerrainLogic->getGroundHeight( bloomPosB.x, bloomPosB.y ) + 7.0f;
+				pBloomObjB->setPosition( &bloomPosB );
+				for( BehaviorModule** m = pBloomObjB->getBehaviorModules(); *m; ++m )
+				{
+					CreateModuleInterface* create = (*m)->getCreate();
+					if( !create ) continue;
+					create->onBuildComplete();
+				}
+				pNeutralTeam->setActive();
+				TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjB );
+
+				// 仅用标记控制 BloomBoxC，不影响 BloomBoxB 本体
+				if( !bExcludeBloomBoxB )
+				{
+					// Insert BloomBoxC at water surface height
+					{
+						const ThingTemplate* pBloomBoxCTemplate =
+							TheThingFactory->findTemplate( AsciiString("BloomBoxC"), FALSE );
+						if( pBloomBoxCTemplate != NULL )
+						{
+							Object* pBloomObjC = TheThingFactory->newObject( pBloomBoxCTemplate, pNeutralTeam );
+							if( pBloomObjC )
+							{
+								Coord3D bloomPosC;
+								bloomPosC.x = (bloomExtentB.lo.x + bloomExtentB.hi.x) * 0.5f;
+								bloomPosC.y = (bloomExtentB.lo.y + bloomExtentB.hi.y) * 0.5f;
+								// Find lowest water surface height across all map water, fall back to ground height
+								{
+									Real lowestWaterZ = 0.0f;
+									Bool foundWater = FALSE;
+									for( PolygonTrigger *pTrig = PolygonTrigger::getFirstPolygonTrigger(); pTrig != NULL; pTrig = pTrig->getNext() )
+									{
+										if( !pTrig->isWaterArea() ) continue;
+										Int numPts = pTrig->getNumPoints();
+										for( Int i = 0; i < numPts; i++ )
+										{
+											Real z = pTrig->getPoint( i )->z;
+											if( !foundWater || z < lowestWaterZ )
+											{
+												lowestWaterZ = z;
+												foundWater = TRUE;
+											}
+										}
+									}
+									Real gridZ;
+									if( TheTerrainVisual->getWaterGridHeight( bloomPosC.x, bloomPosC.y, &gridZ ) )
+									{
+										if( !foundWater || gridZ < lowestWaterZ )
+											lowestWaterZ = gridZ;
+										foundWater = TRUE;
+									}
+									bloomPosC.z = foundWater ? lowestWaterZ : TheTerrainLogic->getGroundHeight( bloomPosC.x, bloomPosC.y );
+								}
+								pBloomObjC->setPosition( &bloomPosC );
+								for( BehaviorModule** m = pBloomObjC->getBehaviorModules(); *m; ++m )
+								{
+									CreateModuleInterface* create = (*m)->getCreate();
+									if( !create ) continue;
+									create->onBuildComplete();
+								}
+								pNeutralTeam->setActive();
+								TheAI->pathfinder()->addObjectToPathfindMap( pBloomObjC );
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+// ---- END: Auto-insert BloomBox objects ----
+//
 	}  // end if, not loading save game
 
 	#ifdef DUMP_PERF_STATS

@@ -46,7 +46,7 @@
 
 #include "always.h"
 #include "ww3dformat.h"
-#include <d3d8.h>
+#include "d3d8compat.h"
 
 class DX8Caps
 {

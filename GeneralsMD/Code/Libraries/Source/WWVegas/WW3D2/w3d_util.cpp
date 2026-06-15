@@ -111,7 +111,10 @@ void W3dUtilityClass::Convert_Shader(const W3dShaderStruct & shader,ShaderClass 
 	set->Set_Dst_Blend_Func		((ShaderClass::DstBlendFuncType)W3d_Shader_Get_Dest_Blend_Func(&shader));
 	set->Set_Fog_Func				(ShaderClass::FOG_DISABLE);
 	set->Set_Primary_Gradient	((ShaderClass::PriGradientType)W3d_Shader_Get_Pri_Gradient(&shader));
+	
 	set->Set_Secondary_Gradient((ShaderClass::SecGradientType)W3d_Shader_Get_Sec_Gradient(&shader));
+// 修改后：强制所有模型开启高光（忽略文件中的设置）  
+//set->Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_ENABLE);
 	set->Set_Src_Blend_Func		((ShaderClass::SrcBlendFuncType)W3d_Shader_Get_Src_Blend_Func(&shader));
 	set->Set_Texturing			((ShaderClass::TexturingType)W3d_Shader_Get_Texturing(&shader));
 	set->Set_Alpha_Test			((ShaderClass::AlphaTestType)W3d_Shader_Get_Alpha_Test(&shader));

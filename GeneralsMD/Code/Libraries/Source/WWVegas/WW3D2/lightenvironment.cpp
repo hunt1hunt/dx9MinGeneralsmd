@@ -181,6 +181,8 @@ void LightEnvironmentClass::InputLightStruct::Init_From_Directional_Light
 	DiffuseRejected = false;
 	light.Get_Ambient(&Ambient);
 	light.Get_Diffuse(&Diffuse);
+	light.Get_Specular(&Specular);  
+// Shininess 需通过扩展 LightClass 传入，或直接从全局数据读取
 }
 
 
@@ -203,6 +205,10 @@ void LightEnvironmentClass::OutputLightStruct::Init
 )
 {
 	Diffuse = input.Diffuse;
+//
+	Specular = input.Specular;  
+    Shininess = input.Shininess;
+// 将光源方向转换到相对于摄像机的空间中（即视图空间），以便后续渲染使用
 	Matrix3D::Inverse_Rotate_Vector(camera_tm,input.Direction,&Direction);
 	
 	// Guard against a direction that is invalid

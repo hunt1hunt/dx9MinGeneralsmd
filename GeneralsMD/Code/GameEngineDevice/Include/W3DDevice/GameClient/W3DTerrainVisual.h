@@ -182,7 +182,14 @@ protected:
 
 	BaseHeightMapRenderObjClass *m_terrainRenderObject;  ///< W3D render object for terrain
 	WaterRenderObjClass	*m_waterRenderObject;	///< W3D render object for water plane
-
+/*	// >>>>>> 新增在地图中添加W3D模型 <<<<<<  
+    RenderObjClass              *m_flatModelRenderObj;   ///< flat model placed below terrain  
+    // >>>>>> 新增结束 <<<<<<  
+// 新增这一行，复制粘贴！
+    RenderObjClass              * m_flatModelRenderObjB;
+	RenderObjClass              * m_flatModelRenderObjC;
+	RenderObjClass              * m_flatModelRenderObjD;
+	RenderObjClass              * m_flatModelRenderObjE;*/
   WorldHeightMap *m_logicHeightMap;  ///< height map used for render obj building
   
 #ifdef DO_SEISMIC_SIMULATIONS

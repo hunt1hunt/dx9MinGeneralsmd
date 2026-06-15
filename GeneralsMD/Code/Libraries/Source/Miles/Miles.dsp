@@ -42,7 +42,7 @@ RSC=rc.exe
 # PROP Intermediate_Dir "Release"
 # PROP Target_Dir ""
 # ADD BASE CPP /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "MILES_EXPORTS" /Yu"stdafx.h" /FD /c
-# ADD CPP /nologo /MT /W3 /GX /O2 /D "NDEBUG" /D WINVER=0x400 /D "WIN32" /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "MILES_EXPORTS" /FD /c
+# ADD CPP /nologo /MT /W3 /GX /O2 /D WINVER=0x400 /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "MILES_EXPORTS" /D "_STLP_USE_STATIC_LIB" /D "_STLP_NO_DEFAULT_NAMESPACE" /D "_STLP_VC6" /D "_STLP_DISABLE_VC6_STL" /D "NDEBUG" /D "WIN32" /FD /c
 # SUBTRACT CPP /YX /Yc /Yu
 # ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /win32
 # ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32

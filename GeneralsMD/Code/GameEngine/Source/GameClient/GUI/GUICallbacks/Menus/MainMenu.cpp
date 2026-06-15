@@ -100,14 +100,14 @@ enum
 
 static Bool raiseMessageBoxes = TRUE;
 static Bool campaignSelected = FALSE;
-#if defined _DEBUG || defined _INTERNAL
+#if defined _DEBUG || defined _INTERNAL || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 static NameKeyType campaignID = NAMEKEY_INVALID;
 static GameWindow *buttonCampaign = NULL;
 #ifdef TEST_COMPRESSION
 static GameWindow *buttonCompressTest = NULL;
 void DoCompressTest( void );
 #endif // TEST_COMPRESSION
-#endif
+#endif //defined _DEBUG || defined _INTERNAL || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 
 
 // window ids -------------------------------------------------------------------------------------
@@ -449,7 +449,7 @@ void MainMenuInit( WindowLayout *layout, void *userData )
 	worldBuilderID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonWorldBuilder") );
 //	NameKeyType versionID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:LabelVersion") );
 	getUpdateID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonGetUpdate") );
-//	buttonTRAININGID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonTRAINING") );
+	buttonTRAININGID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonTRAINING") );
 	buttonChallengeID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonChallenge") );
 	buttonUSAID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonUSA") );
 	buttonGLAID = TheNameKeyGenerator->nameToKey( AsciiString("MainMenu.wnd:ButtonGLA") );
@@ -501,7 +501,7 @@ void MainMenuInit( WindowLayout *layout, void *userData )
 //	GameWindow *labelVersion = TheWindowManager->winGetWindowFromId( parentMainMenu, versionID );
 	
 	getUpdate = TheWindowManager->winGetWindowFromId( parentMainMenu, getUpdateID );
-//	buttonTRAINING = TheWindowManager->winGetWindowFromId( parentMainMenu, buttonTRAININGID );
+	buttonTRAINING = TheWindowManager->winGetWindowFromId( parentMainMenu, buttonTRAININGID );
 	buttonChallenge = TheWindowManager->winGetWindowFromId( parentMainMenu, buttonChallengeID );
 	buttonUSA = TheWindowManager->winGetWindowFromId( parentMainMenu, buttonUSAID );
 	buttonGLA = TheWindowManager->winGetWindowFromId( parentMainMenu, buttonGLAID );
@@ -525,7 +525,7 @@ void MainMenuInit( WindowLayout *layout, void *userData )
 	
 	showSelectiveButtons(SHOW_NONE);
 	// Set up the version number
-#if defined _DEBUG || defined _INTERNAL
+#if defined _DEBUG || defined _INTERNAL || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	WinInstanceData instData;
 #ifdef TEST_COMPRESSION
 	instData.init();
@@ -541,9 +541,10 @@ void MainMenuInit( WindowLayout *layout, void *userData )
 
 	instData.init();
 	BitSet( instData.m_style, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK );
-	instData.m_textLabelString = "Debug: Load Map";
-	
+	//instData.m_textLabelString = "Debug: Load Map";
+	instData.m_textLabelString = "QingWa: Load Map";
 	instData.setTooltipText(UnicodeString(L"Only Used in Debug and Internal!"));
+	//instData.setTooltipText(UnicodeString(L"\xe9\x9d\x92\xe8\x9b\x99!"));
 	buttonCampaign = TheWindowManager->gogoGadgetPushButton( parentMainMenu, 
 																									 WIN_STATUS_ENABLED, 
 																									 25, 54, 
@@ -563,7 +564,7 @@ void MainMenuInit( WindowLayout *layout, void *userData )
 //#else
 	
 //	GadgetStaticTextSetText( labelVersion, TheVersion->getUnicodeVersion() );
-#endif
+#endif //defined _DEBUG || defined _INTERNAL || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 
 	//TheShell->registerWithAnimateManager(buttonCampaign, WIN_ANIMATION_SLIDE_LEFT, TRUE, 800);
 	//TheShell->registerWithAnimateManager(buttonSkirmish, WIN_ANIMATION_SLIDE_LEFT, TRUE, 600);
@@ -1086,7 +1087,7 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 
 				TheTransitionHandler->setGroup("MainMenuFactionTraining");
 			}
-/*			else if(controlID == buttonTRAININGID)
+		else if(controlID == buttonTRAININGID)
 			{
 				if(dontAllowTransitions && !campaignSelected)
 				{
@@ -1102,7 +1103,7 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 
 				//showSelectiveButtons(SHOW_NONE);
 			}
-*/			else if(controlID == skirmishID)
+		else if(controlID == skirmishID)
 			{
 				if(dontAllowTransitions && !campaignSelected)
 				{
@@ -1206,7 +1207,7 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 				// we'll just use the training logo anim for now
 				TheTransitionHandler->reverse("MainMenuFactionTraining");
 			}
-/*			else if(controlID == buttonTRAININGID)
+		else if(controlID == buttonTRAININGID)
 			{
 				if(dontAllowTransitions && !campaignSelected && showLogo)
 				{
@@ -1220,7 +1221,7 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 				
 				//showSelectiveButtons(SHOW_NONE);
 			}
-*/			else if(controlID == skirmishID)
+		else if(controlID == skirmishID)
 			{
 				if(dontAllowTransitions && !campaignSelected && showLogo)
 				{
@@ -1280,7 +1281,7 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 			
 			if(buttonPushed)
 				break;
-#if defined _DEBUG || defined _INTERNAL
+#if defined _DEBUG || defined _INTERNAL || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 			if( control == buttonCampaign )
 			{
 				buttonPushed = TRUE;
@@ -1294,7 +1295,7 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 			}
 #endif // TEST_COMPRESSION
 			else 
-#endif
+#endif //defined _DEBUG || defined _INTERNAL || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 
 			// don't allow mouse click slop that occurs during transitions to unset this flag
 			if (TheTransitionHandler->isFinished()
@@ -1534,26 +1535,26 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 			}
 			
 
-// This button has been removed for the mission disk -June 2003
-/*			else if(controlID == buttonTRAININGID)
-			{
-				if(campaignSelected || dontAllowTransitions)
-					break;
-				TheCampaignManager->setCampaign( "TRAINING" );
-				TheTransitionHandler->setGroup("MainMenuFactionTraining");
-				TheTransitionHandler->remove("MainMenuFactionTraining", TRUE);
-				GameWindow *win = TheWindowManager->winGetWindowFromId(parentMainMenu, TheNameKeyGenerator->nameToKey("MainMenu.wnd:WinFactionTraining"));
-				if(win)
-					win->winHide(TRUE);
-				TheTransitionHandler->reverse("MainMenuSinglePlayerMenuBackTraining");
-				TheTransitionHandler->setGroup("MainMenuDifficultyMenuTraining");
-				campaignSelected = TRUE;
-				showLogo = FALSE;
-				showSide = SHOW_TRAINING;
+		// Training button (restored)
+		else if(controlID == buttonTRAININGID)
+		{
+			if(campaignSelected || dontAllowTransitions)
+				break;
+			TheCampaignManager->setCampaign( "TRAINING" );
+			TheTransitionHandler->setGroup("MainMenuFactionTraining");
+			TheTransitionHandler->remove("MainMenuFactionTraining", TRUE);
+			GameWindow *win = TheWindowManager->winGetWindowFromId(parentMainMenu, TheNameKeyGenerator->nameToKey("MainMenu.wnd:WinFactionTraining"));
+			if(win)
+				win->winHide(TRUE);
+			TheTransitionHandler->reverse("MainMenuSinglePlayerMenuBackTraining");
+			TheTransitionHandler->setGroup("MainMenuDifficultyMenuTraining");
+			campaignSelected = TRUE;
+			showLogo = FALSE;
+			showSide = SHOW_TRAINING;
 
-//				setupGameStart(TheCampaignManager->getCurrentMap());
-			}
-*/			else if(controlID == buttonUSAID)
+			//setupGameStart(TheCampaignManager->getCurrentMap());
+		}
+		else if(controlID == buttonUSAID)
 			{
 				if(campaignSelected || dontAllowTransitions)
 					break;

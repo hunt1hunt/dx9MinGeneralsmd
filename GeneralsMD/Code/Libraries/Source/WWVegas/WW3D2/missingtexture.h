@@ -24,9 +24,7 @@
 #define DX8_MISSING_TEXTURE_H
 
 #include "always.h"
-
-struct IDirect3DTexture8;
-struct IDirect3DSurface8;
+#include "d3d8compat.h"
 
 class MissingTexture
 {

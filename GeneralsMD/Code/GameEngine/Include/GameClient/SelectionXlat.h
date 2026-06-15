@@ -79,6 +79,11 @@ public:
   Bool isHandOfGodSelectionMode( void) { return m_HandOfGodSelectionMode; };
 #endif
 
+#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+	Bool m_qwwudiSelectionMode;
+	Bool isQwWudiSelectionMode( void) { return m_qwwudiSelectionMode; };
+#endif
+
 };	
 
 Bool CanSelectDrawable( const Drawable *draw, Bool dragSelecting );

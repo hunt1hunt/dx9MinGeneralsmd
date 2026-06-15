@@ -40,8 +40,13 @@
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "Common/Snapshot.h"
+#include "d3d8compat.h"
 
 #define INVALID_WATER_HEIGHT 0.0f	///water height guaranteed to be below all terrain.
+//
+#define MAX_WATER_HEIGHT_LEVELS   8    ///< maximum unique water height levels for Type 2 water
+#define MAX_WATER_POLYGON_POINTS  128  ///< maximum vertices per water polygon trigger
+//
 
 #define NUM_BUMP_FRAMES 32	///number of animation frames in bump map
 //Offsets in constant register file to Vertex shader constants
@@ -163,15 +168,22 @@ protected:
 	LPDIRECT3DVERTEXBUFFER8 m_vertexBufferD3D;		///<D3D vertex buffer
 	LPDIRECT3DINDEXBUFFER8	m_indexBufferD3D;	///<D3D index buffer
 	Int						m_vertexBufferD3DOffset;	///<location to start writing vertices
-	DWORD					m_dwWavePixelShader;	///<handle to D3D pixel shader
-	DWORD					m_dwWaveVertexShader;	///<handle to D3D vertex shader
+	IDirect3DPixelShader9*	m_dwWavePixelShader;	///<handle to D3D pixel shader (original with texbem)
+	IDirect3DPixelShader9*	m_waveShaderNoBump;		///<replacement pixel shader without texbem (for D3D9On12 compat)
+	IDirect3DVertexShader9*	m_dwWaveVertexShader;	///<handle to D3D vertex shader
 	Int	m_numVertices;				///<number of vertices in D3D vertex buffer
 	Int m_numIndices;				///<number of indices in D3D index buffer
 	LPDIRECT3DTEXTURE8 m_pBumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
 	LPDIRECT3DTEXTURE8 m_pBumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
 	Int					m_iBumpFrame;	///<current animation frame
 	Real				m_fBumpScale;	///<scales bump map uv perturbation
-	TextureClass * m_pReflectionTexture;	///<render target for reflection
+	//
+   // TextureClass * m_pReflectionTexture;	///<render target for reflection (legacy, not used for Type 2)
+	TextureClass * m_pReflectionTextures[MAX_WATER_HEIGHT_LEVELS]; ///< per-height reflection render targets
+	Real           m_reflectionHeights[MAX_WATER_HEIGHT_LEVELS];   ///< water heights for each reflection texture
+	Int            m_numReflectionHeights;                          ///< number of unique water height levels
+	//RenderObjClass	*m_skyBox;		///<box around level
+	//
 	RenderObjClass	*m_skyBox;		///<box around level
 	WaterTracksRenderSystem *m_waterTrackSystem;	///<object responsible for rendering water wakes
 
@@ -211,9 +223,9 @@ protected:
 	TextureClass *m_riverTexture;
 	TextureClass *m_whiteTexture;		///< a texture containing only white used for NULL pixel shader stages.
 	TextureClass *m_waterNoiseTexture;
-	DWORD	m_waterPixelShader;		///<D3D handle to pixel shader.
-	DWORD	m_riverWaterPixelShader;		///<D3D handle to pixel shader.
-	DWORD	m_trapezoidWaterPixelShader;	///<handle to D3D vertex shader
+	IDirect3DPixelShader9*	m_waterPixelShader;		///<D3D handle to pixel shader.
+	IDirect3DPixelShader9*	m_riverWaterPixelShader;		///<D3D handle to pixel shader.
+	IDirect3DPixelShader9*	m_trapezoidWaterPixelShader;	///<handle to D3D vertex shader
 	TextureClass *m_waterSparklesTexture;
 	Real m_riverXOffset;
 	Real m_riverYOffset;
@@ -248,7 +260,8 @@ protected:
 	void renderSkyBody(Matrix3D *mat);	///<draw the sky body (sun, moon, etc.)
 	void renderWaterMesh(void);			///<draw the water surface mesh (deformed 3d mesh).
 	HRESULT initBumpMap(LPDIRECT3DTEXTURE8 *pTex, TextureClass *pBumpSource);	///<copies data into bump-map format.
-	void renderMirror(CameraClass *cam);	///< Draw reflected scene into texture
+	void renderMirror(CameraClass *cam, Real waterHeight, TextureClass *reflTarget); ///< Draw reflected scene into texture at given height
+	TextureClass *findReflectionTextureForHeight(Real height) const; ///< Find reflection texture for given water height
 	void drawSea(RenderInfoClass & rinfo);	///< Draw the surface of the water
 	///bounding box of frustum clipped polygon plane
 	Bool getClippedWaterPlane(CameraClass *cam, AABoxClass *box);

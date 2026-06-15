@@ -57,11 +57,13 @@
 class ChunkLoadClass;
 class ChunkSaveClass;
 
+#ifndef D3D8COMPAT_H
 #define DYN_MAT8
 #ifdef DYN_MAT8
 class DynD3DMATERIAL8;
 #else
 struct _D3DMATERIAL8;
+#endif
 #endif
 
 /**

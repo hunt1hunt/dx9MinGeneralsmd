@@ -43,7 +43,8 @@
 #include "Lib/BaseType.h"
 #include "W3DDevice/GameClient/W3DGranny.h"
 #include "W3DDevice/GameClient/Heightmap.h"
-#include "D3dx8math.h"
+// D3DX9 math types provided via d3d8compat.h
+//#include "D3dx8math.h"
 #include "common/GlobalData.h"
 #include "W3DDevice/GameClient/W3DVolumetricShadow.h"
 #include "W3DDevice/GameClient/W3DProjectedShadow.h"
@@ -94,12 +95,35 @@ void DoShadows(RenderInfoClass & rinfo, Bool stencilPass)
 
 }
 	
+/*W3DShadowManager::W3DShadowManager( void )
+{
+	DEBUG_ASSERTCRASH(TheW3DVolumetricShadowManager == NULL && TheW3DProjectedShadowManager == NULL,
+		("Creating new shadow managers without deleting old ones"));
+//��Ӱ��ɫ��ֵ�޸ģ���ʽ ARGB��A=0x7f(127), R=0xa0(160), G=0xa0(160), B=0xa0(160)
+	m_shadowColor = 0x7fa0a0a0;//RGB ������0xa0���� multiply blend �İ���ϵ����dest = dest �� (0xa0/0xFF) �� dest �� 0.627��ֵԽС��ӰԽ�Alpha ������0x7f����ԭʼ������δ��ʹ�ã�multiply blend ���� alpha����
+	m_isShadowScene = FALSE;
+	m_stencilShadowMask = 0;	//all bits can be used for storing shadows.
+
+	Vector3 lightRay(-TheGlobalData->m_terrainLightPos[0].x,
+		-TheGlobalData->m_terrainLightPos[0].y, -TheGlobalData->m_terrainLightPos[0].z);
+	lightRay.Normalize();
+
+	LightPosWorld[0]=lightRay*SUN_DISTANCE_FROM_GROUND;
+
+	TheW3DVolumetricShadowManager = NEW W3DVolumetricShadowManager;
+	TheProjectedShadowManager = TheW3DProjectedShadowManager = NEW W3DProjectedShadowManager;
+}*/
+//
 W3DShadowManager::W3DShadowManager( void )
 {
 	DEBUG_ASSERTCRASH(TheW3DVolumetricShadowManager == NULL && TheW3DProjectedShadowManager == NULL,
 		("Creating new shadow managers without deleting old ones"));
 
-	m_shadowColor = 0x7fa0a0a0;
+	// �9�5 ֱ���������޸�����Ӱ��ɫ���滻ԭ����0x7fa0a0a0��
+	// �������Ӱ��0xFF808080����ǳ�ģ�0xFFc0c0c0
+	m_shadowColor = 0xFF808080; 
+	//m_shadowColor = 0x7fa0a0a0;
+
 	m_isShadowScene = FALSE;
 	m_stencilShadowMask = 0;	//all bits can be used for storing shadows.
 
@@ -112,6 +136,7 @@ W3DShadowManager::W3DShadowManager( void )
 	TheW3DVolumetricShadowManager = NEW W3DVolumetricShadowManager;
 	TheProjectedShadowManager = TheW3DProjectedShadowManager = NEW W3DProjectedShadowManager;
 }
+//
 
 W3DShadowManager::~W3DShadowManager( void )
 {
@@ -120,7 +145,11 @@ W3DShadowManager::~W3DShadowManager( void )
 	delete TheW3DProjectedShadowManager;
 	TheProjectedShadowManager = TheW3DProjectedShadowManager = NULL;
 }
-
+//
+// ������Ӱ��ɫ��ǳ����ɫ��ʽ ARGB��RGB ���ư����̶ȣ�ԽСԽ���Alpha ��δʹ��  
+//TheW3DShadowManager->setShadowColor(0xFF808080);  // ����Ļ�ɫ��Ӱ  
+//TheW3DShadowManager->setShadowColor(0xFFc0c0c0);  // ��ǳ����Ӱ
+//
 /** Do one-time initilalization of shadow systems that need to be
 active for full duration of game*/
 Bool W3DShadowManager::init( void )

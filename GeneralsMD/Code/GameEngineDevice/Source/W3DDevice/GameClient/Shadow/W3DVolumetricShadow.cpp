@@ -49,7 +49,8 @@
 #include "Lib/BaseType.h"
 #include "W3DDevice/GameClient/W3DGranny.h"
 #include "W3DDevice/GameClient/Heightmap.h"
-#include "D3dx8math.h"
+// D3DX9 math types provided via d3d8compat.h
+//#include "D3dx8math.h"
 #include "common/GlobalData.h"
 #include "common/drawmodule.h"
 #include "W3DDevice/GameClient/W3DVolumetricShadow.h"
@@ -1332,7 +1333,7 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 		return;
 	if (vbSlot->m_VB->m_DX8VertexBuffer->Get_DX8_Vertex_Buffer() != lastActiveVertexBuffer)
 	{	lastActiveVertexBuffer=vbSlot->m_VB->m_DX8VertexBuffer->Get_DX8_Vertex_Buffer();
-		m_pDev->SetStreamSource(0,lastActiveVertexBuffer,
+		m_pDev->SetStreamSource(0,lastActiveVertexBuffer,0,
 			vbSlot->m_VB->m_DX8VertexBuffer->FVF_Info().Get_FVF_Size());	//12 bytes per vertex.
 	}
 
@@ -1344,12 +1345,12 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 
 	DEBUG_ASSERTCRASH(ibSlot->m_size >= numIndex,("Overflowing Shadow Index Buffer Slot"));
 
-	m_pDev->SetIndices(ibSlot->m_IB->m_DX8IndexBuffer->Get_DX8_Index_Buffer(),vbSlot->m_start);
+	m_pDev->SetIndices(ibSlot->m_IB->m_DX8IndexBuffer->Get_DX8_Index_Buffer());
 
 	if (DX8Wrapper::_Is_Triangle_Draw_Enabled())
 	{
 		Debug_Statistics::Record_DX8_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
-		m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,0,numVerts,ibSlot->m_start,numPolys);
+		m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,vbSlot->m_start,0,numVerts,ibSlot->m_start,numPolys);
 	}
 
 }
@@ -1388,13 +1389,13 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 
 	if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
 	{	//flush the buffer by drawing the contents and re-locking again
-		if (shadowVertexBufferD3D->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),(unsigned char**)&pvVertices,D3DLOCK_DISCARD) != D3D_OK)
+		if (shadowVertexBufferD3D->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),(void**)&pvVertices,D3DLOCK_DISCARD) != D3D_OK)
 			return;
 		nShadowVertsInBuf=0;
 		nShadowStartBatchVertex=0;
 	}
 	else
-	{	if (shadowVertexBufferD3D->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), (unsigned char**)&pvVertices,D3DLOCK_NOOVERWRITE) != D3D_OK)
+	{	if (shadowVertexBufferD3D->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), (void**)&pvVertices,D3DLOCK_NOOVERWRITE) != D3D_OK)
 			return;
 	}
 #ifdef SV_DEBUG
@@ -1418,13 +1419,13 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 
 	if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
 	{	//flush the buffer by drawing the contents and re-locking again
-		if (shadowIndexBufferD3D->Lock(0,numIndex*sizeof(short),(unsigned char**)&pvIndices,D3DLOCK_DISCARD) != D3D_OK)
+		if (shadowIndexBufferD3D->Lock(0,numIndex*sizeof(short),(void**)&pvIndices,D3DLOCK_DISCARD) != D3D_OK)
 			return;
 		nShadowIndicesInBuf=0;
 		nShadowStartBatchIndex=0;
 	}
 	else
-	{	if (shadowIndexBufferD3D->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short), (unsigned char**)&pvIndices,D3DLOCK_NOOVERWRITE) != D3D_OK)
+	{	if (shadowIndexBufferD3D->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short), (void**)&pvIndices,D3DLOCK_NOOVERWRITE) != D3D_OK)
 			return;
 	}
 
@@ -1441,21 +1442,21 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 
 	shadowIndexBufferD3D->Unlock();
 
-	m_pDev->SetIndices(shadowIndexBufferD3D,nShadowStartBatchVertex);
+	m_pDev->SetIndices(shadowIndexBufferD3D);
 	
 	Matrix4x4 mWorld(*meshXform);
 
 	m_pDev->SetTransform(D3DTS_WORLD,(_D3DMATRIX *)&mWorld.Transpose());
 
 	if (shadowVertexBufferD3D != lastActiveVertexBuffer)
-	{	m_pDev->SetStreamSource(0,shadowVertexBufferD3D,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
+	{	m_pDev->SetStreamSource(0,shadowVertexBufferD3D,0,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
 		lastActiveVertexBuffer = shadowVertexBufferD3D;
 	}
 
 	if (DX8Wrapper::_Is_Triangle_Draw_Enabled())
 	{
 		Debug_Statistics::Record_DX8_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
-		m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,0,numVerts,nShadowStartBatchIndex,numPolys);
+		m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,nShadowStartBatchVertex,0,numVerts,nShadowStartBatchIndex,numPolys);
 	}
 
 	nShadowVertsInBuf += numVerts;
@@ -1544,13 +1545,13 @@ void W3DVolumetricShadow::RenderMeshVolumeBounds(Int meshIndex, Int lightIndex, 
 
 	if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
 	{	//flush the buffer by drawing the contents and re-locking again
-		if (shadowVertexBufferD3D->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),(unsigned char**)&pvVertices,D3DLOCK_DISCARD) != D3D_OK)
+		if (shadowVertexBufferD3D->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),(void**)&pvVertices,D3DLOCK_DISCARD) != D3D_OK)
 			return;
 		nShadowVertsInBuf=0;
 		nShadowStartBatchVertex=0;
 	}
 	else
-	{	if (shadowVertexBufferD3D->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), (unsigned char**)&pvVertices,D3DLOCK_NOOVERWRITE) != D3D_OK)
+	{	if (shadowVertexBufferD3D->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), (void**)&pvVertices,D3DLOCK_NOOVERWRITE) != D3D_OK)
 			return;
 	}
 	srand(0x1345465);
@@ -1571,13 +1572,13 @@ void W3DVolumetricShadow::RenderMeshVolumeBounds(Int meshIndex, Int lightIndex, 
 
 	if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
 	{	//flush the buffer by drawing the contents and re-locking again
-		if (shadowIndexBufferD3D->Lock(0,numIndex*sizeof(short),(unsigned char**)&pvIndices,D3DLOCK_DISCARD) != D3D_OK)
+		if (shadowIndexBufferD3D->Lock(0,numIndex*sizeof(short),(void**)&pvIndices,D3DLOCK_DISCARD) != D3D_OK)
 			return;;
 		nShadowIndicesInBuf=0;
 		nShadowStartBatchIndex=0;
 	}
 	else
-	{	if (shadowIndexBufferD3D->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short), (unsigned char**)&pvIndices,D3DLOCK_NOOVERWRITE) != D3D_OK)
+	{	if (shadowIndexBufferD3D->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short), (void**)&pvIndices,D3DLOCK_NOOVERWRITE) != D3D_OK)
 			return;
 	}
 
@@ -1594,7 +1595,7 @@ void W3DVolumetricShadow::RenderMeshVolumeBounds(Int meshIndex, Int lightIndex, 
 
 	shadowIndexBufferD3D->Unlock();
 
-	m_pDev->SetIndices(shadowIndexBufferD3D,nShadowStartBatchVertex);
+	m_pDev->SetIndices(shadowIndexBufferD3D);
 
 
 	//todo: replace this with mesh transform
@@ -1602,10 +1603,10 @@ void W3DVolumetricShadow::RenderMeshVolumeBounds(Int meshIndex, Int lightIndex, 
 
 	m_pDev->SetTransform(D3DTS_WORLD,(_D3DMATRIX *)&mWorld.Transpose());
 	
-	m_pDev->SetStreamSource(0,shadowVertexBufferD3D,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
-	m_pDev->SetVertexShader(SHADOW_DYNAMIC_VOLUME_FVF);
+	m_pDev->SetStreamSource(0,shadowVertexBufferD3D,0,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
+	m_pDev->SetFVF(SHADOW_DYNAMIC_VOLUME_FVF);
 
-	m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,0,numVerts,nShadowStartBatchIndex,numPolys);
+	m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,nShadowStartBatchVertex,0,numVerts,nShadowStartBatchIndex,numPolys);
 
 	nShadowVertsInBuf += numVerts;
 	nShadowStartBatchVertex=nShadowVertsInBuf;
@@ -3306,6 +3307,7 @@ void W3DVolumetricShadow::resetSilhouette( Int meshIndex )
 // info and draw a big transparent rectangle over the screen for the final
 // shadow pass wherever there is data in the stencil buffer
 // ============================================================================
+/*
 void W3DVolumetricShadowManager::renderStencilShadows( void )
 {
 	LPDIRECT3DDEVICE8 m_pDev=DX8Wrapper::_Get_D3D_Device8();
@@ -3335,7 +3337,7 @@ void W3DVolumetricShadowManager::renderStencilShadows( void )
 
 	//draw polygons like this is very inefficient but for only 2 triangles, it's
 	//not worth bothering with index/vertex buffers.
-	m_pDev->SetVertexShader(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+	m_pDev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
 
 	// Use alpha blending to draw the transparent shadow
     m_pDev->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
@@ -3370,7 +3372,234 @@ void W3DVolumetricShadowManager::renderStencilShadows( void )
 	// turn off the stencil buffer
 	m_pDev->SetRenderState( D3DRS_STENCILENABLE, FALSE );
 
+} */ // end renderStencilShadows
+ //
+// renderStencilShadows =======================================================  
+// Soft shadow version: render shadow to offscreen texture first, then apply  
+// with a 5-tap box blur to produce soft edges.  
+// Falls back to original hard shadow if render target is unavailable.  
+// ============================================================================  
+void W3DVolumetricShadowManager::renderStencilShadows( void )  
+{  
+	LPDIRECT3DDEVICE8 m_pDev = DX8Wrapper::_Get_D3D_Device8();  
+  
+	if (!m_pDev)  
+		return;  
+  
+	Int xpos, ypos, width, height;  
+	TheTacticalView->getOrigin(&xpos, &ypos);  
+	width  = TheTacticalView->getWidth();  
+	height = TheTacticalView->getHeight();  
+  
+	Bool softShadowDone = FALSE;  
+  
+	if (m_softShadowRT && m_softShadowSurface)  
+	{  
+		// ================================================================  
+		// SOFT SHADOW PATH  
+		// ================================================================  
+  
+		// --- ���� per-pass ��Ӱ��ɫ ---  
+		// ԭʼ��multiply blend����ɫ���� origC/255 Ϊ����ϵ������ 0xa0/0xff �� 0.627��  
+		// 5�ε��ӽ��ƣ�perPassFactor = 1 - (1 - origFactor) / 5  
+		// ���Խ�����С������ʹ�� pow()  
+		DWORD origColor = TheW3DShadowManager->getShadowColor();  
+		BYTE  origR = (BYTE)((origColor >> 16) & 0xFF);  
+		BYTE  origG = (BYTE)((origColor >>  8) & 0xFF);  
+		BYTE  origB = (BYTE)( origColor        & 0xFF);  
+  
+		float fR = 1.0f - (1.0f - (float)origR / 255.0f) / 5.0f;  
+		float fG = 1.0f - (1.0f - (float)origG / 255.0f) / 5.0f;  
+		float fB = 1.0f - (1.0f - (float)origB / 255.0f) / 5.0f;  
+  
+		
+		DWORD perPassColor = 0xFF000000  
+			| ( (DWORD)( (BYTE)(fR * 255.0f) ) << 16 )  
+			| ( (DWORD)( (BYTE)(fG * 255.0f) ) <<  8 )  
+			| ( (DWORD)( (BYTE)(fB * 255.0f) )       );  
+		
+
+		// --- ���浱ǰ render target �� depth/stencil ---  
+		IDirect3DSurface8 *pOldRT = NULL;  
+		IDirect3DSurface8 *pOldDS = NULL;  
+		m_pDev->GetRenderTarget(0, &pOldRT);
+		m_pDev->GetDepthStencilSurface(&pOldDS);  
+  
+		// pOldDS ����� NULL������ stencil test �޷�����  
+		if (pOldDS && SUCCEEDED(m_pDev->SetRenderTarget(0, m_softShadowSurface)) && SUCCEEDED(m_pDev->SetDepthStencilSurface(pOldDS)))  
+		{  
+			// --- Step 1: �������Ϊ��ɫ������Ӱ�� ---  
+			m_pDev->Clear(0, NULL, D3DCLEAR_TARGET, 0xFFFFFFFF, 1.0f, 0);  
+			// ��Ϊ�� ����������Ӱ���� alpha=0����ȫ͸������Ӱ����Ļ������Ӱ���� alpha=perPassA����͸�����ӣ���m_shadowColor �� alpha �����������ؿ���������Ӱ��͸���ȡ� 
+           //m_pDev->Clear(0, NULL, D3DCLEAR_TARGET, 0x00000000, 1.0f, 0);  // ͸����ɫ����
+  
+			// --- Step 2: �� stencil ��Ӱ��Ⱦ������ ---  
+			{  
+				struct _TRANSLITVERTEX {  
+					D3DXVECTOR4 p;  
+					DWORD color;  
+				} v[4];  
+  
+				v[0].p = D3DXVECTOR4( (float)(xpos+width), (float)(ypos+height), 0.0f, 1.0f );  
+				v[1].p = D3DXVECTOR4( (float)(xpos+width), 0.0f,                 0.0f, 1.0f );  
+				v[2].p = D3DXVECTOR4( (float)xpos,         (float)(ypos+height), 0.0f, 1.0f );  
+				v[3].p = D3DXVECTOR4( (float)xpos,         0.0f,                 0.0f, 1.0f );  
+				v[0].color = v[1].color = v[2].color = v[3].color = perPassColor;  
+  
+				m_pDev->SetFVF( D3DFVF_XYZRHW | D3DFVF_DIFFUSE );  
+				m_pDev->SetRenderState( D3DRS_ALPHABLENDENABLE, FALSE );  
+				m_pDev->SetRenderState( D3DRS_ZENABLE,          TRUE );  
+				m_pDev->SetRenderState( D3DRS_ZFUNC,            D3DCMP_ALWAYS );  
+				m_pDev->SetRenderState( D3DRS_STENCILENABLE,    TRUE );  
+				m_pDev->SetRenderState( D3DRS_STENCILFUNC,      D3DCMP_LESSEQUAL );  
+				m_pDev->SetRenderState( D3DRS_STENCILPASS,      D3DSTENCILOP_KEEP );  
+				m_pDev->SetRenderState( D3DRS_STENCILMASK,      ~TheW3DShadowManager->getStencilShadowMask() );  
+				m_pDev->SetRenderState( D3DRS_STENCILREF,       0x1 );  
+				m_pDev->SetRenderState( D3DRS_SHADEMODE,        D3DSHADE_FLAT );  
+				m_pDev->SetTexture( 0, NULL );  
+				m_pDev->SetTextureStageState( 0, D3DTSS_COLOROP,   D3DTOP_SELECTARG2 );  
+				m_pDev->SetTextureStageState( 0, D3DTSS_COLORARG2, D3DTA_DIFFUSE );  
+				m_pDev->SetTextureStageState( 0, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );  
+  
+				if (DX8Wrapper::_Is_Triangle_Draw_Enabled())  
+					m_pDev->DrawPrimitiveUP( D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANSLITVERTEX) );  
+			}  
+  //
+
+  //
+			// --- Step 3: �ָ��� render target ---  
+			m_pDev->SetRenderTarget( 0, pOldRT );
+				m_pDev->SetDepthStencilSurface( pOldDS );  
+  
+			// --- Step 4: 5-tap box blur ���ӵ���Ļ ---  
+			{  
+				struct _BLURVERTEX {  
+					D3DXVECTOR4 p;  
+					float u, v;  
+				};  
+  
+				// ��ȡ����ʵ�ʳߴ磨���� RT ��ͬ��  
+				D3DSURFACE_DESC rtDesc;  
+				m_softShadowSurface->GetDesc(&rtDesc);  
+				float screenW = (float)rtDesc.Width;  
+				float screenH = (float)rtDesc.Height;  
+  
+				// ģ���뾶�����أ�  
+				//float blurRadius = 2.0f;
+				// float blurRadius = 3.5f; 
+
+				 float blurRadius = 2.5f;  // 4 ���ذ뾶��ģ��Ч���Ƚ���Ȼ�������ܻ�������
+				float du = blurRadius / screenW;  
+				float dv = blurRadius / screenH;  
+  
+				// 5��������ƫ�ƣ����� + �ĸ��Խ�  
+				float offsetU[5];  
+				float offsetV[5];  
+				offsetU[0] =  0.0f;  offsetV[0] =  0.0f;  
+				offsetU[1] = -du;    offsetV[1] = -dv;  
+				offsetU[2] =  du;    offsetV[2] = -dv;  
+				offsetU[3] = -du;    offsetV[3] =  dv;  
+				offsetU[4] =  du;    offsetV[4] =  dv;  
+  
+				// ��Ļ�ı��ζ�Ӧ�� UV ��Χ  
+				float u0 = (float)xpos         / screenW;  
+				float v0 = 0.0f;  
+				float u1 = (float)(xpos+width)  / screenW;  
+				float v1 = (float)(ypos+height) / screenH;  
+  
+				m_pDev->SetFVF( D3DFVF_XYZRHW | D3DFVF_TEX1 );  
+				m_pDev->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );  
+				m_pDev->SetRenderState( D3DRS_SRCBLEND,         D3DBLEND_DESTCOLOR );  
+				m_pDev->SetRenderState( D3DRS_DESTBLEND,        D3DBLEND_ZERO );  
+				//
+//m_pDev->SetRenderState(D3DRS_SRCBLEND,         D3DBLEND_SRCALPHA);      // ��Ϊ alpha blend  
+//m_pDev->SetRenderState(D3DRS_DESTBLEND,        D3DBLEND_INVSRCALPHA);   // ��Ϊ alpha blend
+				//
+				m_pDev->SetRenderState( D3DRS_ZENABLE,          TRUE );  
+				m_pDev->SetRenderState( D3DRS_ZFUNC,            D3DCMP_ALWAYS );  
+				m_pDev->SetRenderState( D3DRS_STENCILENABLE,    FALSE );  
+				m_pDev->SetRenderState( D3DRS_SHADEMODE,        D3DSHADE_FLAT );  
+  
+				m_pDev->SetTexture( 0, m_softShadowRT );  
+				m_pDev->SetTextureStageState( 0, D3DTSS_COLOROP,   D3DTOP_SELECTARG1 );  
+				m_pDev->SetTextureStageState( 0, D3DTSS_COLORARG1, D3DTA_TEXTURE );  
+				m_pDev->SetTextureStageState( 0, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );  
+				m_pDev->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );  
+				m_pDev->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );  
+				m_pDev->SetSamplerState( 0, D3DSAMP_ADDRESSU,  D3DTADDRESS_CLAMP );  
+				m_pDev->SetSamplerState( 0, D3DSAMP_ADDRESSV,  D3DTADDRESS_CLAMP );  
+  
+				int i;  
+				for (i = 0; i < 5; i++)  
+				{  
+					_BLURVERTEX bv[4];  
+  
+					bv[0].p = D3DXVECTOR4( (float)(xpos+width), (float)(ypos+height), 0.0f, 1.0f );  
+					bv[0].u = u1 + offsetU[i];  bv[0].v = v1 + offsetV[i];  
+  
+					bv[1].p = D3DXVECTOR4( (float)(xpos+width), 0.0f, 0.0f, 1.0f );  
+					bv[1].u = u1 + offsetU[i];  bv[1].v = v0 + offsetV[i];  
+  
+					bv[2].p = D3DXVECTOR4( (float)xpos, (float)(ypos+height), 0.0f, 1.0f );  
+					bv[2].u = u0 + offsetU[i];  bv[2].v = v1 + offsetV[i];  
+  
+					bv[3].p = D3DXVECTOR4( (float)xpos, 0.0f, 0.0f, 1.0f );  
+					bv[3].u = u0 + offsetU[i];  bv[3].v = v0 + offsetV[i];  
+  
+					if (DX8Wrapper::_Is_Triangle_Draw_Enabled())  
+						m_pDev->DrawPrimitiveUP( D3DPT_TRIANGLESTRIP, 2, bv, sizeof(_BLURVERTEX) );  
+				}  
+  
+				m_pDev->SetTexture( 0, NULL );  
+			} 
+  
+			softShadowDone = TRUE;  
+		}  
+  
+		// ���۳ɹ�����ͷű���� RT ����  
+		if (pOldRT) pOldRT->Release();  
+		if (pOldDS) pOldDS->Release();  
+	}  
+  
+	if (!softShadowDone)  
+	{  
+		// ================================================================  
+		// HARD SHADOW FALLBACK��ԭʼ���룬�� RT ������ʱʹ�ã�  
+		// ================================================================  
+		struct _TRANSLITVERTEX {  
+			D3DXVECTOR4 p;  
+			DWORD color;  
+		} v[4];  
+  
+		v[0].p = D3DXVECTOR4( (float)(xpos+width), (float)(ypos+height), 0.0f, 1.0f );  
+		v[1].p = D3DXVECTOR4( (float)(xpos+width), 0.0f,                 0.0f, 1.0f );  
+		v[2].p = D3DXVECTOR4( (float)xpos,         (float)(ypos+height), 0.0f, 1.0f );  
+		v[3].p = D3DXVECTOR4( (float)xpos,         0.0f,                 0.0f, 1.0f );  
+		v[0].color = v[1].color = v[2].color = v[3].color = TheW3DShadowManager->getShadowColor();  
+  
+		m_pDev->SetFVF( D3DFVF_XYZRHW | D3DFVF_DIFFUSE );  
+		m_pDev->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );  
+		m_pDev->SetRenderState( D3DRS_SRCBLEND,         D3DBLEND_DESTCOLOR );  
+		m_pDev->SetRenderState( D3DRS_DESTBLEND,        D3DBLEND_ZERO );  
+		m_pDev->SetRenderState( D3DRS_ZENABLE,          TRUE );  
+		m_pDev->SetRenderState( D3DRS_ZFUNC,            D3DCMP_ALWAYS );  
+		m_pDev->SetRenderState( D3DRS_STENCILENABLE,    TRUE );  
+		m_pDev->SetRenderState( D3DRS_STENCILFUNC,      D3DCMP_LESSEQUAL );  
+		m_pDev->SetRenderState( D3DRS_STENCILPASS,      D3DSTENCILOP_KEEP );  
+		m_pDev->SetRenderState( D3DRS_STENCILMASK,      ~TheW3DShadowManager->getStencilShadowMask() );  
+		m_pDev->SetRenderState( D3DRS_STENCILREF,       0x1 );  
+		m_pDev->SetRenderState( D3DRS_SHADEMODE,        D3DSHADE_FLAT );  
+  
+		if (DX8Wrapper::_Is_Triangle_Draw_Enabled())  
+			m_pDev->DrawPrimitiveUP( D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANSLITVERTEX) );  
+	}  
+  
+	m_pDev->SetRenderState( D3DRS_SHADEMODE,        D3DSHADE_GOURAUD );  
+	m_pDev->SetRenderState( D3DRS_ALPHABLENDENABLE, FALSE );  
+	m_pDev->SetRenderState( D3DRS_STENCILENABLE,    FALSE );  
+  
 }  // end renderStencilShadows
+ //
 
 void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 {
@@ -3477,7 +3706,7 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 		m_pDev->SetRenderState( D3DRS_STENCILFAIL,  D3DSTENCILOP_KEEP );
 		m_pDev->SetRenderState( D3DRS_STENCILPASS,  D3DSTENCILOP_INCR );
 		
-		m_pDev->SetVertexShader(SHADOW_DYNAMIC_VOLUME_FVF);
+		m_pDev->SetFVF(SHADOW_DYNAMIC_VOLUME_FVF);
 
 		m_pDev->SetRenderState(D3DRS_CULLMODE,D3DCULL_CW);
 //		m_pDev->SetRenderState(D3DRS_ZBIAS,1);	///@todo: See if this helps or makes things worse.
@@ -3511,7 +3740,7 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 		}  // end for
 
 		// Set vertex format to that used by static shadow volumes
-		m_pDev->SetVertexShader(W3DBufferManager::getDX8Format(W3DBufferManager::VBM_FVF_XYZ));
+		m_pDev->SetFVF(W3DBufferManager::getDX8Format(W3DBufferManager::VBM_FVF_XYZ));
 
 		//Empty queue of static shadow volumes to render.
 		W3DBufferManager::W3DVertexBuffer *nextVb;
@@ -3547,7 +3776,7 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 			}
 		}
 
-		m_pDev->SetVertexShader(SHADOW_DYNAMIC_VOLUME_FVF);
+		m_pDev->SetFVF(SHADOW_DYNAMIC_VOLUME_FVF);
 		//flush any dynamic shadow volumes
 		shadowDynamicTask=m_dynamicShadowVolumesToRender;
 		while (shadowDynamicTask)
@@ -3676,6 +3905,11 @@ W3DVolumetricShadowManager::W3DVolumetricShadowManager( void )
 	m_W3DShadowGeometryManager = NEW W3DShadowGeometryManager;
 
 	TheW3DBufferManager = NEW W3DBufferManager;
+	//
+// ---- ���� ----  
+	m_softShadowRT      = NULL;  
+	m_softShadowSurface = NULL;  
+	//
 
 }  // end ShadowManager
 
@@ -3707,6 +3941,19 @@ void W3DVolumetricShadowManager::ReleaseResources(void)
 	{	TheW3DBufferManager->ReleaseResources();
 		invalidateCachedLightPositions();	//vertex buffers need to be refilled.
 	}
+	//
+// ---- �������ͷ� soft shadow render target ----  
+	if (m_softShadowSurface)  
+	{  
+		m_softShadowSurface->Release();  
+		m_softShadowSurface = NULL;  
+	}  
+	if (m_softShadowRT)  
+	{  
+		m_softShadowRT->Release();  
+		m_softShadowRT = NULL;  
+	}  
+	//
 }
 
 /** (Re)allocates all W3D/D3D assets after a reset.. */
@@ -3724,7 +3971,8 @@ Bool W3DVolumetricShadowManager::ReAcquireResources(void)
 		D3DUSAGE_WRITEONLY|D3DUSAGE_DYNAMIC, 
 		D3DFMT_INDEX16, 
 		D3DPOOL_DEFAULT, 
-		&shadowIndexBufferD3D
+		&shadowIndexBufferD3D,
+		NULL
 	)))
 		return FALSE;
 
@@ -3737,7 +3985,8 @@ Bool W3DVolumetricShadowManager::ReAcquireResources(void)
 			D3DUSAGE_WRITEONLY|D3DUSAGE_DYNAMIC, 
 			0,
 			D3DPOOL_DEFAULT, 
-			&shadowVertexBufferD3D
+			&shadowVertexBufferD3D,
+			NULL
 		)))
 			return FALSE;
 	}
@@ -3745,7 +3994,38 @@ Bool W3DVolumetricShadowManager::ReAcquireResources(void)
 	if (TheW3DBufferManager)
 		if (!TheW3DBufferManager->ReAcquireResources())
 			return FALSE;
-
+//
+// ---- ���������� soft shadow render target������ RT ͬ�ߴ磬�Ա㹲�� depth/stencil��----  
+	{  
+		IDirect3DSurface8 *pMainRT = NULL;  
+		if (SUCCEEDED(m_pDev->GetRenderTarget(0, &pMainRT)) && pMainRT)  
+		{  
+			D3DSURFACE_DESC rtDesc;  
+			pMainRT->GetDesc(&rtDesc);  
+			pMainRT->Release();  
+			pMainRT = NULL;  
+  
+			// ʹ������ RT ��ͬ�ĸ�ʽ�ͳߴ磬��֤���Թ��� depth/stencil surface  
+			if (SUCCEEDED(m_pDev->CreateTexture(  
+				rtDesc.Width,  
+				rtDesc.Height,  
+				1,  
+				D3DUSAGE_RENDERTARGET,  
+				rtDesc.Format,  
+				D3DPOOL_DEFAULT,  
+				&m_softShadowRT,
+				NULL
+				)))  
+			{  
+				m_softShadowRT->GetSurfaceLevel(0, &m_softShadowSurface);  
+			} 
+		//
+		
+		//
+			// ������ʧ�ܣ�m_softShadowRT/Surface ���� NULL���Զ����˵�Ӳ��Ӱ  
+		}  
+	}  
+//
 	return TRUE;
 }
 

@@ -338,7 +338,7 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 				m_anchor = msg->getArgument( 0 )->pixel;
 			}
 
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) 
 			// adjust the field of view
 			if (m_isChangingFOV)
 			{
@@ -349,7 +349,21 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 				TheTacticalView->setFieldOfView( TheTacticalView->getFieldOfView() + angle );
 				m_anchor = msg->getArgument( 0 )->pixel;
 			}
-#endif
+#endif   //defined(_DEBUG) || defined(_INTERNAL) 
+#if  defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+// adjust the field of view
+			if (m_isChangingFOV)
+			{
+				const Real FACTOR = 0.01f;
+
+				Real angle = FACTOR * (m_currentPos.y - m_anchor.y);
+
+				TheTacticalView->setFieldOfView( TheTacticalView->getFieldOfView() + angle );
+				m_anchor = msg->getArgument( 0 )->pixel;
+			}
+#endif   //|| defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+
+
 			break;
 		}
 
@@ -496,7 +510,7 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		}
 
 		// ------------------------------------------------------------------------
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) 
 		case GameMessage::MSG_META_DEMO_BEGIN_ADJUST_PITCH:
 		{
 			DEBUG_ASSERTCRASH(!m_isPitching, ("hmm, mismatched m_isPitching"));
@@ -506,6 +520,15 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		}
 #endif // #if defined(_DEBUG) || defined(_INTERNAL)
 
+#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+case GameMessage::MSG_CHEAT_BEGIN_ADJUST_PITCH:
+		{
+			DEBUG_ASSERTCRASH(!m_isPitching, ("hmm, mismatched m_isPitching"));
+			m_isPitching = true;
+			disp = DESTROY_MESSAGE;
+			break;
+		}
+#endif 	// #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)	
 		// ------------------------------------------------------------------------
 #if defined(_DEBUG) || defined(_INTERNAL)
 		case GameMessage::MSG_META_DEMO_END_ADJUST_PITCH:
@@ -517,6 +540,15 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		}
 #endif // #if defined(_DEBUG) || defined(_INTERNAL)
 
+#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+case GameMessage::MSG_CHEAT_END_ADJUST_PITCH:
+		{
+			DEBUG_ASSERTCRASH(m_isPitching, ("hmm, mismatched m_isPitching"));
+			m_isPitching = false;
+			disp = DESTROY_MESSAGE;
+			break;
+		}
+#endif	// #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)	
 		// ------------------------------------------------------------------------
 #if defined(_DEBUG) || defined(_INTERNAL)
 		case GameMessage::MSG_META_DEMO_DESHROUD:
@@ -560,6 +592,16 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		}
 #endif // #if defined(_DEBUG) || defined(_INTERNAL)
 
+#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+case GameMessage::MSG_CHEAT_BEGIN_ADJUST_FOV:
+		{
+			//DEBUG_ASSERTCRASH(!m_isChangingFOV, ("hmm, mismatched m_isChangingFOV"));
+			m_isChangingFOV = true;
+			m_anchor = m_currentPos;
+			break;
+		}
+#endif 	// #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+	
 		// ------------------------------------------------------------------------
 #if defined(_DEBUG) || defined(_INTERNAL)
 		case GameMessage::MSG_META_DEMO_END_ADJUST_FOV:
@@ -570,6 +612,14 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		}
 #endif // #if defined(_DEBUG) || defined(_INTERNAL)
 
+#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+case GameMessage::MSG_CHEAT_END_ADJUST_FOV:
+		{
+		//	DEBUG_ASSERTCRASH(m_isChangingFOV, ("hmm, mismatched m_isChangingFOV"));
+			m_isChangingFOV = false;
+			break;
+		}
+#endif // #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 		//-----------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_SAVE_VIEW1:
 		case GameMessage::MSG_META_SAVE_VIEW2:
@@ -612,7 +662,7 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		}
 
 		//-----------------------------------------------------------------------------
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) 
 		case GameMessage::MSG_META_DEMO_LOCK_CAMERA_TO_PLANES:
 		{
 			Drawable *first = NULL;
@@ -673,7 +723,7 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 			disp = DESTROY_MESSAGE;
 			break;
 		}
-#endif // #if defined(_DEBUG) || defined(_INTERNAL)
+#endif // #if defined(_DEBUG) || defined(_INTERNAL) 
 
 	}  // end switch
 

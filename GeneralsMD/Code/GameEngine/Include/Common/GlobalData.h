@@ -84,6 +84,8 @@ public:
 		RGBColor ambient;
 		RGBColor diffuse;
 		Coord3D lightPos;
+		RGBColor specular;    // �� �������߹���ɫ����̫����һ��  
+        Real     shininess;   // �� �������߹������ȣ�1.0~100.0��ֵԽ��߹�Խ���У�  
 	};
 
 	//-----------------------------------------------------------------------------------------------
@@ -453,6 +455,7 @@ public:
 	Bool m_specialPowerUsesDelay ;
 #endif
   Bool m_TiVOFastMode;            ///< When true, the client speeds up the framerate... set by HOTKEY!
+  Int  m_gameSpeed;               ///< 0=Normal(1x), 1=Fast(2x), 2=Faster(4x), 3=Max(unlimited). Set by F key!
   
 
 

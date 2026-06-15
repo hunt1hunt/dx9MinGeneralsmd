@@ -45,6 +45,7 @@
 #define DX8VERTEXBUFFER_H
 
 #include "always.h"
+#include "d3d8compat.h"
 #include "wwdebug.h"
 #include "refcount.h"
 #include "dx8fvf.h"
@@ -59,7 +60,9 @@ class Vector4;
 class StringClass;
 class DX8VertexBufferClass;
 class FVFInfoClass;
+#ifndef D3D8COMPAT_H
 struct IDirect3DVertexBuffer8;
+#endif
 class VertexBufferClass;
 struct VertexFormatXYZNDUV2;
 

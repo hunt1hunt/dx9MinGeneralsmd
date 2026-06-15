@@ -325,20 +325,35 @@ public:
 	void onUpgradeCompleted( const UpgradeTemplate *upgradeTemplate );				///< An upgrade just finished, do things like tell all objects to recheck UpgradeModules
 	void onUpgradeRemoved(){}					///< An upgrade just got removed, this doesn't do anything now.
  
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	/// Prereq disabling cheat key
 	void toggleIgnorePrereqs(){ m_DEMO_ignorePrereqs = !m_DEMO_ignorePrereqs; }
+	void enableIgnorePrereqs(Bool enable) { m_DEMO_ignorePrereqs = enable; }
 	Bool ignoresPrereqs() const { return m_DEMO_ignorePrereqs; }
 
 	/// No cost building cheat key
 	void toggleFreeBuild(){ m_DEMO_freeBuild = !m_DEMO_freeBuild; }
+	void enableFreeBuild(Bool enable) { m_DEMO_freeBuild = enable; }
 	Bool buildsForFree() const { return m_DEMO_freeBuild; }
 
+	void toggleGodMode() { m_DEMO_godMode = !m_DEMO_godMode; }
+    void enableGodMode(Bool enable) { m_DEMO_godMode = enable; }
+    Bool hasGodMode() const { return m_DEMO_godMode; }
+
+void toggleqwwudiMode() { m_qwwudiSelectionMode = !m_qwwudiSelectionMode; }
+void enableqwwudiMode(Bool enable) { m_qwwudiSelectionMode = enable; }
+Bool hasqwwudiMode() const { return m_qwwudiSelectionMode; }
+
+    /// Unlimited ammo cheat key  
+    void toggleUnlimitedAmmo() { m_DEMO_unlimitedAmmo = !m_DEMO_unlimitedAmmo; }
+    void enableUnlimitedAmmo(Bool enable) { m_DEMO_unlimitedAmmo = enable; }
+    Bool hasUnlimitedAmmo() const { return m_DEMO_unlimitedAmmo; }
 #endif
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	/// No time building cheat key
 	void toggleInstantBuild(){ m_DEMO_instantBuild = !m_DEMO_instantBuild; }
+	void enableInstantBuild(Bool enable) { m_DEMO_instantBuild = enable; }
 	Bool buildsInstantly() const { return m_DEMO_instantBuild; }
 #endif
 
@@ -800,9 +815,12 @@ private:
 	Real									m_cashBountyPercent;
 
 	/// @todo REMOVE (not disable) these cheat keys
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	Bool									m_DEMO_ignorePrereqs;		///< Can I ignore prereq checks?
 	Bool									m_DEMO_freeBuild;				///< Can I build everything for no money?
+	Bool                                    m_DEMO_godMode;
+	Bool                                    m_qwwudiSelectionMode;             ///< Can I build and repair without builders?
+    Bool                                    m_DEMO_unlimitedAmmo;      ///< Can units fire without consuming ammo?
 #endif
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)

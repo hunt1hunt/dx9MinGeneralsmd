@@ -146,7 +146,7 @@ public:
 
 	// Kris: August 23, 2003
 	// All OCLs return the first object that is created (or NULL if not applicable).
-	/// inline convenience method to avoid having to check for null.
+	/// inline convenience method to avoid having to check for null.青蛙标注最重要的OCL生成静态函数定义含六个参数
 	inline static Object* create(const ObjectCreationList* ocl, const Object* primaryObj, const Coord3D *primary, const Coord3D *secondary, Real angle, UnsignedInt lifetimeFrames = 0 )
 	{
 		if (ocl) 

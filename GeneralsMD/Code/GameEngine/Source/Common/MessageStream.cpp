@@ -391,7 +391,23 @@ AsciiString GameMessage::getCommandTypeAsAsciiString(GameMessage::Type t)
 		CHECK_IF(MSG_CHEAT_SWITCH_TEAMS)							
 		CHECK_IF(MSG_CHEAT_KILL_SELECTION)						
 		CHECK_IF(MSG_CHEAT_TOGGLE_HAND_OF_GOD_MODE)	
-		CHECK_IF(MSG_CHEAT_INSTANT_BUILD)						
+		CHECK_IF(MSG_CHEAT_INSTANT_BUILD)
+		CHECK_IF(MSG_CHEAT_FREE_BUILD)
+		CHECK_IF(MSG_CHEAT_REMOVE_PREREQ)
+	CHECK_IF(MSG_CHEAT_qingwaGOD_MODE) 
+	CHECK_IF(MSG_CHEAT_UNLIMITED_AMMO)
+	CHECK_IF(MSG_CHEAT_BEGIN_ADJUST_PITCH)
+	CHECK_IF(MSG_CHEAT_END_ADJUST_PITCH)
+	CHECK_IF(MSG_CHEAT_BEGIN_ADJUST_FOV)
+	CHECK_IF(MSG_CHEAT_END_ADJUST_FOV)
+	
+	CHECK_IF(MSG_CHEAT_GIVE_VETERANCY)
+CHECK_IF(MSG_CHEAT_TAKE_VETERANCY)
+CHECK_IF(MSG_CHEAT_GIVE_RANKLEVEL)
+CHECK_IF(MSG_CHEAT_TAKE_RANKLEVEL)
+CHECK_IF(MSG_CHEAT_qw_wudi_MODE)
+CHECK_IF(MSG_CHEAT_SPAWN_DOZER)
+//CHECK_IF(MSG_CHEAT_SPAWN_HUMVEE)
 		CHECK_IF(MSG_CHEAT_DESHROUD)									
 		CHECK_IF(MSG_CHEAT_ADD_CASH)									
 		CHECK_IF(MSG_CHEAT_GIVE_ALL_SCIENCES)				
@@ -439,14 +455,18 @@ AsciiString GameMessage::getCommandTypeAsAsciiString(GameMessage::Type t)
 	CHECK_IF(MSG_META_DEMO_PLAY_OBJECTIVE_MOVIE4)
 	CHECK_IF(MSG_META_DEMO_PLAY_OBJECTIVE_MOVIE5)
 	CHECK_IF(MSG_META_DEMO_PLAY_OBJECTIVE_MOVIE6)
+
 	CHECK_IF(MSG_META_DEMO_BEGIN_ADJUST_PITCH)
 	CHECK_IF(MSG_META_DEMO_END_ADJUST_PITCH)
 	CHECK_IF(MSG_META_DEMO_BEGIN_ADJUST_FOV)
 	CHECK_IF(MSG_META_DEMO_END_ADJUST_FOV)
+
 	CHECK_IF(MSG_META_DEMO_LOCK_CAMERA_TO_PLANES)
 	CHECK_IF(MSG_META_DEMO_REMOVE_PREREQ)
 	CHECK_IF(MSG_META_DEMO_INSTANT_BUILD)
 	CHECK_IF(MSG_META_DEMO_FREE_BUILD)
+	CHECK_IF(MSG_META_DEMO_qingwaGOD_MODE)
+	CHECK_IF(MSG_META_DEMO_UNLIMITED_AMMO)
 	CHECK_IF(MSG_META_DEMO_RUNSCRIPT1)
 	CHECK_IF(MSG_META_DEMO_RUNSCRIPT2)
 	CHECK_IF(MSG_META_DEMO_RUNSCRIPT3)
@@ -998,7 +1018,7 @@ void MessageStream::removeTranslator( TranslatorID id )
 
 // ------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------
-#if defined(_DEBUG) || defined(_INTERNAL)
+
 
 Bool isInvalidDebugCommand( GameMessage::Type t )
 {
@@ -1007,8 +1027,51 @@ Bool isInvalidDebugCommand( GameMessage::Type t )
 	if (TheGameLogic && !TheGameLogic->isInSkirmishGame() && 
 			(TheRecorder && TheRecorder->isMultiplayer() && TheRecorder->getMode() == RECORDERMODETYPE_RECORD))
 	{
+		
+		#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE) 
+
+
 		switch (t)
 		{
+		case GameMessage::MSG_CHEAT_REMOVE_PREREQ:
+		case GameMessage::MSG_CHEAT_INSTANT_BUILD:
+		case GameMessage::MSG_CHEAT_FREE_BUILD:
+		case GameMessage::MSG_CHEAT_qingwaGOD_MODE:
+		case GameMessage::MSG_CHEAT_UNLIMITED_AMMO:
+		case GameMessage::MSG_CHEAT_GIVE_ALL_SCIENCES:
+       // case GameMessage::MSG_CHEAT_BEGIN_ADJUST_PITCH：
+		//case GameMessage::MSG_CHEAT_END_ADJUST_PITCH：
+		case GameMessage::MSG_CHEAT_BEGIN_ADJUST_FOV：
+		case GameMessage::MSG_CHEAT_END_ADJUST_FOV：
+        case GameMessage::MSG_CHEAT_GIVE_VETERANCY:
+		case GameMessage::MSG_CHEAT_TAKE_VETERANCY:
+         case GameMessage::MSG_CHEAT_GIVE_RANKLEVEL:
+		case GameMessage::MSG_CHEAT_TAKE_RANKLEVEL:
+		case GameMessage::MSG_CHEAT_qw_wudi_MODE:
+case GameMessage::MSG_CHEAT_SPAWN_DOZER:
+//case GameMessage:: MSG_CHEAT_SPAWN_HUMVEE:
+			// TheSuperHackers @tweak Debug cheats are now multiplayer compatible. Happy cheating Munkees :)
+		
+			return false;
+
+		
+		}
+		#endif //defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+//	}
+//	return false;
+
+		
+#if defined(_DEBUG) || defined(_INTERNAL)		
+		switch (t)
+		{
+		case GameMessage::MSG_META_DEMO_REMOVE_PREREQ:
+		case GameMessage::MSG_META_DEMO_INSTANT_BUILD:
+		case GameMessage::MSG_META_DEMO_FREE_BUILD:
+		case GameMessage::MSG_META_DEMO_qingwaGOD_MODE:
+		case GameMessage::MSG_META_DEMO_UNLIMITED_AMMO:
+		case GameMessage::MSG_META_DEMO_GIVE_ALL_SCIENCES:
+		// TheSuperHackers @tweak Debug cheats are now multiplayer compatible. Happy cheating Munkees :)
+	         return false;
 		case GameMessage::MSG_META_DEMO_SWITCH_TEAMS:
 		case GameMessage::MSG_META_DEMO_SWITCH_TEAMS_BETWEEN_CHINA_USA:
 		case GameMessage::MSG_META_DEMO_KILL_ALL_ENEMIES:
@@ -1018,9 +1081,10 @@ Bool isInvalidDebugCommand( GameMessage::Type t )
 		case GameMessage::MSG_META_DEMO_TOGGLE_SPECIAL_POWER_DELAYS:
 		case GameMessage::MSG_META_DEMO_TIME_OF_DAY:
 		case GameMessage::MSG_META_DEMO_LOCK_CAMERA_TO_PLANES:
-		case GameMessage::MSG_META_DEMO_REMOVE_PREREQ:
-		case GameMessage::MSG_META_DEMO_INSTANT_BUILD:
-		case GameMessage::MSG_META_DEMO_FREE_BUILD:
+		//case GameMessage::MSG_META_DEMO_REMOVE_PREREQ:
+		//case GameMessage::MSG_META_DEMO_INSTANT_BUILD:
+		//case GameMessage::MSG_META_DEMO_FREE_BUILD:
+		//case GameMessage::MSG_META_DEMO_GIVE_ALL_SCIENCES:
 		case GameMessage::MSG_META_DEMO_RUNSCRIPT1:
 		case GameMessage::MSG_META_DEMO_RUNSCRIPT2:
 		case GameMessage::MSG_META_DEMO_RUNSCRIPT3:
@@ -1057,17 +1121,19 @@ Bool isInvalidDebugCommand( GameMessage::Type t )
 		case GameMessage::MSG_DEBUG_HURT_OBJECT:
 		case GameMessage::MSG_DEBUG_KILL_OBJECT:
 		case GameMessage::MSG_META_DEMO_GIVE_SCIENCEPURCHASEPOINTS:
-		case GameMessage::MSG_META_DEMO_GIVE_ALL_SCIENCES:
+		
 		case GameMessage::MSG_META_DEMO_GIVE_RANKLEVEL:
 		case GameMessage::MSG_META_DEMO_TAKE_RANKLEVEL:
 		case GameMessage::MSG_META_DEBUG_WIN:
 
 			return true;
 		}
+		#endif //defined(_DEBUG) || defined(_INTERNAL)
 	}
-	return false;
+	return false;    
+
+
 }
-#endif
 
 /**
  * Propagate messages thru attached Translators, invoking each Translator's
@@ -1088,6 +1154,7 @@ void MessageStream::propagateMessages( void )
 			if (ss->m_translator 
 #if defined(_DEBUG) || defined(_INTERNAL)
 				&& !isInvalidDebugCommand(msg->getType())
+				//if (!isInvalidDebugCommand(t) && IsGameValid())
 #endif
 				)
 			{

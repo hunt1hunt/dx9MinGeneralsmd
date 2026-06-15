@@ -48,7 +48,7 @@
 
 #include "always.h"
 #include "dllist.h"
-#include "d3d8.h"
+#include "d3d8compat.h"
 #include "matrix4.h"
 #include "statistics.h"
 #include "wwstring.h"
@@ -321,7 +321,7 @@ public:
 	static void Set_DX8_Light(int index,D3DLIGHT8* light);
 	static void Set_DX8_Render_State(D3DRENDERSTATETYPE state, unsigned value);
 	static void Set_DX8_Clip_Plane(DWORD Index, CONST float* pPlane);
-	static void Set_DX8_Texture_Stage_State(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value);
+	static void Set_DX8_Texture_Stage_State(unsigned stage, unsigned state, unsigned value);
 	static void Set_DX8_Texture(unsigned int stage, IDirect3DBaseTexture8* texture);
 	static void Set_Light_Environment(LightEnvironmentClass* light_env);
 	static LightEnvironmentClass* Get_Light_Environment() { return Light_Environment; }
@@ -511,8 +511,9 @@ public:
 	// shader system udpates KJM v
 	static void Apply_Default_State();
 
-	static void Set_Vertex_Shader(DWORD vertex_shader);
-	static void Set_Pixel_Shader(DWORD pixel_shader);
+	static void Set_Vertex_Shader(IDirect3DVertexShader9* vertex_shader);
+	static void Set_Pixel_Shader(IDirect3DPixelShader9* pixel_shader);
+	static void Set_FVF(DWORD fvf);
 
 	static void Set_Vertex_Shader_Constant(int reg, const void* data, int count);
 	static void Set_Pixel_Shader_Constant(int reg, const void* data, int count);
@@ -539,11 +540,11 @@ public:
 	static bool Registry_Load_Render_Device( const char * sub_key, bool resize_window );
 
 	static const char* Get_DX8_Render_State_Name(D3DRENDERSTATETYPE state);
-	static const char* Get_DX8_Texture_Stage_State_Name(D3DTEXTURESTAGESTATETYPE state);
+	static const char* Get_DX8_Texture_Stage_State_Name(unsigned state);
 	static unsigned Get_DX8_Render_State(D3DRENDERSTATETYPE state) { return RenderStates[state]; }
 
 	// Names of the specific values of render states and texture stage states
-	static void Get_DX8_Texture_Stage_State_Value_Name(StringClass& name, D3DTEXTURESTAGESTATETYPE state, unsigned value);
+	static void Get_DX8_Texture_Stage_State_Value_Name(StringClass& name, unsigned state, unsigned value);
 	static void Get_DX8_Render_State_Value_Name(StringClass& name, D3DRENDERSTATETYPE state, unsigned value);
 
 	static const char* Get_DX8_Texture_Address_Name(unsigned value);
@@ -649,16 +650,23 @@ protected:
 	static D3DMATRIX						old_prj;
 
 	// shader system updates KJM v
-	static DWORD							Vertex_Shader;
-	static DWORD							Pixel_Shader;
+	static IDirect3DVertexShader9*		Vertex_Shader;
+	static IDirect3DPixelShader9*		Pixel_Shader;
 
 	static Vector4							Vertex_Shader_Constants[MAX_VERTEX_SHADER_CONSTANTS];
 	static Vector4							Pixel_Shader_Constants[MAX_PIXEL_SHADER_CONSTANTS];
-
+//
+//    static bool HasActiveSunSpecular()
+//	{
+//		return Light_Environment && Light_Environment->HasActiveSunSpecular();
+//	}
+//	
 	static LightEnvironmentClass*		Light_Environment;
 	static RenderInfoClass*				Render_Info;
 
 	static DWORD							Vertex_Processing_Behavior;
+
+	static int								_CurrentBaseVertex;
 
 	static ZTextureClass*				Shadow_Map[MAX_SHADOW_MAPS];
 
@@ -716,7 +724,7 @@ protected:
 };
 
 // shader system updates KJM v
-WWINLINE void DX8Wrapper::Set_Vertex_Shader(DWORD vertex_shader)
+WWINLINE void DX8Wrapper::Set_Vertex_Shader(IDirect3DVertexShader9* vertex_shader)
 {
 #if 0 //(gth) some code is bypassing this acessor function so we can't count on this variable...
 	// may be incorrect if shaders are created and destroyed dynamically
@@ -727,13 +735,18 @@ WWINLINE void DX8Wrapper::Set_Vertex_Shader(DWORD vertex_shader)
 	DX8CALL(SetVertexShader(Vertex_Shader));
 }
 
-WWINLINE void DX8Wrapper::Set_Pixel_Shader(DWORD pixel_shader)
+WWINLINE void DX8Wrapper::Set_Pixel_Shader(IDirect3DPixelShader9* pixel_shader)
 {
 	// may be incorrect if shaders are created and destroyed dynamically
 	if (Pixel_Shader==pixel_shader) return;
 
 	Pixel_Shader=pixel_shader;
 	DX8CALL(SetPixelShader(Pixel_Shader));
+}
+
+WWINLINE void DX8Wrapper::Set_FVF(DWORD fvf)
+{
+	DX8CALL(SetFVF(fvf));
 }
 
 WWINLINE void DX8Wrapper::Set_Vertex_Shader_Constant(int reg, const void* data, int count)
@@ -744,7 +757,7 @@ WWINLINE void DX8Wrapper::Set_Vertex_Shader_Constant(int reg, const void* data, 
 	if (memcmp(data, &Vertex_Shader_Constants[reg],memsize)==0) return;
 
 	memcpy(&Vertex_Shader_Constants[reg],data,memsize);
-	DX8CALL(SetVertexShaderConstant(reg,data,count));
+	DX8CALL(SetVertexShaderConstantF(reg, (const float*)data, count));
 }
 
 WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant(int reg, const void* data, int count)
@@ -755,7 +768,7 @@ WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant(int reg, const void* data, i
 	if (memcmp(data, &Pixel_Shader_Constants[reg],memsize)==0) return;
 
 	memcpy(&Pixel_Shader_Constants[reg],data,memsize);
-	DX8CALL(SetPixelShaderConstant(reg,data,count));
+	DX8CALL(SetPixelShaderConstantF(reg, (const float*)data, count));
 }
 // shader system updates KJM ^
 
@@ -896,10 +909,32 @@ WWINLINE void DX8Wrapper::Set_DX8_Clip_Plane(DWORD Index, CONST float* pPlane)
 	DX8CALL(SetClipPlane( Index, pPlane ));
 }
 
-WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value)
+WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State(unsigned stage, unsigned state, unsigned value)
 {
+	// D3D9: texture addressing/filter states moved to SetSamplerState
+	if (state >= 13 && state <= 21) {
+		static const D3DSAMPLERSTATETYPE sampMap[] = {
+			D3DSAMP_ADDRESSU,     // 13
+			D3DSAMP_ADDRESSV,     // 14
+			D3DSAMP_BORDERCOLOR,  // 15
+			D3DSAMP_MAGFILTER,    // 16
+			D3DSAMP_MINFILTER,    // 17
+			D3DSAMP_MIPFILTER,    // 18
+			D3DSAMP_MIPMAPLODBIAS,// 19
+			D3DSAMP_MAXMIPLEVEL,  // 20
+			D3DSAMP_MAXANISOTROPY // 21
+		};
+		DX8CALL(SetSamplerState(stage, sampMap[state - 13], value));
+		return;
+	}
+	if (state == 25) {
+		DX8CALL(SetSamplerState(stage, D3DSAMP_ADDRESSW, value));
+		return;
+	}
+
+
   	if (stage >= MAX_TEXTURE_STAGES)
-  	{	DX8CALL(SetTextureStageState( stage, state, value ));
+  	{	DX8CALL(SetTextureStageState( stage, (D3DTEXTURESTAGESTATETYPE)state, value ));
   		return;
   	}
 
@@ -917,7 +952,7 @@ WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State(unsigned stage, D3DTEXTURE
 #endif
 
 	TextureStageStates[stage][(unsigned int)state]=value;
-	DX8CALL(SetTextureStageState( stage, state, value ));
+	DX8CALL(SetTextureStageState( stage, (D3DTEXTURESTAGESTATETYPE)state, value ));
 	DX8_RECORD_TEXTURE_STAGE_STATE_CHANGE();
 }
 
@@ -947,12 +982,55 @@ WWINLINE void DX8Wrapper::_Copy_DX8_Rects(
   CONST POINT* pDestPointsArray
 )
 {
-	DX8CALL(CopyRects(
-  pSourceSurface,
-  pSourceRectsArray,
-  cRects,
-  pDestinationSurface,
-  pDestPointsArray));
+	// D3D9: CopyRects replaced by UpdateSurface.
+	// UpdateSurface only supports SYSTEMMEM→SYSTEMMEM or SYSTEMMEM→DEFAULT.
+	// If the destination surface is in MANAGED pool, UpdateSurface fails silently.
+	// Fall back to D3DXLoadSurfaceFromSurface which handles all pool combinations.
+
+	HRESULT hr = E_FAIL;
+
+	if (cRects == 1 && pSourceRectsArray && pDestPointsArray) {
+		RECT srcRect = *pSourceRectsArray;
+		POINT dstPt = *pDestPointsArray;
+		DX8_Assert();
+		hr = DX8Wrapper::_Get_D3D_Device8()->UpdateSurface(
+			pSourceSurface,
+			&srcRect,
+			pDestinationSurface,
+			&dstPt);
+		number_of_DX8_calls++;
+	} else {
+		DX8_Assert();
+		hr = DX8Wrapper::_Get_D3D_Device8()->UpdateSurface(
+			pSourceSurface,
+			NULL,
+			pDestinationSurface,
+			NULL);
+		number_of_DX8_calls++;
+	}
+
+	// Fallback: if UpdateSurface failed (e.g. MANAGED pool destination),
+	// use D3DXLoadSurfaceFromSurface which supports all pool types.
+	if (FAILED(hr)) {
+		if (cRects == 1 && pSourceRectsArray && pDestPointsArray) {
+			RECT srcRect = *pSourceRectsArray;
+			POINT dstPt = *pDestPointsArray;
+			RECT dstRect;
+			dstRect.left   = dstPt.x;
+			dstRect.top    = dstPt.y;
+			dstRect.right  = dstPt.x + (srcRect.right - srcRect.left);
+			dstRect.bottom = dstPt.y + (srcRect.bottom - srcRect.top);
+			D3DXLoadSurfaceFromSurface(
+				pDestinationSurface, NULL, &dstRect,
+				pSourceSurface, NULL, &srcRect,
+				D3DX_DEFAULT, 0);
+		} else {
+			D3DXLoadSurfaceFromSurface(
+				pDestinationSurface, NULL, NULL,
+				pSourceSurface, NULL, NULL,
+				D3DX_DEFAULT, 0);
+		}
+	}
 }
 
 WWINLINE Vector4 DX8Wrapper::Convert_Color(unsigned color)
@@ -1242,7 +1320,7 @@ WWINLINE void DX8Wrapper::Set_DX8_ZBias(int zbias)
 		DX8CALL(SetTransform(D3DTS_PROJECTION,(D3DMATRIX*)&tmp));
 	}
 	else {
-		Set_DX8_Render_State (D3DRS_ZBIAS, ZBias);
+		Set_DX8_Render_State (D3DRS_DEPTHBIAS, ZBias);
 	}
 }
 

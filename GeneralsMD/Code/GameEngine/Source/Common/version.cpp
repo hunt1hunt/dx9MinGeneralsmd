@@ -1,4 +1,4 @@
-/*
+﻿/*
 **	Command & Conquer Generals Zero Hour(tm)
 **	Copyright 2025 Electronic Arts Inc.
 **
@@ -39,12 +39,13 @@ Version::Version()
 	m_minor = 0;
 	m_buildNum = 0;
 	m_localBuildNum = 0;
-	m_buildUser = AsciiString("somebody");
+	m_buildUser = AsciiString("青蛙大大");
 	m_buildLocation = AsciiString("somewhere");
-#if defined _DEBUG || defined _INTERNAL
+#if defined _DEBUG || defined _INTERNAL || defined _release
 	m_showFullVersion = TRUE;
 #else
-	m_showFullVersion = FALSE;
+	//m_showFullVersion = FALSE;
+	m_showFullVersion = TRUE;
 #endif
 }
 
@@ -70,14 +71,19 @@ UnsignedInt Version::getVersionNumber( void )
 AsciiString Version::getAsciiVersion( void )
 {
 	AsciiString version;
-#if defined _DEBUG || defined _INTERNAL
+#if defined _DEBUG || defined _INTERNAL || defined _release
 	if (m_localBuildNum)
-		version.format("%d.%d.%d.%d%c%c", m_major, m_minor, m_buildNum, m_localBuildNum,
-			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1));
+		version.format("BY青蛙大大%d.%d.%d.%d%c%c", m_major, m_minor, m_buildNum, m_localBuildNum,
+			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
 	else
-		version.format("%d.%d.%d", m_major, m_minor, m_buildNum);
+		//version.format("%d.%d.%d", m_major, m_minor, m_buildNum);
+		version.format("BY青蛙大大%d.%d.%d.%d%c%c", m_major, m_minor, m_buildNum, m_localBuildNum,
+			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
 #else // defined _DEBUG || defined _INTERNAL
-	version.format("%d.%d", m_major, m_minor);
+	//version.format("BY青蛙大大", "%d.%d", m_major, m_minor);
+	version.format("BY青蛙大大%d.%d.%d.%d%c%c", m_major, m_minor, m_buildNum, m_localBuildNum,
+		m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
+	
 #endif // defined _DEBUG || defined _INTERNAL
 
 	return version;
@@ -87,24 +93,33 @@ UnicodeString Version::getUnicodeVersion( void )
 {
 	UnicodeString version;
 
-#if defined _DEBUG || defined _INTERNAL
+#if defined _DEBUG || defined _INTERNAL || defined _release
 	if (!m_localBuildNum)
-		version.format(TheGameText->fetch("Version:Format3").str(), m_major, m_minor, m_buildNum);
+		//version.format(TheGameText->fetch("Version:Format3").str(), m_major, m_minor, m_buildNum);
+		version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
+			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
 	else
 		version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
-			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1));
+			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
 #else // defined _DEBUG || defined _INTERNAL
-	version.format(TheGameText->fetch("Version:Format2").str(), m_major, m_minor);
+	//version.format(TheGameText->fetch("BY青蛙大大Version:Format2").str(), m_major, m_minor);
+	//version.format("BY青蛙大大", "%d.%d", m_major, m_minor);
+	version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
+		m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
 #endif // defined _DEBUG || defined _INTERNAL
 
 #ifdef _DEBUG
-	version.concat(UnicodeString(L" Debug"));
+	version.concat(UnicodeString(L"BY青蛙大大 Debug"));
 #endif
 
 #ifdef _INTERNAL
-	version.concat(UnicodeString(L" Internal"));
+	version.concat(UnicodeString(L"BY青蛙大大 Internal"));
 #endif
-
+	//version.concat(UnicodeString(L" BY青蛙大大"));
+	//return version;
+#ifdef _release
+	version.concat(UnicodeString(L"BY青蛙大大 release"));
+#endif
 	return version;
 }
 
@@ -113,26 +128,35 @@ UnicodeString Version::getFullUnicodeVersion( void )
 	UnicodeString version;
 
 	if (!m_localBuildNum)
-		version.format(TheGameText->fetch("Version:Format3").str(), m_major, m_minor, m_buildNum);
+		//version.format(TheGameText->fetch("Version:Format3").str(), m_major, m_minor, m_buildNum);
+		version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
+			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
+	//
 	else
 		version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
-			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1));
+			m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
 
 #ifdef _DEBUG
-	version.concat(UnicodeString(L" Debug"));
+	version.concat(UnicodeString(L"BY青蛙大大 Debug"));
 #endif
 
 #ifdef _INTERNAL
-	version.concat(UnicodeString(L" Internal"));
+	version.concat(UnicodeString(L"BY青蛙大大 Internal"));
 #endif
-
+	//version.concat(UnicodeString(L"BY 青蛙大大"));
+	//version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
+	//	m_buildUser.getCharAt(0), m_buildUser.getCharAt(1), m_buildUser.getCharAt(2), m_buildUser.getCharAt(3), m_buildUser.getCharAt(4));
+	//return version;
+#ifdef _release
+	version.concat(UnicodeString(L"BY青蛙大大 release"));
+#endif
 	return version;
 }
 
 AsciiString Version::getAsciiBuildTime( void )
 {
 	AsciiString timeStr;
-	timeStr.format("%s %s", m_buildDate.str(), m_buildTime.str());
+	timeStr.format("BY青蛙大大%s %s", m_buildDate.str(), m_buildTime.str());
 
 	return timeStr;
 }
@@ -145,8 +169,9 @@ UnicodeString Version::getUnicodeBuildTime( void )
 
 	dateStr.translate(m_buildDate);
 	timeStr.translate(m_buildTime);
-	build.format(TheGameText->fetch("Version:BuildTime").str(), dateStr.str(), timeStr.str());
-
+	//build.format(TheGameText->fetch("Version:BuildTime").str(), dateStr.str(), timeStr.str());
+	//RELEASE版本起作用的这句！！！使用16进制转义序列来代替，例如： L"BY\x9752\x86D9\x5927\x5927 %s %s"
+	build.format(L"BY\x9752\x86D9\x5927\x5927 %s %s", dateStr.str(), timeStr.str());
 	return build;
 }
 
@@ -168,7 +193,8 @@ UnicodeString Version::getUnicodeBuildLocation( void )
 
 AsciiString Version::getAsciiBuildUser( void )
 {
-	return AsciiString(m_buildUser);
+	//return AsciiString(m_buildUser);
+	return AsciiString("BY青蛙大大");
 }
 
 UnicodeString Version::getUnicodeBuildUser( void )
@@ -177,7 +203,7 @@ UnicodeString Version::getUnicodeBuildUser( void )
 	UnicodeString user;
 
 	user.translate(AsciiString(m_buildUser));
-	build.format(TheGameText->fetch("Version:BuildUser").str(), user.str());
+	build.format(TheGameText->fetch("BY青蛙大大Version:BuildUser").str(), user.str());
 
 	return build;
 }

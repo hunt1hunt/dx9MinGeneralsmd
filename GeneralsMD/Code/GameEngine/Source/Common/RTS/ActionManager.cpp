@@ -968,7 +968,9 @@ Bool ActionManager::canMakeObjectDefector( const Object *obj, const Object *obje
 	Relationship r = obj->getRelationship(objectToMakeDefector);
 
 	//Only make defectors of enemy objects
-	if( r != ENEMIES )
+	// 允许叛变敌人或中立对象（修改：增加了NEUTRAL关系）  
+      if( r != ENEMIES && r != NEUTRAL)
+	//if( r != ENEMIES )
 	{
 		return FALSE;
 	}
@@ -1719,21 +1721,70 @@ Bool ActionManager::canDoSpecialPowerAtObject( const Object *obj, const Object *
 
 			case SPECIAL_DEFECTOR:
 				//buildings do not defect
-				if( ! target->isKindOf( KINDOF_STRUCTURE ) )
+				//if( ! target->isKindOf( KINDOF_STRUCTURE ) )
+				//{
+					// only attacking type things will defect (no dozers, supply trucks, workers...)
+// srj sez: I don't know why this is commented out, but it should remain thus, because
+// it is not necessarily the case that dozers, workers, etc. cannot attack; they may
+// "attack" Mines to disarm them...
+//				if ( target->isKindOf( KINDOF_CAN_ATTACK ) )
+				//	{
+						//neutral or same-team units are worthless defectors 
+		//				if( r == ENEMIES || r == NEUTRAL )
+		//				{
+		//					return canMakeObjectDefector( obj, target, commandSource );
+		//				}
+
+
+
+						// 允许建筑物叛变（修改：移除了原有的建筑物排除逻辑）  
+		// 检查是否为敌人或中立关系  
+				if(r == ENEMIES || r == NEUTRAL)
+				{
+				//buildings do not defect
+				//if( ! target->isKindOf( KINDOF_STRUCTURE ) )
+				//	if (target->isKindOf(KINDOF_STRUCTURE || KINDOF_VEHICLE || KINDOF_INFANTRY || KINDOF_AIRCRAFT))
+					if (target->isKindOf(KINDOF_STRUCTURE))
+	//				if (target->isKindOf(KINDOF_SELECTABLE))
 				{
 					// only attacking type things will defect (no dozers, supply trucks, workers...)
 // srj sez: I don't know why this is commented out, but it should remain thus, because
 // it is not necessarily the case that dozers, workers, etc. cannot attack; they may
 // "attack" Mines to disarm them...
 //				if ( target->isKindOf( KINDOF_CAN_ATTACK ) )
+					// 建筑物必须是可捕获的类型  
+			//		if (!target->isKindOf(KINDOF_CAPTURABLE))
+			//		{
+			//			return FALSE;
+			//		}
+			//			if (target->isKindOf(IMMUNE_TO_CAPTURE))
+			//			{
+			//					return FALSE;
+			//			}
+					// 排除重建孔洞  
+			//		if (target->isKindOf(KINDOF_REBUILD_HOLE))
+			//		{
+			//			return FALSE;
+			//		}
+
+					// 建筑物不能处于建造中或被出售状态  
+					if (target->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION) || target->testStatus(OBJECT_STATUS_SOLD))
 					{
-						//neutral or same-team units are worthless defectors 
-						if( r == ENEMIES )
+						return FALSE;
+					}
+					
+					}
+					return canMakeObjectDefector(obj, target, commandSource);
+					{
+						//neutral or same-team units are worthless defectors
+						if (r == ENEMIES || r == NEUTRAL)
 						{
-							return canMakeObjectDefector( obj, target, commandSource );
+							return canMakeObjectDefector(obj, target, commandSource);
 						}
 					}
 				}
+				//	}
+				//}
 				break;
 
 			//These special powers require locations, not objects!

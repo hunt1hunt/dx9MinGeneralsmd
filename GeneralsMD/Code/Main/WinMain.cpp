@@ -58,6 +58,7 @@
 #include "GameLogic/GameLogic.h"  ///< @todo for demo, remove
 #include "GameClient/Mouse.h"
 #include "GameClient/IMEManager.h"
+//#include "GameClient/MetaEvent.h"          // 包含修正后的 KEY_STATE_ALT 和 ALT 定义
 #include "Win32Device/GameClient/Win32Mouse.h"
 #include "Win32Device/Common/Win32GameEngine.h"
 #include "Common/Version.h"
@@ -87,7 +88,7 @@ static HANDLE GeneralsMutex = NULL;
 #define DEFAULT_XRESOLUTION 800
 #define DEFAULT_YRESOLUTION 600
 
-extern void Reset_D3D_Device(bool active);
+//extern void Reset_D3D_Device(bool active);
 
 static Bool gInitializing = false;
 static Bool gDoPaint = true;
@@ -443,14 +444,34 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 			//-------------------------------------------------------------------------
 			case WM_ACTIVATEAPP:
 			{
+				//
+				// Guard against spurious deactivation messages that D3D9On12 fullscreen
+				// emulation may generate during device creation or window management.
+				// If our window is still the foreground window, a deactivation message
+				// cannot be legitimate -- ignore it to prevent the engine from entering
+				// an inactive state that breaks mouse click handling on the main menu.
+				//
+				if (!(bool)wParam && GetForegroundWindow() == ApplicationHWnd) {
+					return 0;
+				}
+
 //				DWORD threadId=GetCurrentThreadId();
 				if ((bool) wParam != isWinMainActive)
-				{	isWinMainActive = (BOOL) wParam;
+//				{	isWinMainActive = (BOOL) wParam;
+{
+					// TheSuperHackers @bugfix xezon 11/05/2025 This event originally called DX8Wrapper::Reset_Device,
+					// intended to clear resources on a lost device in fullscreen, but effectively also in
+					// windowed mode, if the DXMaximizedWindowedMode shim was applied in newer versions of Windows,
+					// which lead to unfortunate application crashing. Resetting the device on WM_ACTIVATEAPP instead
+					// of TestCooperativeLevel() == D3DERR_DEVICENOTRESET is not a requirement. There are other code
+					// paths that take care of that.
+
+					isWinMainActive = (BOOL) wParam;
 					
 					if (TheGameEngine)
 						TheGameEngine->setIsActive(isWinMainActive);
 
-					Reset_D3D_Device(isWinMainActive);
+//					Reset_D3D_Device(isWinMainActive);
 					if (isWinMainActive)
 					{	//restore mouse cursor to our custom version.
 						if (TheWin32Mouse)
@@ -740,6 +761,18 @@ static Bool initializeAppWindows( HINSTANCE hInstance, Int nCmdShow, Bool runWin
 	SetForegroundWindow(hWnd);
 	ShowWindow( hWnd, nCmdShow );
 	UpdateWindow( hWnd );
+
+	//
+	// D3D9On12 fullscreen emulation may interfere with normal window activation
+	// message delivery.  Set the activation flag proactively so that the game
+	// engine (created shortly after this function returns) does not start in an
+	// inactive state.  A spurious WM_ACTIVATEAPP(FALSE) during D3D device creation
+	// could otherwise leave the engine thinking the window is backgrounded, which
+	// breaks mouse click handling on the main menu until the user Alt+Tabs.
+	//
+	if (GetForegroundWindow() == hWnd) {
+		isWinMainActive = TRUE;
+	}
 
 	// save our application instance and window handle for future use
 	ApplicationHInstance = hInstance;

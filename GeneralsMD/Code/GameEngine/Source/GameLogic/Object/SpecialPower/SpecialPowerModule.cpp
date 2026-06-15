@@ -291,7 +291,16 @@ Bool SpecialPowerModule::isReady() const
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	// this is a cheat ... remove this for release!
 	if( TheGlobalData->m_specialPowerUsesDelay == FALSE )
-		return TRUE;
+	{  
+        const Object* obj = getObject();  
+        if (obj)  
+        {  
+            Player* player = obj->getControllingPlayer();  
+            if (player && player->isLocalPlayer())  
+                return TRUE;  
+        }  
+    }  
+	//	return TRUE;
 #endif
 
 	const Object* obj = getObject();
@@ -328,7 +337,16 @@ Real SpecialPowerModule::getPercentReady() const
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	if( TheGlobalData->m_specialPowerUsesDelay == FALSE ) 
-		return 1.0f;
+	{  
+        const Object* obj = getObject();  
+        if (obj)  
+        {  
+            Player* player = obj->getControllingPlayer();  
+            if (player && player->isLocalPlayer())  
+                return 1.0f;  
+        }  
+    }  
+	//	return 1.0f;
 #endif
 	
 	// easy case ... is ready
@@ -391,7 +409,16 @@ void SpecialPowerModule::startPowerRecharge()
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	// this is a cheat ... remove this for release!
 	if( TheGlobalData->m_specialPowerUsesDelay == FALSE ) 
-		return;
+	{  
+        const Object* obj = getObject();  
+        if (obj)  
+        {  
+            Player* player = obj->getControllingPlayer();  
+            if (player && player->isLocalPlayer())  
+                return;  
+        }  
+    }  
+//		return;
 #endif
 
 	const SpecialPowerModuleData *modData = getSpecialPowerModuleData();

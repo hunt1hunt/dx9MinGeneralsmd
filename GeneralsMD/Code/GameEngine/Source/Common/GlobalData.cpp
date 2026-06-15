@@ -220,83 +220,149 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "TerrainLightingMorningAmbient",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][0].ambient ) },
 	{ "TerrainLightingMorningDiffuse",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][0].diffuse ) },
 	{ "TerrainLightingMorningLightPos",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][0].lightPos ) },
+	{ "TerrainLightingMorningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_MORNING][0].specular) },  
+    { "TerrainLightingMorningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_MORNING][0].shininess) },
+	
 	{ "TerrainLightingAfternoonAmbient",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][0].ambient ) },
 	{ "TerrainLightingAfternoonDiffuse",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][0].diffuse ) },
 	{ "TerrainLightingAfternoonLightPos",	INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][0].lightPos ) },
+	{ "TerrainLightingAfternoonSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_AFTERNOON][0].specular) },  
+    { "TerrainLightingAfternoonShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_AFTERNOON][0].shininess) },
+	
 	{ "TerrainLightingEveningAmbient",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][0].ambient ) },
 	{ "TerrainLightingEveningDiffuse",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][0].diffuse ) },
 	{ "TerrainLightingEveningLightPos",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][0].lightPos ) },
+	{ "TerrainLightingEveningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_EVENING][0].specular) },  
+    { "TerrainLightingEveningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_EVENING][0].shininess) },
+	
 	{ "TerrainLightingNightAmbient",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][0].ambient ) },
 	{ "TerrainLightingNightDiffuse",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][0].diffuse ) },
 	{ "TerrainLightingNightLightPos",			INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][0].lightPos ) },
-
+    { "TerrainLightingNightSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_NIGHT][0].specular) },  
+    { "TerrainLightingNightShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_NIGHT][0].shininess) },
+	
 	{ "TerrainObjectsLightingMorningAmbient",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][0].ambient ) },
 	{ "TerrainObjectsLightingMorningDiffuse",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][0].diffuse ) },
 	{ "TerrainObjectsLightingMorningLightPos",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][0].lightPos ) },
+	{ "TerrainObjectsLightingMorningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_MORNING][0].specular) },  
+    { "TerrainObjectsLightingMorningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_MORNING][0].shininess) },
+	
 	{ "TerrainObjectsLightingAfternoonAmbient",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][0].ambient ) },
 	{ "TerrainObjectsLightingAfternoonDiffuse",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][0].diffuse ) },
 	{ "TerrainObjectsLightingAfternoonLightPos",	INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][0].lightPos ) },
+	{ "TerrainObjectsLightingAfternoonSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_AFTERNOON][0].specular) },  
+    { "TerrainObjectsLightingAfternoonShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_AFTERNOON][0].shininess) },
+	
 	{ "TerrainObjectsLightingEveningAmbient",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][0].ambient ) },
 	{ "TerrainObjectsLightingEveningDiffuse",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][0].diffuse ) },
 	{ "TerrainObjectsLightingEveningLightPos",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][0].lightPos ) },
+	{ "TerrainObjectsLightingEveningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_EVENING][0].specular) },  
+    { "TerrainObjectsLightingEveningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_EVENING][0].shininess) },
+	
 	{ "TerrainObjectsLightingNightAmbient",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][0].ambient ) },
 	{ "TerrainObjectsLightingNightDiffuse",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][0].diffuse ) },
 	{ "TerrainObjectsLightingNightLightPos",			INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][0].lightPos ) },
-
+    { "TerrainObjectsLightingNightSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_NIGHT][0].specular) },  
+    { "TerrainObjectsLightingNightShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_NIGHT][0].shininess) },
 	//Secondary global light	
 	{ "TerrainLightingMorningAmbient2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][1].ambient ) },
 	{ "TerrainLightingMorningDiffuse2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][1].diffuse ) },
 	{ "TerrainLightingMorningLightPos2",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][1].lightPos ) },
+	{ "TerrainLightingMorningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_MORNING][0].specular) },  
+    { "TerrainLightingMorningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_MORNING][0].shininess) },
+	
 	{ "TerrainLightingAfternoonAmbient2",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][1].ambient ) },
 	{ "TerrainLightingAfternoonDiffuse2",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][1].diffuse ) },
 	{ "TerrainLightingAfternoonLightPos2",	INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][1].lightPos ) },
+	{ "TerrainLightingAfternoonSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_AFTERNOON][0].specular) },  
+    { "TerrainLightingAfternoonShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_AFTERNOON][0].shininess) },
+	
 	{ "TerrainLightingEveningAmbient2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][1].ambient ) },
 	{ "TerrainLightingEveningDiffuse2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][1].diffuse ) },
 	{ "TerrainLightingEveningLightPos2",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][1].lightPos ) },
+	{ "TerrainLightingEveningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_EVENING][0].specular) },  
+    { "TerrainLightingEveningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_EVENING][0].shininess) },
+	
 	{ "TerrainLightingNightAmbient2",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][1].ambient ) },
 	{ "TerrainLightingNightDiffuse2",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][1].diffuse ) },
 	{ "TerrainLightingNightLightPos2",			INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][1].lightPos ) },
+    { "TerrainLightingNightSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_NIGHT][0].specular) },  
+    { "TerrainLightingNightShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_NIGHT][0].shininess) },
 
 	{ "TerrainObjectsLightingMorningAmbient2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][1].ambient ) },
 	{ "TerrainObjectsLightingMorningDiffuse2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][1].diffuse ) },
 	{ "TerrainObjectsLightingMorningLightPos2",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][1].lightPos ) },
+	{ "TerrainObjectsLightingMorningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_MORNING][0].specular) },  
+    { "TerrainObjectsLightingMorningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_MORNING][0].shininess) },
+	
 	{ "TerrainObjectsLightingAfternoonAmbient2",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][1].ambient ) },
 	{ "TerrainObjectsLightingAfternoonDiffuse2",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][1].diffuse ) },
 	{ "TerrainObjectsLightingAfternoonLightPos2",	INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][1].lightPos ) },
+	{ "TerrainObjectsLightingAfternoonSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_AFTERNOON][0].specular) },  
+    { "TerrainObjectsLightingAfternoonShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_AFTERNOON][0].shininess) },
+	
 	{ "TerrainObjectsLightingEveningAmbient2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][1].ambient ) },
 	{ "TerrainObjectsLightingEveningDiffuse2",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][1].diffuse ) },
 	{ "TerrainObjectsLightingEveningLightPos2",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][1].lightPos ) },
+	{ "TerrainObjectsLightingEveningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_EVENING][0].specular) },  
+    { "TerrainObjectsLightingEveningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_EVENING][0].shininess) },
+	
 	{ "TerrainObjectsLightingNightAmbient2",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][1].ambient ) },
 	{ "TerrainObjectsLightingNightDiffuse2",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][1].diffuse ) },
 	{ "TerrainObjectsLightingNightLightPos2",			INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][1].lightPos ) },
+    { "TerrainObjectsLightingNightSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_NIGHT][0].specular) },  
+    { "TerrainObjectsLightingNightShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_NIGHT][0].shininess) },
+
 
 	//Third global light
 	{ "TerrainLightingMorningAmbient3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][2].ambient ) },
 	{ "TerrainLightingMorningDiffuse3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][2].diffuse ) },
 	{ "TerrainLightingMorningLightPos3",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_MORNING ][2].lightPos ) },
+	{ "TerrainLightingMorningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_MORNING][0].specular) },  
+    { "TerrainLightingMorningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_MORNING][0].shininess) },
+	
 	{ "TerrainLightingAfternoonAmbient3",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][2].ambient ) },
 	{ "TerrainLightingAfternoonDiffuse3",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][2].diffuse ) },
 	{ "TerrainLightingAfternoonLightPos3",	INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_AFTERNOON ][2].lightPos ) },
+	{ "TerrainLightingAfternoonSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_AFTERNOON][0].specular) },  
+    { "TerrainLightingAfternoonShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_AFTERNOON][0].shininess) },
+	
 	{ "TerrainLightingEveningAmbient3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][2].ambient ) },
 	{ "TerrainLightingEveningDiffuse3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][2].diffuse ) },
 	{ "TerrainLightingEveningLightPos3",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_EVENING ][2].lightPos ) },
+	{ "TerrainLightingEveningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_EVENING][0].specular) },  
+    { "TerrainLightingEveningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_EVENING][0].shininess) },
+	
 	{ "TerrainLightingNightAmbient3",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][2].ambient ) },
 	{ "TerrainLightingNightDiffuse3",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][2].diffuse ) },
 	{ "TerrainLightingNightLightPos3",			INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainLighting[ TIME_OF_DAY_NIGHT ][2].lightPos ) },
+    { "TerrainLightingNightSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_NIGHT][0].specular) },  
+    { "TerrainLightingNightShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainLighting[TIME_OF_DAY_NIGHT][0].shininess) },
+
 
 	{ "TerrainObjectsLightingMorningAmbient3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][2].ambient ) },
 	{ "TerrainObjectsLightingMorningDiffuse3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][2].diffuse ) },
 	{ "TerrainObjectsLightingMorningLightPos3",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_MORNING ][2].lightPos ) },
+	{ "TerrainObjectsLightingMorningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_MORNING][0].specular) },  
+    { "TerrainObjectsLightingMorningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_MORNING][0].shininess) },
+	
 	{ "TerrainObjectsLightingAfternoonAmbient3",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][2].ambient ) },
 	{ "TerrainObjectsLightingAfternoonDiffuse3",		INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][2].diffuse ) },
 	{ "TerrainObjectsLightingAfternoonLightPos3",	INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_AFTERNOON ][2].lightPos ) },
+	{ "TerrainObjectsLightingAfternoonSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_AFTERNOON][0].specular) },  
+    { "TerrainObjectsLightingAfternoonShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_AFTERNOON][0].shininess) },
+	
 	{ "TerrainObjectsLightingEveningAmbient3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][2].ambient ) },
 	{ "TerrainObjectsLightingEveningDiffuse3",			INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][2].diffuse ) },
 	{ "TerrainObjectsLightingEveningLightPos3",		INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_EVENING ][2].lightPos ) },
+	{ "TerrainObjectsLightingEveningSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_EVENING][0].specular) },  
+    { "TerrainObjectsLightingEveningShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_EVENING][0].shininess) },
+	
 	{ "TerrainObjectsLightingNightAmbient3",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][2].ambient ) },
 	{ "TerrainObjectsLightingNightDiffuse3",				INI::parseRGBColor,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][2].diffuse ) },
 	{ "TerrainObjectsLightingNightLightPos3",			INI::parseCoord3D,			NULL,			offsetof( GlobalData, m_terrainObjectsLighting[ TIME_OF_DAY_NIGHT ][2].lightPos ) },
-
+    { "TerrainObjectsLightingNightSpecular",      INI::parseRGBColor,             NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_NIGHT][0].specular) },  
+    { "TerrainObjectsLightingNightShininess",     INI::parseReal,                 NULL,           offsetof(GlobalData, m_terrainObjectsLighting[TIME_OF_DAY_NIGHT][0].shininess) },
 	
 	{ "NumberGlobalLights",								INI::parseInt,				NULL,			offsetof( GlobalData, m_numGlobalLights)},
 	{ "InfantryLightMorningScale",				INI::parseReal,			NULL,			offsetof( GlobalData, m_infantryLightScale[TIME_OF_DAY_MORNING] ) },
@@ -547,6 +613,7 @@ GlobalData::GlobalData()
 	m_specialPowerUsesDelay = TRUE;
 #endif
   m_TiVOFastMode = FALSE;
+  m_gameSpeed = 0;
 
 #if defined(_DEBUG) || defined(_INTERNAL)
 	m_wireframe = 0;
@@ -730,6 +797,11 @@ GlobalData::GlobalData()
 			m_terrainLighting[ j ][i].lightPos.x=0;
 			m_terrainLighting[ j ][i].lightPos.y=0;
 			m_terrainLighting[ j ][i].lightPos.z=-1.0f;
+            // ---- 新增 specular 和 shininess 初始化 ---- 
+            m_terrainLighting[ j ][i].specular.red=0;  
+            m_terrainLighting[ j ][i].specular.green=0;  
+            m_terrainLighting[ j ][i].specular.blue=0;  
+            m_terrainLighting[ j ][i].shininess=0.0f;
 
 			m_terrainObjectsLighting[ j ][i].ambient.red=0;
 			m_terrainObjectsLighting[ j ][i].ambient.green=0;
@@ -740,6 +812,11 @@ GlobalData::GlobalData()
 			m_terrainObjectsLighting[ j ][i].lightPos.x=0;
 			m_terrainObjectsLighting[ j ][i].lightPos.y=0;
 			m_terrainObjectsLighting[ j ][i].lightPos.z=-1.0f;
+			// ---- 新增 specular 和 shininess 初始化 ----  
+            m_terrainObjectsLighting[ j ][i].specular.red=0;  
+            m_terrainObjectsLighting[ j ][i].specular.green=0;  
+            m_terrainObjectsLighting[ j ][i].specular.blue=0;  
+            m_terrainObjectsLighting[ j ][i].shininess=0.0f;  
 		}
 	}
 

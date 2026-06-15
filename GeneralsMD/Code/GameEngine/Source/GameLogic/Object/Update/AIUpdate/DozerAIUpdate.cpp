@@ -232,7 +232,7 @@ StateReturnType DozerActionPickActionPosState::update( void )
 	machine->setGoalObject( goalObject );
 	machine->setGoalPosition( &goalPos );
 	ai->ignoreObstacle(goalObject);
-	ai->aiMoveToPosition( &goalPos, CMD_FROM_AI );
+	//ai->aiMoveToPosition( &goalPos, CMD_FROM_AI );
 
 	return STATE_SUCCESS;
 
@@ -346,7 +346,8 @@ StateReturnType DozerActionMoveToActionPosState::update( void )
 	Real allowableDistanceSqr = sqr(max( MIN_ACTION_TOLERANCE, dozer->getGeometryInfo().getBoundingSphereRadius() + SLOP ));
 
 
-	if( distSqr <= allowableDistanceSqr )
+	//if( distSqr <= allowableDistanceSqr )
+	if (distSqr >= allowableDistanceSqr || distSqr <= allowableDistanceSqr)
 	{
 		if( m_task == DOZER_TASK_BUILD )
 		{
@@ -506,31 +507,32 @@ StateReturnType DozerActionDoActionState::update( void )
 			// if we need to select the dock location and move there do so
 			if( dozerAI->getBuildSubTask() == DOZER_SELECT_BUILD_DOCK_LOCATION )
 			{
-				const Coord3D *dockLocation = dozerAI->getDockPoint( m_task, DOZER_DOCK_POINT_ACTION );
-				if( dockLocation )
-					ai->aiMoveToPosition( dockLocation, CMD_FROM_AI );
+				//const Coord3D *dockLocation = dozerAI->getDockPoint( m_task, DOZER_DOCK_POINT_ACTION );
+				//if( dockLocation )
+				//	ai->aiMoveToPosition( dockLocation, CMD_FROM_AI );
 
 				// we're now moving to the dock location
-				dozerAI->setBuildSubTask( DOZER_MOVING_TO_BUILD_DOCK_LOCATION );
-
+				//dozerAI->setBuildSubTask( DOZER_MOVING_TO_BUILD_DOCK_LOCATION );
+                dozerAI->setBuildSubTask(DOZER_DO_BUILD_AT_DOCK);
 			}  // end if
 			
 			// if we're moving to the build dock location, when we become idle we are there
-			if( dozerAI->getBuildSubTask() == DOZER_MOVING_TO_BUILD_DOCK_LOCATION )
-			{
-				if( ai->isIdle() )
-				{
-					dozerAI->setBuildSubTask( DOZER_DO_BUILD_AT_DOCK );
+		//	if( dozerAI->getBuildSubTask() == DOZER_MOVING_TO_BUILD_DOCK_LOCATION )
+		//	{
+		//		if( ai->isIdle() )
+		//		{
+		//			dozerAI->setBuildSubTask( DOZER_DO_BUILD_AT_DOCK );
 					// Get the audio sound and start playing the construction sound (get the sound
 					// from the building itself)
-					dozerAI->startBuildingSound( goalObject->getTemplate()->getPerUnitSound( "UnderConstruction" ), goalObject->getID() );
-				}
-			}  // end if
+		//			dozerAI->startBuildingSound( goalObject->getTemplate()->getPerUnitSound( "UnderConstruction" ), goalObject->getID() );
+		//		}
+		//	}  // end if
 
 			// only do the build if we've moved into the dock position
 			if( dozerAI->getBuildSubTask() == DOZER_DO_BUILD_AT_DOCK )
 			{
-
+                dozerAI->startBuildingSound(goalObject->getTemplate()->getPerUnitSound("UnderConstruction"), goalObject->getID());
+				//这句开建声音部分从上面移下来，进入开建
 				// the builder is now actively constructing something
 				dozer->setModelConditionState( MODELCONDITION_ACTIVELY_CONSTRUCTING );
 				
@@ -656,7 +658,7 @@ StateReturnType DozerActionDoActionState::update( void )
 					}
 					// Our goal may be inside a building, if we are packing them in tight, so try adjusting. jba.
 					TheAI->pathfinder()->adjustToPossibleDestination(dozer, ai->getLocomotorSet(), &pos);
-					ai->aiMoveToPosition( &pos, CMD_FROM_AI );
+					//ai->aiMoveToPosition( &pos, CMD_FROM_AI );
 
 				}  // end if
 

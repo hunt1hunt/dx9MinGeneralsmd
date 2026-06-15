@@ -47,6 +47,8 @@
 #ifndef _ENERGY_H_
 #define _ENERGY_H_
 
+#include "Lib/BaseType.h"
+#include "Common/Debug.h"
 // INLCUDES /////////////////////////////////////////////////////////////////////////////////////
 #include "Common/Snapshot.h"
 
@@ -84,6 +86,12 @@ public:
 
 	Bool hasSufficientPower(void) const;
 	
+		// 在 Energy 类的 public 部分添加（约在第 88 行之后）  
+/// 给玩家增加电量（类似 Money 的 deposit 方法）  
+	void depositEnergy(Int amountToDeposit, Bool playSound = FALSE);
+
+	/// 从玩家扣除电量（类似 Money 的 withdraw 方法）  
+	Int withdrawEnergy(Int amountToWithdraw, Bool playSound = FALSE);
 	// If adding is false, we're supposed to be removing this.
 	void adjustPower(Int powerDelta, Bool adding);
 

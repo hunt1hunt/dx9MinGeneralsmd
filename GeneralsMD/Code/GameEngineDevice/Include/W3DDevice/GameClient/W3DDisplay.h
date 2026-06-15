@@ -163,6 +163,8 @@ protected:
 
 	Byte m_initialized;												///< TRUE when system is initialized
 	LightClass *m_myLight[LightEnvironmentClass::MAX_LIGHTS];										///< light hack for now
+	// ✅ 新增：存储每个光源的 shininess 高光参数（核心修复）
+    float m_sunShininess[LightEnvironmentClass::MAX_LIGHTS];
 	Render2DClass *m_2DRender;								///< interface for common 2D functions
 	IRegion2D m_clipRegion;									///< the clipping region for images
 	Bool m_isClippedEnabled;	///<used by 2D drawing operations to define clip re

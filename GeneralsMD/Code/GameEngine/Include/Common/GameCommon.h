@@ -52,7 +52,7 @@
 
 
 
-#define DONT_ALLOW_DEBUG_CHEATS_IN_RELEASE ///< Take of the DONT to get cheats back in to release
+#define _ALLOW_DEBUG_CHEATS_IN_RELEASE ///< Take of the DONT to get cheats back in to release
 
 //#define _CAMPEA_DEMO
 

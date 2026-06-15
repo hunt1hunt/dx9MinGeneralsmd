@@ -30,6 +30,25 @@
 #ifndef _H_MetaEvent
 #define _H_MetaEvent
 
+// ====== 【修复1】避免 windows.h 宏污染 KeyDefs.h ======
+//#define WIN32_LEAN_AND_MEAN
+//#include <windows.h>  // 为 VK_* 提供定义
+//#undef min            // 防止与 std::min 冲突
+//#undef max            // 防止与 std::max 冲突
+//#undef GetMessage     // 防止与 GameMessage 冲突
+//#undef CreateWindow   // 防止与项目函数冲突
+// =======================================================
+// =========================================
+
+// ====== 【必须确保位置】ALT 修正定义需在 KeyDefs.h 之前 ======
+#ifndef KEY_STATE_ALT
+#define KEY_STATE_ALT (KEY_STATE_LALT | KEY_STATE_RALT)
+#endif
+// =============================================================
+
+//#include "GameClient/KeyDefs.h"  // 此时 VK_* 已定义，KEY_ESC 等可正确解析
+// ... 后续原有代码保持不变 ...
+
 #include "Common/SubsystemInterface.h"
 #include "GameClient/InGameUI.h"
 
@@ -264,14 +283,19 @@ static const LookupListRec TransitionNames[] =
 	{ "DOUBLEDOWN",	DOUBLEDOWN },
 	{ NULL, 0	}// keep this last!
 };
-
+// MetaEvent.h 中必须有（您已修改，但需二次确认）
+#ifndef KEY_STATE_ALT
+#define KEY_STATE_ALT (KEY_STATE_LALT | KEY_STATE_RALT)
+//#endif
+// 且 ALT 枚举值 = KEY_STATE_ALT
 // -------------------------------------------------------------------------------
 // an easier-to-type subset of the KEY_STATE stuff.
 enum MappableKeyModState
 {
 	NONE							= 0,
 	CTRL							= KEY_STATE_LCONTROL,
-	ALT								= KEY_STATE_LALT,
+	//ALT								= KEY_STATE_LALT,
+	ALT								= KEY_STATE_ALT,
 	SHIFT							= KEY_STATE_LSHIFT,
 	CTRL_ALT					= CTRL|ALT,
 	SHIFT_CTRL				= SHIFT|CTRL,
@@ -327,6 +351,10 @@ public:
 	MappableKeyCategories		m_category;				///< This is the catagory the key falls under
 	UnicodeString						m_description;		///< The description string for the keys
 	UnicodeString						m_displayName;		///< The display name of our command
+
+	// ====== 【关键3】添加友元声明 ======
+    friend class MetaMap;  // 允许 MetaMap 访问 protected 析构/new/delete
+    // ==================================
 };
 EMPTY_DTOR(MetaMapRec)
 
@@ -367,10 +395,20 @@ public:
 	~MetaMap();
 
 	void init() { }
+	//void init();
 	void reset() { }
 	void update() { }
-
+   // void reset();
+   // void update();
 	static void parseMetaMap(INI* ini);
+//	MetaMapRec *getMetaMapRec(GameMessage::Type t);
+// 其他已有声明...
+// TheSuperHackers @info Function to generate default key mappings
+	// for actions that were not found in a CommandMap.ini
+    //static void generateMetaMap(); // 添加这行声明
+
+	void generateMetaMap();
+	
 	const MetaMapRec *getFirstMetaMapRec() const { return m_metaMaps; }
 };
 

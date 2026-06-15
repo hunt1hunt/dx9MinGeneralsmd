@@ -85,6 +85,11 @@ protected:
 		W3DVolumetricShadow *m_shadowList;
 		W3DVolumetricShadowRenderTask *m_dynamicShadowVolumesToRender;
 		W3DShadowGeometryManager *m_W3DShadowGeometryManager;
+		//
+// ---- ÐÂÔö£ºsoft shadow render target ----  		
+IDirect3DTexture8  *m_softShadowRT;  		
+IDirect3DSurface8  *m_softShadowSurface;
+		//
 };  // end class W3DVolumetricShadowManager
 
 extern W3DVolumetricShadowManager *TheW3DVolumetricShadowManager;

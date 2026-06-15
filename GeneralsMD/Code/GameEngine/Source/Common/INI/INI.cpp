@@ -1532,7 +1532,7 @@ void INI::initFromINIMulti( void *what, const MultiIniFieldParse& parseTableList
 				{
 					DEBUG_ASSERTCRASH( 0, ("[LINE: %d - FILE: '%s'] Unknown field '%s' in block '%s'\n",
 														 INI::getLineNum(), INI::getFilename().str(), field, m_curBlockStart) );
-					throw INI_UNKNOWN_TOKEN;
+				//	throw INI_UNKNOWN_TOKEN;
 				}
 
 			}  // end else

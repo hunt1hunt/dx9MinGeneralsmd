@@ -269,6 +269,8 @@ public:
 		MSG_META_CAMERA_RESET,
     MSG_META_TOGGLE_CAMERA_TRACKING_DRAWABLE,
 		MSG_META_TOGGLE_FAST_FORWARD_REPLAY,	      ///< Toggle the fast forward feature
+		MSG_META_TOGGLE_PAUSE,               // 添加
+        MSG_META_STEP_FRAME,                 // 添加
 		MSG_META_DEMO_INSTANT_QUIT,									///< bail out of game immediately
 
     
@@ -287,7 +289,27 @@ public:
 		MSG_CHEAT_KILL_SELECTION,								///< kill the selected units (yeah!)
 		MSG_CHEAT_TOGGLE_HAND_OF_GOD_MODE,			///< do 100% damage to the selected units (w00t!)
 		MSG_CHEAT_INSTANT_BUILD,								///< All building is with a timer of 1
-		MSG_CHEAT_DESHROUD,											///< de-shroud the world for the local player
+		MSG_CHEAT_REMOVE_PREREQ,								///< Turn of Prerequisite checks in building legality
+		//MSG_CHEAT_INSTANT_BUILD,								///< All building is with a timer of 1
+		MSG_CHEAT_FREE_BUILD,										///< All building is for 0 money
+		MSG_CHEAT_qingwaGOD_MODE,                     ///< All units are invincible, works in MULTIPLAYER for all humans
+       MSG_CHEAT_UNLIMITED_AMMO,               ///< Toggle unlimited ammo for local player
+       MSG_CHEAT_BEGIN_ADJUST_PITCH,						///< enter adjust-pitch mode
+       MSG_CHEAT_END_ADJUST_PITCH,							///< exit adjust-pitch mode
+       MSG_CHEAT_BEGIN_ADJUST_FOV,							///< enter adjust-FOV mode
+       MSG_CHEAT_END_ADJUST_FOV,								///< exit adjust-FOV mode
+		
+	    MSG_CHEAT_GIVE_VETERANCY,							///< give a veterancy level to selected objects
+		MSG_CHEAT_TAKE_VETERANCY,							///< take a veterancy level from selected objects
+        MSG_CHEAT_GIVE_RANKLEVEL,								///< up one RankLevel
+		MSG_CHEAT_TAKE_RANKLEVEL,								///< up one RankLevel
+	   MSG_CHEAT_qw_wudi_MODE,
+		MSG_CHEAT_SPAWN_DOZER,                     ///< Spawn a dozer at mouse position
+// 新增作弊生成载具的枚举值（添加到枚举末尾）
+        //MSG_CHEAT_SPAWN_DOZER,
+       // MSG_CHEAT_SPAWN_HUMVEE,
+
+	   MSG_CHEAT_DESHROUD,											///< de-shroud the world for the local player
 		MSG_CHEAT_ADD_CASH,											///< adds 10000 cash to the player
 		MSG_CHEAT_GIVE_ALL_SCIENCES,						///< grant all grantable sciences
 		MSG_CHEAT_GIVE_SCIENCEPURCHASEPOINTS,		///< give yourself an SPP (but no rank change)
@@ -341,6 +363,8 @@ public:
 		MSG_META_DEMO_REMOVE_PREREQ,								///< Turn of Prerequisite checks in building legality
 		MSG_META_DEMO_INSTANT_BUILD,								///< All building is with a timer of 1
 		MSG_META_DEMO_FREE_BUILD,										///< All building is for 0 money
+		MSG_META_DEMO_qingwaGOD_MODE,                     ///< All units are invincible, works in MULTIPLAYER for all humans
+		 MSG_META_DEMO_UNLIMITED_AMMO,               ///< Toggle unlimited ammo for local player
 		MSG_META_DEMO_RUNSCRIPT1,										///< run script named "KEY_F1"
 		MSG_META_DEMO_RUNSCRIPT2,										///< run script named "KEY_F2"
 		MSG_META_DEMO_RUNSCRIPT3,										///< run script named "KEY_F3"

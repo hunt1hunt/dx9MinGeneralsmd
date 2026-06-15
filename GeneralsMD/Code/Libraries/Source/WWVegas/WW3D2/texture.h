@@ -56,10 +56,19 @@
 #include "vector3.h"
 #include "texturefilter.h"
 
+#include "d3d8compat.h"
+
+#ifndef D3D8COMPAT_H
 struct IDirect3DBaseTexture8;
 struct IDirect3DTexture8;
 struct IDirect3DCubeTexture8;
 struct IDirect3DVolumeTexture8;
+#else
+struct IDirect3DBaseTexture9;
+struct IDirect3DTexture9;
+struct IDirect3DCubeTexture9;
+struct IDirect3DVolumeTexture9;
+#endif
 
 class DX8Wrapper;
 class TextureLoader;

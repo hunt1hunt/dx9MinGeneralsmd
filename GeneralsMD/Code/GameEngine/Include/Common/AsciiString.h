@@ -454,7 +454,8 @@ inline void AsciiString::set(const AsciiString& stringSrc)
 	{
     // do not call releaseBuffer(); here, it locks the CS twice
     // from the same thread which is illegal using fast CS's
-		if (m_data)
+	//if (m_data)
+		if (m_data != NULL)
     {
       InterlockedDecrement((long *)&m_data->m_refCount);
 		  if (!m_data->m_refCount)

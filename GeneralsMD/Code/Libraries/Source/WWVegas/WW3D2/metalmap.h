@@ -71,6 +71,10 @@ public:
 		Vector3	DiffuseColor;
 		Vector3	SpecularColor;
 		float		Shininess;
+ // 新增：白色核心阈值，范围 [0,1]，越大白心越小
+// 例如 0.85 = 只有最亮的 15% 区域泛白  
+		float    WhiteThreshold;   
+                              
 	};
 
 	// Create metal map manager with maps specified by INI file

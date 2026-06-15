@@ -46,10 +46,13 @@
 #endif
 
 #include "always.h"
+#include "d3d8compat.h"
 #include "texture.h"
 
 class StringClass;
+#ifndef D3D8COMPAT_H
 struct IDirect3DTexture8;
+#endif
 class TextureLoadTaskClass;
 
 class TextureLoader

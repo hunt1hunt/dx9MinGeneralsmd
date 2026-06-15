@@ -361,8 +361,9 @@ Object *BuildAssistant::buildObjectNow( Object *constructorObject, const ThingTe
 	{
 		// totally bogus. We tried to move our units out of the way, but they wouldn't. 
 		// Chode-boys.
-		if (owningPlayer->getPlayerType()==PLAYER_HUMAN) {
-			return NULL;	// ai gets to cheat.  jba.
+		//if (owningPlayer->getPlayerType()==PLAYER_HUMAN) {
+		if (owningPlayer->getPlayerType()==PLAYER_HUMAN||owningPlayer->getPlayerType()==PLAYER_COMPUTER) {
+		//	return NULL;	// ai gets to cheat.  jba.
 		}
 	}
 
@@ -708,7 +709,8 @@ LegalBuildCode BuildAssistant::isLocationClearOfObjects( const Coord3D *worldPos
 		{
 			if( them->testStatus( OBJECT_STATUS_IS_USING_ABILITY ) || them->getAI() && them->getAI()->isBusy() )
 			{
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
 		}
 
@@ -735,9 +737,11 @@ LegalBuildCode BuildAssistant::isLocationClearOfObjects( const Coord3D *worldPos
 			if( feedbackWithFailure )
 			{
 				TheTerrainVisual->addFactionBib( them, TRUE );
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
-			return LBC_GENERIC_FAILURE;
+			//return LBC_GENERIC_FAILURE;
+			return LBC_OK;
 		}
 
 		if( them->isDisabled() )
@@ -746,9 +750,11 @@ LegalBuildCode BuildAssistant::isLocationClearOfObjects( const Coord3D *worldPos
 			if( feedbackWithFailure )
 			{
 				TheTerrainVisual->addFactionBib( them, TRUE );
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
-			return LBC_GENERIC_FAILURE;
+			//return LBC_GENERIC_FAILURE;
+			return LBC_OK;
 		}
 
 		//
@@ -760,9 +766,11 @@ LegalBuildCode BuildAssistant::isLocationClearOfObjects( const Coord3D *worldPos
 			if( feedbackWithFailure )
 			{
 				TheTerrainVisual->addFactionBib( them, TRUE );
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
-			return LBC_GENERIC_FAILURE;
+			//return LBC_GENERIC_FAILURE;
+			return LBC_OK;
 		}
 
 	}  // end for, them
@@ -867,7 +875,8 @@ LegalBuildCode BuildAssistant::isLocationClearOfObjects( const Coord3D *worldPos
 		if (ThePartitionManager->geomCollidesWithGeom(them->getPosition(), hisBounds, them->getOrientation(), 
 			worldPos, myBounds, angle)) {
 			TheTerrainVisual->addFactionBib(them, true);
-			return LBC_OBJECTS_IN_THE_WAY;
+			//return LBC_OBJECTS_IN_THE_WAY;
+			return LBC_OK;
 		}
 		if (!checkMyExit && !checkHisExit && !hisExtraWidth && !myExtraWidth) 
 		{
@@ -880,19 +889,22 @@ LegalBuildCode BuildAssistant::isLocationClearOfObjects( const Coord3D *worldPos
 			if (checkMyExit && ThePartitionManager->geomCollidesWithGeom(them->getPosition(), hisBounds, them->getOrientation(), 
 				&myExitPos, myGeom, angle)) {
 				TheTerrainVisual->addFactionBib(them, true);
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
 			// Check for overlap of his exit rectangle with my geom info
 			if (checkHisExit && ThePartitionManager->geomCollidesWithGeom(&hisExitPos, hisGeom, them->getOrientation(), 
 					worldPos, myBounds, angle)) {
 				TheTerrainVisual->addFactionBib(them, true);
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
 			// Check both exit rectangles together.
 			if (checkMyExit&&checkHisExit&&ThePartitionManager->geomCollidesWithGeom(&hisExitPos, hisGeom, them->getOrientation(), 
 					&myExitPos, myGeom, angle)) {
 				TheTerrainVisual->addFactionBib(them, true);
-				return LBC_OBJECTS_IN_THE_WAY;
+				//return LBC_OBJECTS_IN_THE_WAY;
+				return LBC_OK;
 			}
 		}
 
@@ -917,7 +929,8 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 	Region3D mapExtent;
 	TheTerrainLogic->getMaximumPathfindExtent(&mapExtent);
 	if (!mapExtent.isInRegionNoZ(worldPos)) {
-		return LBC_RESTRICTED_TERRAIN;
+		//return LBC_RESTRICTED_TERRAIN;
+		return LBC_OK;
 	}
 
 	// check shroud level
@@ -933,7 +946,8 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 			DEBUG_ASSERTCRASH(playerIndex >= 0, ("isLocationLegalToBuild() needs a builderObject with a team to check for shroud"));
 			if( ThePartitionManager->getShroudStatusForPlayer(playerIndex, x, y) != CELLSHROUD_CLEAR )
 			{
-				return LBC_SHROUD;
+				//return LBC_SHROUD;
+				return LBC_OK;
 			}
 		}
 	}
@@ -948,7 +962,8 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 		LegalBuildCode code = isLocationClearOfObjects(worldPos, build, angle, builderObject, options, player);
 		if( code != LBC_OK )
 		{
-			return code;
+			//return code;
+			return LBC_OK;
 		}
 
 	}  // end if
@@ -961,7 +976,8 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 		LegalBuildCode code = isLocationClearOfObjects(worldPos, build, angle, builderObject, options, player);
 		if( code != LBC_OK )
 		{
-			return code;
+			//return code;
+			return LBC_OK;
 		}
 	}  // end if
 
@@ -988,7 +1004,8 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 						tooClose->getOrientation()))
 			{
 				TheTerrainVisual->addFactionBib(tooClose, true, TheGlobalData->m_SupplyBuildBorder);
-				return LBC_TOO_CLOSE_TO_SUPPLIES;
+				//return LBC_TOO_CLOSE_TO_SUPPLIES;
+				return LBC_OK;
 			}
 		}
 	}
@@ -1006,10 +1023,12 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 		// actually being able to get to the destination */
 		//
 		if( ai == NULL )
-			return LBC_NO_CLEAR_PATH;
+			//return LBC_NO_CLEAR_PATH;
+		return LBC_OK;
 
 		if( ai->isQuickPathAvailable( worldPos ) == FALSE )
-				return LBC_NO_CLEAR_PATH;
+				//return LBC_NO_CLEAR_PATH;
+			return LBC_OK;
 
 	}  // end if
 
@@ -1029,7 +1048,8 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 
 		if (TheTerrainLogic->getLayerForDestination(worldPos) != LAYER_GROUND) {
 			// we're on a bridge.   This is somewhat restricted.
-			return LBC_RESTRICTED_TERRAIN;
+			//return LBC_RESTRICTED_TERRAIN;
+			return LBC_OK;
 		}
 
 		//
@@ -1046,19 +1066,23 @@ LegalBuildCode BuildAssistant::isLocationLegalToBuild( const Coord3D *worldPos,
 		iterateFootprint( build, angle, worldPos, 3*sampleResolution, 
 		                  checkSampleBuildLocation, &sampleData );
 		if( sampleData.terrainRestricted == TRUE )
-			return LBC_RESTRICTED_TERRAIN;
+			//return LBC_RESTRICTED_TERRAIN;
+		return LBC_OK;
 		// check if the height across the whole footprint area is too varied (not flat enough)
 		if( sampleData.hiZ - sampleData.loZ > TheGlobalData->m_allowedHeightVariationForBuilding )
-			return LBC_NOT_FLAT_ENOUGH;
+			//return LBC_NOT_FLAT_ENOUGH;
+		return LBC_OK;
 
 		// careful check at full res.
 		iterateFootprint( build, angle, worldPos, sampleResolution, 
 		                  checkSampleBuildLocation, &sampleData );
 		if( sampleData.terrainRestricted == TRUE )
-			return LBC_RESTRICTED_TERRAIN;
+			//return LBC_RESTRICTED_TERRAIN;
+		return LBC_OK;
 		// check if the height across the whole footprint area is too varied (not flat enough)
 		if( sampleData.hiZ - sampleData.loZ > TheGlobalData->m_allowedHeightVariationForBuilding )
-			return LBC_NOT_FLAT_ENOUGH;
+			//return LBC_NOT_FLAT_ENOUGH;
+		return LBC_OK;
 
 	}  // end if
 

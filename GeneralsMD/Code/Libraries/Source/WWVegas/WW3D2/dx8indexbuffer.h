@@ -44,13 +44,16 @@
 #define DX8INDEXBUFFER_H
 
 #include "always.h"
+#include "d3d8compat.h"
 #include "wwdebug.h"
 #include "refcount.h"
 #include "sphere.h"
 
 class DX8Wrapper;
 class SortingRendererClass;
+#ifndef D3D8COMPAT_H
 struct IDirect3DIndexBuffer8;
+#endif
 class DX8IndexBufferClass;
 class SortingIndexBufferClass;
 

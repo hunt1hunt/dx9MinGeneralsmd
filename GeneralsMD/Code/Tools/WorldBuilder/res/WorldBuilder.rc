@@ -434,9 +434,12 @@ CAPTION "About Generals World Builder"
 FONT 8, "MS Sans Serif"
 BEGIN
     CONTROL         228,IDC_STATIC,"Static",SS_BITMAP,0,0,167,215
-    LTEXT           "WorldBuilder Version 0.8",IDC_STATIC,179,31,79,8,
+   // LTEXT           "WorldBuilder Version 0.8",IDC_STATIC,179,31,79,8,
+  // LTEXT           "WorldBuilder \x9752\x86D9\x5927\x5927\x5168\x5C40\x5149\x4F18\x5316 0.8",IDC_STATIC,179,31,79,8,
+  LTEXT           "WorldBuilder qingwada",IDC_STATIC,179,31,79,8,
                     SS_NOPREFIX
-    LTEXT           "Copyright (C) 2003",IDC_STATIC,179,41,71,8
+   // LTEXT           "Copyright (C) 2003",IDC_STATIC,179,41,71,8
+   LTEXT           "Copyright (C) qingwa",IDC_STATIC,179,41,71,8
     DEFPUSHBUTTON   "OK",IDOK,189,7,50,14,WS_GROUP
 END
 

@@ -432,12 +432,21 @@ void Player::init(const PlayerTemplate* pt)
 	m_unitsShouldHunt = FALSE;
 
 #if defined(_DEBUG) || defined(_INTERNAL)
-	m_DEMO_ignorePrereqs = FALSE;
-	m_DEMO_freeBuild = FALSE;
+	m_DEMO_ignorePrereqs = FALSE;//TRUE;
+	m_DEMO_freeBuild = TRUE;//FALSE;//TRUE;
+	 m_DEMO_godMode = FALSE;
+	//m_DEMO_ignorePrereqs = enable
+	//m_DEMO_freeBuild = enable
+	m_DEMO_instantBuild = FALSE;
 #endif
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	m_DEMO_instantBuild = FALSE;
+	m_DEMO_freeBuild = TRUE;
+	m_DEMO_ignorePrereqs = FALSE;//TRUE;
+    m_DEMO_godMode = FALSE;
+	m_qwwudiSelectionMode = FALSE;
+	m_DEMO_unlimitedAmmo = FALSE;
 #endif
 
 	if (pt)
@@ -1295,7 +1304,12 @@ static void doFindSpecialPowerSourceObject( Object *obj, void *userData )
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 				// Everything is ready if timers are debug off'd
 				if( ! TheGlobalData->m_specialPowerUsesDelay )
-					readyFrame = 0;
+				{  
+        Player* ownerPlayer = obj->getControllingPlayer();  
+        if (ownerPlayer && ownerPlayer->isLocalPlayer())  
+            readyFrame = 0;  
+    }  
+			//		readyFrame = 0;
 #endif
 				// A disabled guy should only be considered as a last resort.  We need it to be counted
 				// so that a disabled button can appear on the shortcut.
@@ -1352,7 +1366,12 @@ static void doCountSpecialPowersReady( Object *obj, void *userData )
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 				// Everything is ready if timers are debug off'd
 				if( ! TheGlobalData->m_specialPowerUsesDelay )
-					readyFrame = 0;
+{  
+        Player* ownerPlayer = obj->getControllingPlayer();  
+        if (ownerPlayer && ownerPlayer->isLocalPlayer())  
+            readyFrame = 0;  
+    }  
+		//			readyFrame = 0;
 #endif
 
 				// A disabled guy should only be considered as a last resort.  We do not want him counted here
@@ -2938,7 +2957,7 @@ Bool Player::canBuild(const ThingTemplate *tmplate) const
 				prereqsOK = false;
 		}
 
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 		if (ignoresPrereqs())
 			prereqsOK = true;
 #endif

@@ -95,7 +95,7 @@
 #include "ImpassableOptions.h"
 
 
-#include <d3dx8.h>
+#include <d3d8compat.h>
 
 #ifdef _INTERNAL
 // for occasional debugging...

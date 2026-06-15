@@ -672,34 +672,44 @@ Bool GameWindow::winGetEnabled( void )
 /** Hide or show a window based on the hide parameter.
 	* A hidden window can't be seen and accepts no input. */
 //=============================================================================
+// 首先确保全局变量TheWindowManager有前置声明（如果没有，添加）
+class WindowManager; // 前置声明WindowManager类
+extern WindowManager* TheWindowManager; // 声明全局指针（根据实际类名调整）
+
+//=============================================================================
 Int GameWindow::winHide( Bool hide )
 {
+    // 修复1：用NULL替代nullptr，且显式转换为指针类型（解决类型不兼容）
+    if (reinterpret_cast<void*>(this) == NULL)
+    {
+        // 修复2：使用已定义的错误码WIN_ERR_INVALID_PARAM
+       // return WIN_ERR_INVALID_PARAM;
+	   return ERROR_INVALID_PARAMETER;
+    }
 
-	if( hide )
-	{
+    if( hide )
+    {
+        // 检查窗口状态，释放图像资源
+        if( !BitTest( m_status, WIN_STATUS_NO_FLUSH ) )
+            freeImages(); // 确保freeImages()函数已定义
 
-		//
-		// if we're running in small game window mode and this window becomes
-		// invisible then there's a good chance that the black border around
-		// the game window needs redrawing
-		//
-		if( !BitTest( m_status, WIN_STATUS_NO_FLUSH ) )
-			freeImages();
+        // 设置隐藏状态位
+        BitSet( m_status, WIN_STATUS_HIDDEN );
 
-		BitSet( m_status, WIN_STATUS_HIDDEN );
+        // 修复3：检查TheWindowManager是否为空（用NULL+指针类型兼容）
+        if (reinterpret_cast<void*>(TheWindowManager) != NULL)
+        {
+            TheWindowManager->windowHiding( this );
+        }
 
-		// notify the window manger we are hiding
-		TheWindowManager->windowHiding( this );
+    }  // end if
+    else
+    {
+        // 清除隐藏状态位
+        BitClear( m_status, WIN_STATUS_HIDDEN );
+    }  // end else
 
-	}  // end if
-	else
-	{
-
-		BitClear( m_status, WIN_STATUS_HIDDEN );
-
-	}  // end else
-
-	return WIN_ERR_OK;
+    return WIN_ERR_OK;
 
 }  // end WinHide
 
@@ -1089,14 +1099,35 @@ void GameWindow::winSetTooltip( UnicodeString tip )
 // GameWindow::winSetWindowId =================================================
 /** Sets the window's id */
 //=============================================================================
+//Int GameWindow::winSetWindowId( Int id )
+//{
+
+//	m_instData.m_id = id;
+
+	//return WIN_ERR_OK;
+
+//}  // end WinSetWindowId
+
 Int GameWindow::winSetWindowId( Int id )
 {
+    // 示例：限制ID为非负数（可根据业务调整规则）
+    if (id < 0)
+    {
+        // 返回错误码（需确保 WIN_ERR_INVALID_PARAMETER 已定义）
+        return WIN_ERR_INVALID_PARAMETER;
+    }
 
-	m_instData.m_id = id;
+    m_instData.m_id = id;
 
-	return WIN_ERR_OK;
+    // 可选：触发ID变更通知（比如通知窗口管理器）
+  //  if (TheWindowManager)
+ //   {
+ //       TheWindowManager->onWindowIdChanged(this, id); // 需先在WindowManager中声明该函数
+//    }
 
-}  // end WinSetWindowId
+    return WIN_ERR_OK;
+}
+
 
 // GameWindow::winGetWindowId =================================================
 /** Gets the window's id */

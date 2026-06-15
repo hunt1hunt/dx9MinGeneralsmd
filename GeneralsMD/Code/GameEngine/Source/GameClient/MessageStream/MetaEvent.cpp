@@ -30,6 +30,11 @@
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
+//#include "Common/GameUtility.h"
+//#include <afx.h>
+//#include <cassert>
+//#include "cassert"
+#include <string>
 #include "Common/INI.h"
 #include "Common/MessageStream.h"
 #include "Common/Player.h"
@@ -51,10 +56,15 @@
 #include "GameClient/MetaEvent.h"
 
 #include "GameLogic/GameLogic.h" // for TheGameLogic->getFrame()
+//
+#include "Common/GameEngine.h"   // for TheGameEngine->getFramesPerSecondLimit()
+//
+
 
 
 #define dont_DUMP_ALL_KEYS_TO_LOG
 
+//static bool s_metaMapInitialized = false;
 
 #ifdef DUMP_ALL_KEYS_TO_LOG
 #include "GameClient\Keyboard.h"
@@ -198,17 +208,36 @@ static const LookupListRec GameMessageMetaTypeNames[] =
   { "CHEAT_SWITCH_TEAMS",							        	GameMessage::MSG_CHEAT_SWITCH_TEAMS },															
 	{ "CHEAT_KILL_SELECTION",						        	GameMessage::MSG_CHEAT_KILL_SELECTION },													
 	{ "CHEAT_TOGGLE_HAND_OF_GOD_MODE",		        GameMessage::MSG_CHEAT_TOGGLE_HAND_OF_GOD_MODE },					
-	{ "CHEAT_INSTANT_BUILD",							        GameMessage::MSG_CHEAT_INSTANT_BUILD },															
+	{ "CHEAT_INSTANT_BUILD",							        GameMessage::MSG_CHEAT_INSTANT_BUILD },
+	{ "CHEAT_FREE_BUILD",							        GameMessage::MSG_CHEAT_FREE_BUILD },
+  { "CHEAT_REMOVE_PREREQ",							        GameMessage::MSG_CHEAT_REMOVE_PREREQ },
+{ "CHEAT_UNLIMITED_AMMO",                     GameMessage::MSG_CHEAT_UNLIMITED_AMMO },
+{ "CHEAT_qingwaGOD_MODE",                     GameMessage::MSG_CHEAT_qingwaGOD_MODE },
+
+{ "CHEAT_BEGIN_ADJUST_PITCH",									GameMessage::MSG_CHEAT_BEGIN_ADJUST_PITCH },
+{ "CHEAT_END_ADJUST_PITCH",										GameMessage::MSG_CHEAT_END_ADJUST_PITCH },
+{ "CHEAT_BEGIN_ADJUST_FOV",										GameMessage::MSG_CHEAT_BEGIN_ADJUST_FOV },
+{ "CHEAT_END_ADJUST_FOV",											GameMessage::MSG_CHEAT_END_ADJUST_FOV },															
 	{ "CHEAT_DESHROUD",									          GameMessage::MSG_CHEAT_DESHROUD },																			
 	{ "CHEAT_ADD_CASH",									          GameMessage::MSG_CHEAT_ADD_CASH },																			
 	{ "CHEAT_GIVE_ALL_SCIENCES",					        GameMessage::MSG_CHEAT_GIVE_ALL_SCIENCES },											
   { "CHEAT_GIVE_SCIENCEPURCHASEPOINTS",        	GameMessage::MSG_CHEAT_GIVE_SCIENCEPURCHASEPOINTS },
+  
+ { "CHEAT_GIVE_RANKLEVEL",											GameMessage::MSG_CHEAT_GIVE_RANKLEVEL },
+	{ "CHEAT_TAKE_RANKLEVEL",											GameMessage::MSG_CHEAT_TAKE_RANKLEVEL },
+ { "CHEAT_GIVE_VETERANCY",											GameMessage::MSG_CHEAT_GIVE_VETERANCY },
+	{ "CHEAT_TAKE_VETERANCY",											GameMessage::MSG_CHEAT_TAKE_VETERANCY },
+ { "CHEAT_qw_wudi_MODE",											GameMessage::MSG_CHEAT_qw_wudi_MODE },
+ { "CHEAT_SPAWN_DOZER",                                             GameMessage::MSG_CHEAT_SPAWN_DOZER },
+ //{ "CHEAT_SPAWN_HUMVEE",                                             GameMessage::MSG_CHEAT_SPAWN_HUMVEE },
+
+
   { "CHEAT_SHOW_HEALTH",                        GameMessage::MSG_CHEAT_SHOW_HEALTH },
   { "CHEAT_TOGGLE_MESSAGE_TEXT",                GameMessage::MSG_CHEAT_TOGGLE_MESSAGE_TEXT },
 
 #endif
-
-#if defined(_DEBUG) || defined(_INTERNAL)
+//|| defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)//may be defined in GameCommon.h
+#if defined(_DEBUG) || defined(_INTERNAL) 
 	{ "HELP",																			GameMessage::MSG_META_HELP },
 
 	{ "DEMO_TOGGLE_BEHIND_BUILDINGS",							GameMessage::MSG_META_DEMO_TOGGLE_BEHIND_BUILDINGS },
@@ -260,6 +289,8 @@ static const LookupListRec GameMessageMetaTypeNames[] =
 	{ "DEMO_END_ADJUST_FOV",											GameMessage::MSG_META_DEMO_END_ADJUST_FOV },
 	{ "DEMO_LOCK_CAMERA_TO_PLANES",								GameMessage::MSG_META_DEMO_LOCK_CAMERA_TO_PLANES },
 	{ "DEMO_REMOVE_PREREQ",												GameMessage::MSG_META_DEMO_REMOVE_PREREQ },
+	{ "DEMO_INSTANT_BUILD",												GameMessage::MSG_META_DEMO_INSTANT_BUILD },
+	{ "DEMO_FREE_BUILD",												GameMessage::MSG_META_DEMO_FREE_BUILD },
 	{ "DEMO_RUNSCRIPT1",													GameMessage::MSG_META_DEMO_RUNSCRIPT1 },
 	{ "DEMO_RUNSCRIPT2",													GameMessage::MSG_META_DEMO_RUNSCRIPT2 },
 	{ "DEMO_RUNSCRIPT3",													GameMessage::MSG_META_DEMO_RUNSCRIPT3 },
@@ -298,7 +329,7 @@ static const LookupListRec GameMessageMetaTypeNames[] =
 	{ "DEMO_CYCLE_LOD_LEVEL",											GameMessage::MSG_META_DEMO_CYCLE_LOD_LEVEL },
 	{ "DEMO_DUMP_ASSETS",													GameMessage::MSG_META_DEBUG_DUMP_ASSETS},
 																								
-	{ "DEMO_INSTANT_BUILD",												GameMessage::MSG_META_DEMO_INSTANT_BUILD },
+	
 	{ "DEMO_TOGGLE_CAMERA_DEBUG",									GameMessage::MSG_META_DEMO_TOGGLE_CAMERA_DEBUG },
 																								
 	/// Begin VTUNE																
@@ -494,26 +525,6 @@ GameMessageDisposition MetaEventTranslator::translateGameMessage(const GameMessa
 				else
 				{
 
-          // THIS IS A GREASY HACK... MESSAGE SHOULD BE HANDLED IN A TRANSLATOR, BUT DURING CINEMATICS THE TRANSLATOR IS DISABLED
-          if( map->m_meta ==  GameMessage::MSG_META_TOGGLE_FAST_FORWARD_REPLAY)
-		      {
-				#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)//may be defined in GameCommon.h
-			      if( TheGlobalData )
-				#else
-				  if( TheGlobalData && TheGameLogic->isInReplayGame())
-				#endif
-			      {
-	            if ( TheWritableGlobalData )
-                TheWritableGlobalData->m_TiVOFastMode = 1 - TheGlobalData->m_TiVOFastMode;
-
-              if ( TheInGameUI )
-  				      TheInGameUI->message( TheGlobalData->m_TiVOFastMode ? TheGameText->fetch("GUI:FF_ON") : TheGameText->fetch("GUI:FF_OFF") );
-			      }  
-			      disp = KEEP_MESSAGE; // cause for goodness sake, this key gets used a lot by non-replay hotkeys
-			      break;
-		      }  
-
-
 					/*GameMessage *metaMsg =*/ TheMessageStream->appendMessage(map->m_meta);
 					//DEBUG_LOG(("Frame %d: MetaEventTranslator::translateGameMessage() normal: %s\n", TheGameLogic->getFrame(), findGameMessageNameByType(map->m_meta)));
 				}
@@ -652,6 +663,7 @@ GameMessageDisposition MetaEventTranslator::translateGameMessage(const GameMessa
 MetaMap::MetaMap() : 
 	m_metaMaps(NULL)
 {
+//	generateMetaMap(); // 构造时强制生成绑定
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -664,6 +676,8 @@ MetaMap::~MetaMap()
 		m_metaMaps = next;
 	}
 }
+
+
 
 //-------------------------------------------------------------------------------------------------
 GameMessage::Type MetaMap::findGameMessageMetaType(const char* name)
@@ -704,6 +718,7 @@ MetaMapRec *MetaMap::getMetaMapRec(GameMessage::Type t)
 //-------------------------------------------------------------------------------------------------
 /*static */ void MetaMap::parseMetaMap(INI* ini)
 {
+   
 	// read and ignore the meta-map name
 	const char *c = ini->getNextToken();
 
@@ -718,9 +733,183 @@ MetaMapRec *MetaMap::getMetaMapRec(GameMessage::Type t)
 	ini->initFromINI(map, TheMetaMapFieldParseTable);
 }
 
+
+
+//-------------------------------------------------------------------------------------------------
+/*static*/ void MetaMap::generateMetaMap()
+{
+	DEBUG_LOG(("MetaMap::generateMetaMap called\n"));
+	// TheSuperHackers @info A default mapping for MSG_META_SELECT_ALL_AIRCRAFT would be useful for Generals
+	// but is not recommended, because it will cause key mapping conflicts with original game languages.
+	{
+		// Is mostly useful for Generals.
+		//MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_TOGGLE_FAST_FORWARD_REPLAY);
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_TOGGLE_FAST_FORWARD_REPLAY);
+		// VC6.0空指针校验：ASSERT调试下提醒，条件判断防止崩溃
+		//ASSERT(map && "getMetaMapRec failed for MSG_META_TOGGLE_FAST_FORWARD_REPLAY");
+		//if (map->m_key == MK_NONE)
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_F;
+			map->m_transition = DOWN;
+			map->m_modState = NONE;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+			DEBUG_LOG(("Default binding set for MSG_META_TOGGLE_FAST_FORWARD_REPLAY to F\n"));
+		}
+	}
+	// 【关键调整】将调试分支移至无修饰符P键绑定前，先处理带修饰符的ALT+P/ALT+B
+	#if defined(_DEBUG) || defined(_INTERNAL) 
+	{
+		// Is useful for Generals and Zero Hour. (ALT+P 解除前置条件，先绑定规避主键锁定)
+		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_DEMO_REMOVE_PREREQ);
+		//ASSERT(map && "getMetaMapRec failed for MSG_META_DEMO_REMOVE_PREREQ");
+		//if (map->m_key == MK_NONE)
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_P;
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+			DEBUG_LOG(("Default binding set for MSG_META_DEMO_REMOVE_PREREQ to ALT+P\n"));
+		}
+	}
+	{
+		// Is useful for Generals and Zero Hour. (ALT+B 自由建造，先绑定)
+		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_DEMO_FREE_BUILD);
+        //ASSERT(map && "getMetaMapRec failed for MSG_META_DEMO_FREE_BUILD");
+		//if (map->m_key == MK_NONE)
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_B;
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+			DEBUG_LOG(("Default binding set for MSG_META_DEMO_FREE_BUILD to ALT+B\n"));
+		}
+	}
+	{
+	MetaMapRec* map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_DEMO_qingwaGOD_MODE);
+	if (map->m_key == MK_NONE)
+	{
+		map->m_key = MK_J;  // Alt+J 激活上帝模式  
+		map->m_transition = DOWN;
+		map->m_modState = ALT;
+		map->m_usableIn = COMMANDUSABLE_GAME;
+	}
+}
+{
+		MetaMapRec* map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_DEMO_UNLIMITED_AMMO);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_A;  // Alt+A 激活无限弹药  
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+#endif  
+// defined(_DEBUG) || defined(_INTERNAL)与开头宏完全一致，删除错误的RTS_DEBUG
+	{
+		// Is useful for Generals and Zero Hour. (无修饰符P键 暂停，后绑定)
+		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_TOGGLE_PAUSE);
+		//ASSERT(map && "getMetaMapRec failed for MSG_META_TOGGLE_PAUSE");
+		//if (map->m_key == MK_NONE)
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_P;
+			map->m_transition = DOWN;
+			map->m_modState = NONE;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+			DEBUG_LOG(("Default binding set for MSG_META_TOGGLE_PAUSE to P\n"));
+		}
+	}
+	{
+		// Is useful for Generals and Zero Hour. (无修饰符O键 单步帧)
+		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_STEP_FRAME);
+		//ASSERT(map && "getMetaMapRec failed for MSG_META_STEP_FRAME");
+		//if (map->m_key == MK_NONE)
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_O;
+			map->m_transition = DOWN;
+			map->m_modState = NONE;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+			DEBUG_LOG(("Default binding set for MSG_META_STEP_FRAME to O\n"));
+		}
+	}
+	
+#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+	{
+		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_CHEAT_REMOVE_PREREQ);
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_P;
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+	{
+		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_CHEAT_FREE_BUILD);
+		if (map && map->m_key == MK_NONE)
+		{
+			map->m_key = MK_B;
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+	{
+		MetaMapRec* map = TheMetaMap->getMetaMapRec(GameMessage::MSG_CHEAT_qingwaGOD_MODE);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_J;  // Alt+J 激活上帝模式  
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+	{
+		MetaMapRec* map = TheMetaMap->getMetaMapRec(GameMessage::MSG_CHEAT_qw_wudi_MODE);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_O;  // Alt+O 激活无敌模式  
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+	{
+		MetaMapRec* map = TheMetaMap->getMetaMapRec(GameMessage::MSG_CHEAT_SPAWN_DOZER);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_I;  // Alt+I 激活无敌模式  
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+	{
+		MetaMapRec* map = TheMetaMap->getMetaMapRec(GameMessage::MSG_CHEAT_UNLIMITED_AMMO);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_A;  // Alt+A 激活无限弹药  
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+#endif // defined(RTS_DEBUG)
+}
+
 //-------------------------------------------------------------------------------------------------
 /*static*/ void INI::parseMetaMapDefinition( INI* ini )
 {
 	MetaMap::parseMetaMap(ini);
 }
-

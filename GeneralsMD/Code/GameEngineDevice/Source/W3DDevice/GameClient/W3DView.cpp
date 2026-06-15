@@ -79,7 +79,8 @@
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DView.h"
-#include "D3dx8math.h"
+// D3DX9 math types provided via d3d8compat.h
+//#include "D3dx8math.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/Module/W3DModelDraw.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
@@ -608,9 +609,9 @@ void W3DView::setCameraTransform( void )
 		}
 	}
 
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	m_3DCamera->Set_View_Plane( m_FOV, -1 );
-#endif
+#endif //defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 
 	// rebuild it (even if we just did it due to camera constraints)
 	buildCameraTransform( &cameraTransform );
@@ -2006,9 +2007,9 @@ void W3DView::setFieldOfView( Real angle )
 {
 	View::setFieldOfView( angle );
 
-#if defined(_DEBUG) || defined(_INTERNAL)
+#if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	// this is only for testing, and recalculating the 
-	// camera every frame is wasteful
+	// camera every frame is wasteful 必须加上这句代码在release输出时FOV才能可调 青蛙大大标注
 	setCameraTransform();
 #endif
 }

@@ -23,7 +23,7 @@ CFG=WorldBuilder - Win32 Debug
 !MESSAGE 
 
 # Begin Project
-# PROP AllowPerConfigDependencies 0
+# PROP AllowPerConfigDependencies 1
 # PROP Scc_ProjName ""$/RTS/Code/Tools/WorldBuilder", RQAAAAAA"
 # PROP Scc_LocalPath "."
 CPP=cl.exe
@@ -44,7 +44,7 @@ RSC=rc.exe
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 # ADD BASE CPP /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /Yu"stdafx.h" /FD /c
-# ADD CPP /nologo /G6 /MD /W3 /WX /GX /O2 /Ob2 /I "./include" /I "./res" /I "../../libraries/include" /I "../../gameengine/include" /I "../../gameenginedevice/include/" /I "../../libraries/source/wwvegas" /I "../../libraries/source/wwvegas/ww3d2" /I "../../libraries/source/wwvegas/wwdebug" /I "../../libraries/source/wwvegas/wwlib" /I "../../libraries/source/wwvegas/wwmath" /I "../../libraries/source/wwvegas/wwsaveload" /I "../../Libraries/Source/Compression" /I "../../Libraries/Source/miles" /D "IG_DEBUG_STACKTRACE" /D "NDEBUG" /D "_RELEASE" /D WINVER=0x400 /D "EDITOR" /D "WIN32" /D "_WINDOWS" /D "_MBCS" /D "REGEX_MALLOC" /D "STDC_HEADERS" /D "WIN32_LEAN_AND_MEAN" /D "_AFXDLL" /YX"stdafx.h" /FD /c
+# ADD CPP /nologo /G6 /MD /W3 /WX /GX /O2 /Ob2 /I "./include" /I "./res" /I "../../libraries/include" /I "../../gameengine/include" /I "../../gameenginedevice/include/" /I "../../libraries/source/wwvegas" /I "../../libraries/source/wwvegas/ww3d2" /I "../../libraries/source/wwvegas/wwdebug" /I "../../libraries/source/wwvegas/wwlib" /I "../../libraries/source/wwvegas/wwmath" /I "../../libraries/source/wwvegas/wwsaveload" /I "../../Libraries/Source/Compression" /I "../../Libraries/Source/miles" /D "IG_DEBUG_STACKTRACE" /D "_RELEASE" /D WINVER=0x400 /D "EDITOR" /D "_WINDOWS" /D "_MBCS" /D "REGEX_MALLOC" /D "STDC_HEADERS" /D "WIN32_LEAN_AND_MEAN" /D "_AFXDLL" /D "_STLP_USE_STATIC_LIB" /D "_STLP_NO_DEFAULT_NAMESPACE" /D "_STLP_VC6" /D "_STLP_DISABLE_VC6_STL" /D "NDEBUG" /D "WIN32" /YX"stdafx.h" /FD /c
 # SUBTRACT CPP /Fr
 # ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /win32
 # ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32
@@ -55,7 +55,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 /nologo /subsystem:windows /machine:I386
-# ADD LINK32 ddraw.lib dinput.lib d3dx8.lib mss32.lib d3d8.lib winmm.lib vfw32.lib dsound.lib wsock32.lib imm32.lib wininet.lib /nologo /subsystem:windows /pdb:"..\..\..\Run\WorldBuilder.pdb" /map:"..\..\..\Run\WorldBuilder.map" /debug /machine:I386 /nodefaultlib:"LIBC" /out:"..\..\..\Run\WorldBuilder.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine" /OPT:REF /OPT:ICF
+# ADD LINK32 ddraw.lib dinput.lib d3dx9.lib mss32.lib d3d9.lib winmm.lib vfw32.lib dsound.lib wsock32.lib imm32.lib wininet.lib /nologo /subsystem:windows /pdb:"..\..\..\Run\WorldBuilder.pdb" /map:"..\..\..\Run\WorldBuilder.map" /debug /machine:I386 /nodefaultlib:"LIBC" /out:"..\..\..\Run\WorldBuilder.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine" /OPT:REF /OPT:ICF
 # SUBTRACT LINK32 /pdb:none
 
 !ELSEIF  "$(CFG)" == "WorldBuilder - Win32 Debug"
@@ -83,7 +83,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 /nologo /subsystem:windows /debug /machine:I386
-# ADD LINK32 ddraw.lib dinput.lib d3dx8.lib mss32.lib d3d8.lib winmm.lib vfw32.lib dsound.lib wsock32.lib imm32.lib wininet.lib /nologo /subsystem:windows /pdb:"..\..\..\Run\WorldBuilderD.pdb" /map:"..\..\..\Run\WorldBuilderD.map" /debug /machine:I386 /out:"..\..\..\Run\WorldBuilderD.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine"
+# ADD LINK32 ddraw.lib dinput.lib d3dx9.lib mss32.lib d3d9.lib winmm.lib vfw32.lib dsound.lib wsock32.lib imm32.lib wininet.lib /nologo /subsystem:windows /pdb:"..\..\..\Run\WorldBuilderD.pdb" /map:"..\..\..\Run\WorldBuilderD.map" /debug /machine:I386 /out:"..\..\..\Run\WorldBuilderD.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine"
 # SUBTRACT LINK32 /pdb:none
 
 !ELSEIF  "$(CFG)" == "WorldBuilder - Win32 Internal"
@@ -112,9 +112,9 @@ BSC32=bscmake.exe
 # ADD BASE BSC32 /nologo
 # ADD BSC32 /nologo
 LINK32=link.exe
-# ADD BASE LINK32 d3dx8.lib d3d8.lib winmm.lib vfw32.lib ddraw.lib dinput.lib /nologo /subsystem:windows /machine:I386 /nodefaultlib:"LIBC" /out:"../../../run/WorldBuilder.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine"
+# ADD BASE LINK32 d3dx9.lib d3d9.lib winmm.lib vfw32.lib ddraw.lib dinput.lib /nologo /subsystem:windows /machine:I386 /nodefaultlib:"LIBC" /out:"../../../run/WorldBuilder.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine"
 # SUBTRACT BASE LINK32 /debug
-# ADD LINK32 dxguid.lib ddraw.lib dinput8.lib d3dx8.lib mss32.lib d3d8.lib winmm.lib vfw32.lib dsound.lib wsock32.lib imm32.lib wininet.lib /nologo /subsystem:windows /pdb:"..\..\..\Run\WorldBuilderI.pdb" /map:"..\..\..\Run\WorldBuilderI.map" /debug /machine:I386 /nodefaultlib:"LIBC" /out:"..\..\..\Run\WorldBuilderI.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine" /OPT:REF /OPT:ICF
+# ADD LINK32 dxguid.lib ddraw.lib dinput8.lib d3dx9.lib mss32.lib d3d9.lib winmm.lib vfw32.lib dsound.lib wsock32.lib imm32.lib wininet.lib /nologo /subsystem:windows /pdb:"..\..\..\Run\WorldBuilderI.pdb" /map:"..\..\..\Run\WorldBuilderI.map" /debug /machine:I386 /nodefaultlib:"LIBC" /out:"..\..\..\Run\WorldBuilderI.exe" /libpath:"..\..\Libraries\Lib" /libpath:"..\..\GameEngine\Lib" /libpath:"..\..\GameEngineDevice\Lib" /libpath:"..\..\GameEngine" /OPT:REF /OPT:ICF
 # SUBTRACT LINK32 /pdb:none
 
 !ENDIF 
@@ -1124,6 +1124,15 @@ SOURCE=.\res\WorldBuilder.ico
 # Begin Source File
 
 SOURCE=.\res\WorldBuilder.rc
+
+!IF  "$(CFG)" == "WorldBuilder - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "WorldBuilder - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "WorldBuilder - Win32 Internal"
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 

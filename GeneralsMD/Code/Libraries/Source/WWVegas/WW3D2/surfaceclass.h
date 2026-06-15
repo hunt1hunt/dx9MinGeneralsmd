@@ -46,7 +46,13 @@
 #include "ww3dformat.h"
 #include "refcount.h"
 
+#include "d3d8compat.h"
+
+#ifndef D3D8COMPAT_H
 struct IDirect3DSurface8;
+#else
+struct IDirect3DSurface9;
+#endif
 class Vector2i;
 class Vector3;
 

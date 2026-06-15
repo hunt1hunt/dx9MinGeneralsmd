@@ -34,7 +34,7 @@
 #include "Common/SubsystemInterface.h"
 #include "Common/GameType.h"
 
-#define DEFAULT_MAX_FPS		45
+#define DEFAULT_MAX_FPS		120//45
 
 // forward declarations
 class AudioManager;

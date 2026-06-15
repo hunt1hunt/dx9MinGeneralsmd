@@ -29,9 +29,7 @@
 #include "ww3dformat.h"
 #include "wwstring.h"
 #include "vector3.h"
-
-struct IDirect3DSurface8;
-struct IDirect3DVolume8;
+#include "d3d8compat.h"
 
 // ----------------------------------------------------------------------------
 //

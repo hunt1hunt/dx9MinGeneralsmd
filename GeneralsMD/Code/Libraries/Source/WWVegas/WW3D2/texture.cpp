@@ -41,9 +41,8 @@
 
 #include "texture.h"
 
-#include <d3d8.h>
+#include "d3d8compat.h"
 #include <stdio.h>
-#include <D3dx8core.h>
 #include "dx8wrapper.h"
 #include "targa.h"
 #include <nstrdup.h>
@@ -1018,6 +1017,7 @@ void TextureClass::Get_Level_Description( SurfaceClass::SurfaceDescription & des
 */
 IDirect3DSurface8 *TextureClass::Get_D3D_Surface_Level(unsigned int level)
 {
+	if (this == NULL) return 0;
 	if (!Peek_D3D_Texture()) 
 	{
 		WWASSERT_PRINT(0, "Get_D3D_Surface_Level: D3DTexture is NULL!\n");
@@ -1041,7 +1041,7 @@ unsigned TextureClass::Get_Texture_Memory_Usage() const
 	{
 		D3DSURFACE_DESC desc;
 		DX8_ErrorCode(Peek_D3D_Texture()->GetLevelDesc(i,&desc));
-		size+=desc.Size;
+		size+=desc.Width*desc.Height*4;
 	}
 	return size;
 }
@@ -1310,6 +1310,7 @@ void ZTextureClass::Apply_New_Surface
 */
 IDirect3DSurface8* ZTextureClass::Get_D3D_Surface_Level(unsigned int level)
 {
+	if (this == NULL) return 0;
 	if (!Peek_D3D_Texture()) 
 	{
 		WWASSERT_PRINT(0, "Get_D3D_Surface_Level: D3DTexture is NULL!\n");
@@ -1333,7 +1334,7 @@ unsigned ZTextureClass::Get_Texture_Memory_Usage() const
 	{
 		D3DSURFACE_DESC desc;
 		DX8_ErrorCode(Peek_D3D_Texture()->GetLevelDesc(i,&desc));
-		size+=desc.Size;
+		size+=desc.Width*desc.Height*4;
 	}
 	return size;
 }

@@ -352,13 +352,36 @@ void ActiveBody::attemptDamage( DamageInfo *damageInfo )
 
 	if ( m_indestructible )
 		return;
+	// 检查玩家是否启用了上帝模式
+	Object* obj = getObject();
+	Player* owner = obj->getControllingPlayer();
+	(void)owner; // 显式标记变量已使用，消除C4189错误
+#if defined(RTS_DEBUG) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE) || defined(_INTERNAL)
+	
+	if (owner != NULL && owner->hasGodMode()) 
+		//return; // 上帝模式下不承受任何伤害
+{
+		// God mode only applies to infantry, vehicles, structures and aircraft.
+		// Exclude projectiles (nukes, bombs, parachutes, etc.).
+		if ((obj->isKindOf(KINDOF_INFANTRY) || obj->isKindOf(KINDOF_VEHICLE) ||
+			 obj->isKindOf(KINDOF_STRUCTURE) || obj->isKindOf(KINDOF_AIRCRAFT)) &&
+			!obj->isKindOf(KINDOF_PROJECTILE))
+		{
+			return; // 上帝模式下不承受任何伤害（限于指定类型）
+		}
+	}
+	else
+	{
 
+	}
+	//	return;
+#endif
 	// initialize these, just in case we bail out early
 	damageInfo->out.m_actualDamageDealt = 0.0f;
 	damageInfo->out.m_actualDamageClipped = 0.0f;
 
 	// we cannot damage again objects that are already dead
-	Object* obj = getObject();
+	//Object* obj = getObject();
 	if( obj->isEffectivelyDead() )
 		return;
 

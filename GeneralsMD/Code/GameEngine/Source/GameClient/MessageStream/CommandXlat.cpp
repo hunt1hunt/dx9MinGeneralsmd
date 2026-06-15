@@ -68,6 +68,7 @@
 #include "GameLogic/ExperienceTracker.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/BodyModule.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object.h"						
 #include "GameLogic/PartitionManager.h"
 #include "GameLogic/ScriptEngine.h"
@@ -85,6 +86,18 @@
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/GameSpyOverlay.h"
 #include "GameNetwork/GameSpy/BuddyThread.h"
+#include "GameLogic/ObjectCreationList.h"
+
+#include "GameClient/Mouse.h"
+#include "GameClient/View.h"
+#include "GameLogic/TerrainLogic.h"
+// 1. 先包含必要的头文件（根据Generals引擎代码风格补充，确保类型定义可见）
+//#include "Team.h"          // Team类的定义（defaultTeam的类型）
+//#include "Coord3D.h"       // Coord3D坐标类型的定义
+//#include "ThingFactory.h"  // 物体工厂相关
+class ObjectCreationList;  
+//class MouseIO;  
+//class Coord3D;
 
 #ifdef _INTERNAL
 // for occasional debugging...
@@ -131,8 +144,68 @@ void printObjects(Object *obj, void *userData)
 			obj->getName().str(), obj->getPosition()->x, obj->getPosition()->y, statusStr.str());
 	TheScriptEngine->AppendDebugMessage(line, FALSE);
 }
+#endif // defined(RTS_DEBUG)
 
-#endif
+
+#if defined(_DEBUG)  || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+
+void giveAllSciences(Player* player)
+{
+	// cheese festival: do NOT imitate this code. it is for debug purposes only.
+	std::vector<AsciiString> v = TheScienceStore->friend_getScienceNames();
+	for (size_t i = 0; i < v.size(); ++i) 
+	{
+		ScienceType st = TheScienceStore->getScienceFromInternalName(v[i]);
+		if (st != SCIENCE_INVALID && TheScienceStore->isScienceGrantable(st))
+		{
+			player->grantScience(st);
+		}
+	}
+}
+
+//void objectUnderConstruction(Object* obj, void *userData)
+void objectUnderConstruction(Object* obj, void *underConstruction)
+{
+	if (obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))
+	{
+	//	*(Bool*)userData = true;
+	*(Bool*)underConstruction = true;
+		return;
+	}
+
+	ProductionUpdateInterface *pui = ProductionUpdate::getProductionUpdateInterfaceFromObject(obj);
+	if(pui != NULL && pui->getProductionCount() > 0)
+	{
+		//*(Bool*)userData = true;
+		*(Bool*)underConstruction = true;
+		return;
+	}
+}
+
+Bool hasThingsInProduction(Player* player)
+{
+	Bool hasThingInProduction = false;
+	player->iterateObjects( objectUnderConstruction, &hasThingInProduction );
+	return hasThingInProduction;
+}
+
+Bool hasThingsInProduction(PlayerType playerType)
+{
+	for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+	{
+		Player* player = ThePlayerList->getNthPlayer(n);
+		if (player->getPlayerType() == playerType)
+		{
+			if (hasThingsInProduction(player))
+				return true;
+		}
+	}
+	return false;
+}
+
+#endif // defined(RTS_DEBUG) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+
+//#endif
 static Bool isSystemMessage( const GameMessage *msg );
 
 enum{ DROPPED_MAX_PARTICLE_COUNT = 1000};
@@ -3240,25 +3313,42 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		case GameMessage::MSG_META_TOGGLE_CAMERA_TRACKING_DRAWABLE:
 			TheInGameUI->setCameraTrackingDrawable( true );
 			break;
-        //--------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_TOGGLE_FAST_FORWARD_REPLAY:
-		{
-			if( TheGlobalData )
 			{
-				#if !defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)//may be defined in GameCommon.h
-				if (TheGameLogic->isInReplayGame())
-				#endif
+				if( TheWritableGlobalData )
 				{
-					TheWritableGlobalData->m_TiVOFastMode = 1 - TheGlobalData->m_TiVOFastMode;
-					TheInGameUI->message( UnicodeString( L"m_TiVOFastMode: %s" ),
-																TheGlobalData->m_TiVOFastMode ? L"ON" : L"OFF" );
+					// Cycle game speed: 0(Normal) -> 1(Fast 2x) -> 2(Faster 3x) -> 3(Max) -> 0(Normal)
+					TheWritableGlobalData->m_gameSpeed = (TheGlobalData->m_gameSpeed + 1) % 4;
+
+					// Apply speed settings based on m_gameSpeed
+					switch (TheGlobalData->m_gameSpeed)
+					{
+						case 0: // Normal (1x)
+							TheGameEngine->setFramesPerSecondLimit(120);
+							TheWritableGlobalData->m_TiVOFastMode = FALSE;
+							TheInGameUI->message(UnicodeString(L"Speed: Normal"));
+							break;
+						case 1: // Fast (2x)
+							TheGameEngine->setFramesPerSecondLimit(0);
+							//TheWritableGlobalData->m_TiVOFastMode = FALSE;
+							TheWritableGlobalData->m_TiVOFastMode = TRUE;
+							TheInGameUI->message(UnicodeString(L"Speed: Fast (2x)"));
+							break;
+						case 2: // Faster (3x)
+							TheGameEngine->setFramesPerSecondLimit(0);
+							TheWritableGlobalData->m_TiVOFastMode = TRUE;
+							TheInGameUI->message(UnicodeString(L"Speed: Faster (3x)"));
+							break;
+						case 3: // Max (unlimited)
+							TheGameEngine->setFramesPerSecondLimit(0);
+							TheWritableGlobalData->m_TiVOFastMode = TRUE;
+							TheInGameUI->message(UnicodeString(L"Speed: Max (unlimited)"));
+							break;
+					}
 				}
-			}  // end if
-
-			disp = DESTROY_MESSAGE;
-			break;
-
-		}  // end toggle special power delays
+				disp = DESTROY_MESSAGE;
+				break;
+			}
 
 #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)//may be defined in GameCommon.h
     case GameMessage::MSG_CHEAT_RUNSCRIPT1:
@@ -3287,11 +3377,19 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
     //--------------------------------------------------------------------------------------
     case GameMessage::MSG_CHEAT_TOGGLE_SPECIAL_POWER_DELAYS:
 		{
+			//
+		//	for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+		//{
+		//	Player* player = ThePlayerList->getNthPlayer(n);
+	//		if (player->getPlayerType() == PLAYER_HUMAN)
+			//
 			if ( !TheGameLogic->isInMultiplayerGame() )
+		//	; && (player->getPlayerType() == PLAYER_HUMAN);
+		//if ( !TheGameLogic->isInMultiplayerGame() && player->getPlayerType() == PLAYER_HUMAN)
 			{
 				if( TheGlobalData )
 				{
-
+                
 					TheWritableGlobalData->m_specialPowerUsesDelay = 1 - TheGlobalData->m_specialPowerUsesDelay;
 					TheInGameUI->message( UnicodeString( L"Special Power (Superweapon) Delay: %s" ),
 																TheGlobalData->m_specialPowerUsesDelay ? L"ON" : L"OFF" );
@@ -3301,8 +3399,37 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 				disp = DESTROY_MESSAGE;
 			}
 			break;
+     //   }
 
 		}  // end toggle special power delays
+
+		
+case GameMessage::MSG_CHEAT_UNLIMITED_AMMO:
+{
+	//	if (!TheGameLogic->isInMultiplayerGame())
+	//	{
+	//		Player* localPlayer = ThePlayerList->getLocalPlayer();
+	//		localPlayer->toggleUnlimitedAmmo();
+
+	//		if (localPlayer->hasUnlimitedAmmo())
+	Bool enable = !ThePlayerList->getLocalPlayer()->hasUnlimitedAmmo();
+
+		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+		{
+			Player* player = ThePlayerList->getNthPlayer(n);
+			if (player->getPlayerType() == PLAYER_HUMAN)
+				player->enableUnlimitedAmmo(enable);
+       if (enable)
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOn", L"核動力全球智能打擊系統开 ON"));"UNLIMITED_AMMO OFF"
+TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb ON" ));
+			else
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOff", L"核動力全球智能打擊系統关 OFF"));
+TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb OFF" ));
+
+			disp = DESTROY_MESSAGE;
+		}
+		break;
+}
     //--------------------------------------------------------------------------------------
     case GameMessage::MSG_CHEAT_SWITCH_TEAMS:							
 		{
@@ -3356,17 +3483,395 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 			}
 			break;
 		}
-    case GameMessage::MSG_CHEAT_INSTANT_BUILD:						
-		{
-			if ( !TheGameLogic->isInMultiplayerGame() )
-			{
+   // case GameMessage::MSG_CHEAT_INSTANT_BUILD:						
+	//	{
+	//		if ( !TheGameLogic->isInMultiplayerGame() )
+	//		{
 				// Doesn't make a valid network message
-				Player *localPlayer = ThePlayerList->getLocalPlayer();
-				localPlayer->toggleInstantBuild();
-				disp = DESTROY_MESSAGE;
+	//			Player *localPlayer = ThePlayerList->getLocalPlayer();
+	//			localPlayer->toggleInstantBuild();
+	//			disp = DESTROY_MESSAGE;
+	//			TheInGameUI->message( UnicodeString( L"CHEAT_INSTANT_BUILD!" ));
+	//			disp = DESTROY_MESSAGE;
+	//		}
+	//		break;
+	//	}
+			case GameMessage::MSG_CHEAT_INSTANT_BUILD:
+//	{
+		// Doesn't make a valid network message
+		// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+//		if (!TheGameLogic->isInMultiplayerGame() || !hasThingsInProduction(PLAYER_HUMAN))
+		{
+			Bool enable = !ThePlayerList->getLocalPlayer()->buildsInstantly();
+
+			for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+			{
+				Player* player = ThePlayerList->getNthPlayer(n);
+				if (player->getPlayerType() == PLAYER_HUMAN)
+					player->enableInstantBuild(enable);
 			}
+
+			if (enable)
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugInstantBuildOn", L"Instant Build is ON") );
+		TheInGameUI->message( UnicodeString( L"CHEAT_INSTANT_BUILD\x79d2\x5efa! is on" ));
+			else
+			//	TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugInstantBuildOff", L"Instant Build is OFF") );
+		TheInGameUI->message( UnicodeString( L"CHEAT_INSTANT_BUILD\x79d2\x5efa! is off" ));
+
+			disp = DESTROY_MESSAGE;
+	//	}
+		break;
+	}
+	case GameMessage::MSG_CHEAT_REMOVE_PREREQ:
+		{
+			// Doesn't make a valid network message
+			// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+			Bool enable = !ThePlayerList->getLocalPlayer()->ignoresPrereqs();
+
+			for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+			{
+				Player* player = ThePlayerList->getNthPlayer(n);
+				if (player->getPlayerType() == PLAYER_HUMAN)
+					player->enableIgnorePrereqs(enable);
+			}
+
+			if (enable)
+				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOn", L"Ignore Prerequisites无条件建 is ON") );
+			TheInGameUI->message( UnicodeString( L"Ignore Prerequisites\x53bb\x524d\x63d0\x5efa is ON!" ));
+			else
+				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOff", L"Ignore Prerequisites无条件建 is OFF") );
+			TheInGameUI->message( UnicodeString( L"Ignore Prerequisites\x53bb\x524d\x63d0\x5efa is OFF!" ));
+
+			disp = DESTROY_MESSAGE;
 			break;
+    }
+	case GameMessage::MSG_CHEAT_FREE_BUILD:
+{
+		// Doesn't make a valid network message
+		// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+		Bool enable = !ThePlayerList->getLocalPlayer()->buildsForFree();
+
+		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+		{
+			Player* player = ThePlayerList->getNthPlayer(n);
+			if (player->getPlayerType() == PLAYER_HUMAN)
+				player->enableFreeBuild(enable);
+
+			// 如果启用 freebuild，给玩家增加 1200 单位电量  
+			if (enable)
+			{
+				player->getEnergy()->depositEnergy(0, FALSE); // 调用会自动加 1200  
+			}
+			else
+				{
+				// 关闭 freebuild 时，重置电量为初始值  
+			//	player->getEnergy()->resetToInitialEnergy();
+				player->getEnergy()->depositEnergy(0, TRUE); // 调用不自动加 1200
+			}
 		}
+
+		if (enable)
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free Build免费建+满电量 is ON") );
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is off!" ));
+		else
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free Build免费建+满电量 is OFF") );
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is On!" ));
+
+		disp = DESTROY_MESSAGE;
+		break;
+}
+
+case GameMessage::MSG_CHEAT_qingwaGOD_MODE:
+{
+		Bool enable = !ThePlayerList->getLocalPlayer()->hasGodMode();
+
+		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+		{
+			Player* player = ThePlayerList->getNthPlayer(n);
+			if (player->getPlayerType() == PLAYER_HUMAN)
+				player->enableGodMode(enable);
+		}
+
+		if (enable)
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOn", L"God青蛙无敌模式 Mode is ON"));
+		TheInGameUI->message( UnicodeString( L"\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is ON!" ));
+		else
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOff", L"God青蛙无敌模式 Mode is OFF"));
+		TheInGameUI->message( UnicodeString( L"\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is OFF!" ));
+
+		disp = DESTROY_MESSAGE;
+		break;
+}
+
+// 从这里开始是你的case分支（对应你文件的3586行左右）
+case GameMessage::MSG_CHEAT_SPAWN_DOZER:  
+{  
+    Coord3D worldPos; 
+	//Coord3D pos;                 
+    const ThingTemplate* tmpl = NULL;  
+    Team* playerTeam = NULL;           
+    Object* primaryObj = NULL;         
+    FindPositionOptions fpOptions;     
+    Coord3D adjustedPos;               
+    Player* localPlayer = NULL;
+	 // ========== 补充缺失的变量声明 ==========
+// 声明defaultTeam（根据Generals引擎风格，Team*是团队指针类型）
+//Team* defaultTeam = ThePlayerManager->getLocalPlayer()->getTeam(); // 示例：获取本地玩家的团队（需根据实际逻辑调整）
+// 声明并初始化targetCoord（目标坐标，需根据你的业务逻辑设置具体值）
+Coord3D dropCenter; 
+Coord3D targetCoord;
+targetCoord.x = 0.0f;  // 示例值，你需替换为实际目标X坐标
+targetCoord.y = 0.0f;  // 示例值，你需替换为实际目标Y坐标
+targetCoord.z = 0.0f;  // 示例值，你需替换为实际目标Z坐标       
+   // const MouseIO* mouseIO = NULL;     
+   // const ObjectCreationList* ocl = NULL;
+
+    // 仅单人游戏生效
+	//以下四行代码造成无单位投放
+	//if (!TheGameLogic || !TheGameLogic->isInMultiplayerGame())  // 新增：检查TheGameLogic非空
+   // {  
+  //      break;
+  //  }
+    if (!TheGameLogic->isInMultiplayerGame())  
+    {  
+        
+		// 1. 检查核心全局指针非空（避免访问NULL->函数）
+		//下面这行代码改为第二行后游戏中不发生跳出故障!TheMouse || 
+    //if (!TheMouse || !TheTacticalView || !ThePlayerList || !TheThingFactory || !ThePartitionManager || !TheObjectCreationListStore || !TheInGameUI)
+	if (!TheMouse ||!TheTacticalView || !TheThingFactory || !ThePartitionManager || !TheObjectCreationListStore || !TheInGameUI ||!TheTerrainLogic)
+    {
+        break;
+    }
+		// 1. 获取鼠标状态
+        //mouseIO = TheMouse->getMouseStatus(); 
+		const MouseIO *mouseIO = TheMouse->getMouseStatus(); 
+		// 2. 屏幕坐标转世界坐标（worldPos已声明）
+        TheTacticalView->screenToTerrain(&mouseIO->pos, &worldPos);  
+        if (!mouseIO) {
+            TheInGameUI->message(UnicodeString(L"Failed to get mouse status!"));
+            break;
+        }
+     
+        TheTacticalView->screenToTerrain(&mouseIO->pos, &dropCenter);  
+        
+
+        // 3. 获取本地玩家（localPlayer已声明）
+        localPlayer = ThePlayerList->getLocalPlayer();  
+        if (!localPlayer) {
+            TheInGameUI->message(UnicodeString(L"Failed to get local player!"));
+            break;  
+        }
+// Team* playerTeam = localPlayer->getDefaultTeam();
+        playerTeam = localPlayer->getDefaultTeam();
+		//playerTeam = localPlayer->getTeam();
+		if (!playerTeam) {
+        break;
+    }  
+//ChinaCommandCenter GLACommandCenter AmericaCommandCenter
+                const ThingTemplate *chuteTempl   = TheThingFactory->findTemplate("AmericaParachute", FALSE);  
+                const ThingTemplate *soldierTempl  = TheThingFactory->findTemplate("AmericaInfantryMissileDefender", FALSE);  
+                const ThingTemplate *vehicleTempl  = TheThingFactory->findTemplate("AmericaVehicleDozer", FALSE); 
+				
+                // 模板不存在时提示
+    if (!chuteTempl) {
+      TheInGameUI->message(UnicodeString(L"AmericaParachute template not found!"));
+	  break;
+    }
+    if (!soldierTempl) {
+      TheInGameUI->message(UnicodeString(L"AmericaInfantryMissileDefender template not found!"));
+    break;
+	}
+    if (!vehicleTempl) {
+      TheInGameUI->message(UnicodeString(L"AmericaVehicleDozer template not found!"));
+    break;
+	}
+	
+				
+				//chuteTempl   = TheThingFactory->findTemplate("AmericaParachute");
+			  //soldierTempl  = TheThingFactory->findTemplate("AmericaInfantryMissileDefender");
+			  //vehicleTempl  = TheThingFactory->findTemplate("AmericaVehicleDozer");    
+                const Real DROP_HEIGHT = 300.0f;  // 空投高度（地面以上）  
+                const Int  NUM_SOLDIERS = 4;  
+  
+                // 3. 投放步兵：每名步兵 → 装入一个降落伞容器 → 自动下降  
+                if (chuteTempl && soldierTempl)  
+                {  
+                    for (Int i = 0; i < NUM_SOLDIERS; ++i)  
+                    {  
+                        Coord3D pos = dropCenter;  
+                        pos.x += (i - (NUM_SOLDIERS - 1) * 0.5f) * 25.0f; // 横向散开  
+                        pos.z = TheTerrainLogic->getGroundHeight(pos.x, pos.y) + DROP_HEIGHT;  
+  
+                        // 创建步兵  
+                        Object *soldier = TheThingFactory->newObject(soldierTempl, playerTeam);  
+                        soldier->setPosition(&pos);  
+  
+                        // 创建降落伞容器（构造函数自动设置 OBJECT_STATUS_PARACHUTING）  
+                        Object *chute = TheThingFactory->newObject(chuteTempl, playerTeam);  
+                        chute->setPosition(&pos);  
+  
+                        // 将步兵装入降落伞（触发 onContaining：rider->setDisabled(DISABLED_HELD)）  
+                        ContainModuleInterface *contain = chute->getContain();  
+                        if (contain && contain->isValidContainerFor(soldier, true))  
+                        {  
+                            contain->addToContain(soldier);  
+                        }  
+                    }  
+                }  
+  
+                // 4. 在目标位置直接生成车辆（Humvee 无 KINDOF_PARACHUTABLE，直接落地）  
+                if (chuteTempl && vehicleTempl)  
+                {  
+                    Coord3D vehPos = dropCenter;  
+                    vehPos.x += -30.0f;  
+                    vehPos.z = TheTerrainLogic->getGroundHeight(vehPos.x, vehPos.y) + DROP_HEIGHT;  
+                    Object *vehicle = TheThingFactory->newObject(vehicleTempl, playerTeam);  
+                    vehicle->setPosition(&vehPos); 
+					 // 创建降落伞容器（构造函数自动设置 OBJECT_STATUS_PARACHUTING）  
+                        Object *chute = TheThingFactory->newObject(chuteTempl, playerTeam);  
+                        //chute->setPosition(&pos);  
+                        chute->setPosition(&vehPos);
+                        // 将车辆装入降落伞（触发 onContaining：rider->setDisabled(DISABLED_HELD)）  
+                        ContainModuleInterface *contain = chute->getContain();  
+                        if (contain && contain->isValidContainerFor(vehicle, true))  
+                        {  
+                            contain->addToContain(vehicle);  
+                        }   
+                }
+                
+        // 4. 查找推土机模板（tmpl已声明，类型匹配）
+        //tmpl = TheThingFactory->findTemplate("ChinaVehicleDozer"); ChinaVehicleDozer GLAVehicleRocketBuggy
+		//const ThingTemplate *tmpl = TheThingFactory->findTemplate("ChinaVehicleDozer");  // Use the correct template name  GLAVehicleRocketBuggy AmericaVehicleDozer ChinaVehicleDozer 
+        tmpl = TheThingFactory->findTemplate("ChinaVehicleDozer");
+		//(void)tmpl; 
+   // if (!tmpl) {
+   //     break;
+   // }
+      if (!tmpl) {
+            TheInGameUI->message(UnicodeString(L"Failed to find template: ChinaVehicleDozer!"));
+            break;
+        }
+       //const Real DROP_HEIGHT = 300.0f;  // 空投高度（地面以上）
+
+	   //if ( chuteTempl && primaryObj) {
+                    Coord3D vehPos = dropCenter;  
+                    vehPos.x += -30.0f;  
+                    vehPos.z = TheTerrainLogic->getGroundHeight(vehPos.x, vehPos.y) + DROP_HEIGHT;
+
+		primaryObj = TheThingFactory->newObject(tmpl, playerTeam);
+		primaryObj->setPosition(&vehPos); // 设置到鼠标位置 Dozer spawned at mouse position
+		TheInGameUI->message(UnicodeString(L"\x65a9\x9996\x884c\x52a8 !"));
+
+	//	if (!primaryObj) {
+     //   break;
+ //   }
+                //primaryObj = TheThingFactory->newObject(dozerTemplate, playerTeam);
+				//primaryObj = TheThingFactory->newObject("OCL_CheatSpawnBuilding", playerTeam);
+				
+				//primaryObj->setPosition(&worldPos); // 设置到鼠标位置
+				//primaryObj->setPosition(&vehPos); // 设置到鼠标位置
+        // 5. 创建推土机对象（playerTeam/primaryObj已声明）
+        //playerTeam = localPlayer->getDefaultTeam();
+        //if (playerTeam) {
+       //     primaryObj = TheThingFactory->newObject(tmpl, playerTeam);  
+       // }
+        if (!primaryObj) {
+            TheInGameUI->message(UnicodeString(L"Failed to create Dozer object!"));
+            break;
+        }
+        
+		
+        // 6. 配置避障参数（fpOptions已声明，成员可访问）
+       
+		// fpOptions.flags = FPF_CLEAR_CELLS_ONLY;  
+       // fpOptions.maxRadius = 500;  // .maxRadius正常访问
+        
+	   //adjustedPos = worldPos;     // adjustedPos已声明
+
+        //adjustedPos = vehPos;     // adjustedPos已声明
+        // 7. 查找可通行位置 + 设置推土机位置
+
+       // ThePartitionManager->findPositionAround(&worldPos, &fpOptions, &adjustedPos);  
+        //primaryObj->setPosition(&adjustedPos);  // primaryObj是合法指针
+     if ( chuteTempl && primaryObj) {
+
+        //primaryObj->setPosition(&adjustedPos); 
+		//primaryObj->setPosition(&worldPos); // 设置到鼠标位置 
+
+		                 // 创建降落伞容器（构造函数自动设置 OBJECT_STATUS_PARACHUTING）  
+                        Object *chute = TheThingFactory->newObject(chuteTempl, playerTeam);  
+                        chute->setPosition(&vehPos);  
+  
+                        // 将车辆装入降落伞（触发 onContaining：rider->setDisabled(DISABLED_HELD)）  
+                        ContainModuleInterface *contain = chute->getContain();  
+                        if (contain && contain->isValidContainerFor(primaryObj, true))  
+                        {  
+                            contain->addToContain(primaryObj);  
+                        }   
+
+    }
+       
+	              
+	 // 6. 配置避障参数（fpOptions已声明，成员可访问）
+       
+		 fpOptions.flags = FPF_CLEAR_CELLS_ONLY;  
+        fpOptions.maxRadius = 500;  // .maxRadius正常访问
+        
+	   adjustedPos = worldPos;     // adjustedPos已声明
+
+        //adjustedPos = vehPos;     // adjustedPos已声明
+        // 7. 查找可通行位置 + 设置推土机位置
+
+	
+	
+	//Object *anyOwnedObj = defaultTeam ? defaultTeam->getFirstItemIn_TeamMemberList() : NULL;  
+	   		//Object *anyOwnedObj = defaultTeam ? defaultTeam->getFirstItemIn_TeamMemberList() : NULL;  
+		//if (!anyOwnedObj) {
+		//	//TheInGameUI->message(UnicodeString(L"Failed to find any owned object for the player's team!"));
+		//	//break;
+		//}
+	// ========== 10. 查找OCL：仅赋值一次，判空后使用（解决重复声明） ==========
+        //ObjectCreationList* ocl = TheObjectCreationListStore->findObjectCreationList("OCL_CheatSpawnBuilding");
+		const ObjectCreationList* ocl = TheObjectCreationListStore->findObjectCreationList("OCL_CheatSpawnqingwaBuilding");
+		//ObjectCreationList* ocl = TheObjectCreationListStore->findObjectCreationList("OCL_CheatSpawnBuilding");
+		
+		//ObjectCreationList::create(ocl, primaryObj, &worldPos, NULL, 0.0f, 0);
+        
+		//(void)ocl; // 消除C4189
+        if (ocl) { // OCL存在才创建
+			 // Step 4: 从地图最远角高空出发（模仿 CREATE_AT_EDGE_FARTHEST_FROM_TARGET）  
+                       // Coord3D creationCoord = TheTerrainLogic->findFarthestEdgePoint( &targetCoord );  
+					   Coord3D creationCoord = TheTerrainLogic->findFarthestEdgePoint( &targetCoord ); 
+                        creationCoord.z += 300; // CREATE_ABOVE_LOCATION_HEIGHT 
+						// Step 5: 触发 DeliverPayloadNugget，创建运输机并空投  
+                        //ObjectCreationList::create( ocl, anyOwnedObj, &creationCoord, &targetCoord, INVALID_ANGLE );   
+						//ObjectCreationList::create( ocl, primaryObj, &worldPos, &worldPos, INVALID_ANGLE );
+						//  ObjectCreationList::create( ocl, primaryObj, &worldPos, &adjustedPos, INVALID_ANGLE );
+						ObjectCreationList::create( ocl, primaryObj, &worldPos, &adjustedPos, INVALID_ANGLE );
+            //ObjectCreationList::create(ocl, primaryObj, &adjustedPos, NULL, 0.0f, 0); &worldPos,
+
+			//ObjectCreationList::create(ocl, primaryObj, &worldPos, NULL, 0.0f, 0);
+
+			// 通过 OCL 创建中性建筑 车辆人员 
+           //ObjectCreationList::create(ocl, &worldPos, NULL, 0.0f, 0);
+
+			//ObjectCreationList::create(ocl, NULL, &adjustedPos, &adjustedPos, 0.0f); Dozer and OCL spawned at mouse position
+
+			TheInGameUI->message(UnicodeString(L"\x51c9\x51c9\x63a5\x5355 !"));
+        } else { // OCL不存在仅提示，不break（避免提前退出）
+            TheInGameUI->message(UnicodeString(L"OCL_CheatSpawnBuilding not found!"));
+            TheInGameUI->message(UnicodeString(L"Dozer spawned at mouse position (without OCL)!"));
+ //       }
+
+        
+        disp = DESTROY_MESSAGE;  
+    }  
+    break; // case分支的break，作用域正确
+}
+}
+// case分支结束（大括号完全匹配）
+
+	
     case GameMessage::MSG_CHEAT_ADD_CASH:									
 		{
 			if ( !TheGameLogic->isInMultiplayerGame() )
@@ -3374,6 +3879,8 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 				Player *localPlayer = ThePlayerList->getLocalPlayer();
 				Money *money = localPlayer->getMoney();
 				money->deposit( 10000 );
+				TheInGameUI->message( UnicodeString( L"CHEAT_ADD_CASH!" ));
+				disp = DESTROY_MESSAGE;
 			}
 			break;
 		}
@@ -3394,6 +3901,7 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 							player->grantScience(st);
 						}
 					}
+					giveAllSciences(player);
 				}
 				TheInGameUI->message( UnicodeString( L"Granting all sciences!" ));
 				disp = DESTROY_MESSAGE;
@@ -3412,6 +3920,80 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 			}
 			break;
 		}
+
+//------------------------------------------------------------------------------- DEMO MESSAGES
+		//-----------------------------------------------------------------------------------------
+		case GameMessage::MSG_CHEAT_GIVE_VETERANCY:
+		case GameMessage::MSG_CHEAT_TAKE_VETERANCY:
+		{
+			if ( !TheGameLogic->isInMultiplayerGame() )
+			{
+
+				const DrawableList *list = TheInGameUI->getAllSelectedDrawables();
+				for (DrawableListCIt it = list->begin(); it != list->end(); ++it) 
+				{
+					Drawable *pDraw = *it;
+					if (pDraw) 
+					{
+						Object *pObject = pDraw->getObject();
+						if (pObject)
+						{
+							ExperienceTracker *et = pObject->getExperienceTracker();
+							if (et)
+							{
+								if (et->isTrainable())
+								{
+									VeterancyLevel oldVet = et->getVeterancyLevel();
+									VeterancyLevel newVet = oldVet;
+									if (t == GameMessage::MSG_CHEAT_GIVE_VETERANCY)
+									{
+										if (oldVet < LEVEL_LAST)
+										{
+											newVet = (VeterancyLevel)((Int)oldVet + 1);
+										}
+									}
+									else
+									{
+										if (oldVet > LEVEL_FIRST)
+										{
+											newVet = (VeterancyLevel)((Int)oldVet - 1);
+										}
+									}
+									et->setVeterancyLevel(newVet);
+								}
+							}
+						}
+					}
+				}
+				disp = DESTROY_MESSAGE;
+			}
+			break;
+		}
+
+		//-----------------------------------------------------------------------------------------
+		case GameMessage::MSG_CHEAT_GIVE_RANKLEVEL:
+		{
+			Player *player = ThePlayerList->getLocalPlayer();
+			if (player)
+				player->setRankLevel(player->getRankLevel() + 1);
+			TheInGameUI->message( UnicodeString( L"Adding a RankLevel" ));
+			disp = DESTROY_MESSAGE;
+			break;
+		}
+
+		//------------------------------------------------------------------------------- DEMO MESSAGES
+		//-----------------------------------------------------------------------------------------
+		case GameMessage::MSG_CHEAT_TAKE_RANKLEVEL:
+		{
+			Player *player = ThePlayerList->getLocalPlayer();
+			if (player)
+				player->setRankLevel(player->getRankLevel() - 1);
+			TheInGameUI->message( UnicodeString( L"Subtracting a RankLevel" ));
+			disp = DESTROY_MESSAGE;
+			break;
+		}
+
+		//------------------------------------------------------------------------------- DEMO MESSAGES
 		case GameMessage::MSG_CHEAT_SHOW_HEALTH:
 		{
 			if ( !TheGameLogic->isInMultiplayerGame() )
@@ -4447,10 +5029,29 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		//-----------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_DEMO_REMOVE_PREREQ:
 		{
+			if (!TheGameLogic->isInMultiplayerGame() || !hasThingsInProduction(PLAYER_HUMAN))
+			{
 			// Doesn't make a valid network message
-			Player *localPlayer = ThePlayerList->getLocalPlayer();
-			localPlayer->toggleIgnorePrereqs();
+			//Player *localPlayer = ThePlayerList->getLocalPlayer();
+			//localPlayer->toggleIgnorePrereqs();
+			// In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+			Bool enable = !ThePlayerList->getLocalPlayer()->ignoresPrereqs();
+			for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+			{
+				Player* player = ThePlayerList->getNthPlayer(n);
+				if (player->getPlayerType() == PLAYER_HUMAN)
+					player->enableIgnorePrereqs(enable);
+				//Player *localPlayer = ThePlayerList->getLocalPlayer();
+			    //localPlayer->toggleIgnorePrereqs();
+			}
+			if (enable)
+				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOn", L"Ignore Prerequisites is ON") );
+			TheInGameUI->message( UnicodeString( L"Ignore Prerequisites\x53bb\x524d\x63d0\x5efa is ON" ));
+			else
+				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOff", L"Ignore Prerequisites is OFF") );
+			TheInGameUI->message( UnicodeString( L"Ignore Prerequisites\x53bb\x524d\x63d0\x5efa is off" ));
 			disp = DESTROY_MESSAGE;
+			}
 			break;
     } 
 
@@ -4459,23 +5060,118 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		case GameMessage::MSG_META_DEMO_INSTANT_BUILD:
 		{
 			// Doesn't make a valid network message
-			Player *localPlayer = ThePlayerList->getLocalPlayer();
-			localPlayer->toggleInstantBuild();
-			disp = DESTROY_MESSAGE;
+			//Player *localPlayer = ThePlayerList->getLocalPlayer();
+			//localPlayer->toggleInstantBuild();
+			// In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+			if (!TheGameLogic->isInMultiplayerGame() || !hasThingsInProduction(PLAYER_HUMAN))
+			{
+				Bool enable = !ThePlayerList->getLocalPlayer()->buildsInstantly();
+				for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+				{
+					Player* player = ThePlayerList->getNthPlayer(n);
+					if (player->getPlayerType() == PLAYER_HUMAN)
+						player->enableInstantBuild(enable);
+				}
+
+			//disp = DESTROY_MESSAGE;
+			if (enable)
+					//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugInstantBuildOn", L"Instant Build is ON") );
+				TheInGameUI->message( UnicodeString( L"Instant Build\x79d2\x5efa is ON" ));
+				else
+					//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugInstantBuildOff", L"Instant Build is OFF") );
+				TheInGameUI->message( UnicodeString( L"Instant Build\x79d2\x5efa is OFF" ));
+                //TheInGameUI->message( UnicodeString( L"Granting all sciences!" ));
+				disp = DESTROY_MESSAGE;
+			}
 			break;
 		}
 
 		//------------------------------------------------------------------------------- DEMO MESSAGES
 		//-----------------------------------------------------------------------------------------
-		case GameMessage::MSG_META_DEMO_FREE_BUILD:
+		
+case GameMessage::MSG_META_DEMO_FREE_BUILD:
+{
+		// Doesn't make a valid network message
+		// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+		Bool enable = !ThePlayerList->getLocalPlayer()->buildsForFree();
+
+		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
 		{
-			// Doesn't make a valid network message
-			Player *localPlayer = ThePlayerList->getLocalPlayer();
-			localPlayer->toggleFreeBuild();
-			disp = DESTROY_MESSAGE;
-			break;
+			Player* player = ThePlayerList->getNthPlayer(n);
+			if (player->getPlayerType() == PLAYER_HUMAN)
+				player->enableFreeBuild(enable);
+
+			// 如果启用 freebuild，给玩家增加 1200 单位电量  
+			if (enable)
+			{
+				//player->getEnergy()->depositEnergy(0, FALSE); // 调用会自动加 1200  
+				player->getEnergy()->depositEnergy(0, true); // 调用会自动加 1200 
+			}
+			else
+				{
+				// 关闭 freebuild 时，重置电量为初始值  
+			//	player->getEnergy()->resetToInitialEnergy();
+				//player->getEnergy()->depositEnergy(0, TRUE); // 调用不自动加 1200
+				player->getEnergy()->depositEnergy(0, false); // 调用不自动加 1200
+			}
 		}
 
+		if (enable)
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free Build免费建+满电量 is ON") );
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is off" ));
+		else
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free Build免费建+满电量 is OFF") );
+        TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is on" ));
+		disp = DESTROY_MESSAGE;
+		break;
+}
+case GameMessage::MSG_META_DEMO_UNLIMITED_AMMO:
+{
+	//	if (!TheGameLogic->isInMultiplayerGame())
+	//	{
+	//		Player* localPlayer = ThePlayerList->getLocalPlayer();
+	//		localPlayer->toggleUnlimitedAmmo();
+
+	//		if (localPlayer->hasUnlimitedAmmo())
+	Bool enable = !ThePlayerList->getLocalPlayer()->hasUnlimitedAmmo();
+
+		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+		{
+			Player* player = ThePlayerList->getNthPlayer(n);
+			if (player->getPlayerType() == PLAYER_HUMAN)
+				player->enableUnlimitedAmmo(enable);
+       if (enable)
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOn", L"核動力全球智能打擊系統开 ON"));"UNLIMITED_AMMO ON"
+TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb ON" ));
+			else
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOff", L"核動力全球智能打擊系統关 OFF"));
+TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb OFF" ));
+
+			disp = DESTROY_MESSAGE;
+		}
+		break;
+}
+case GameMessage::MSG_META_DEMO_qingwaGOD_MODE:
+{
+		Bool enable = !ThePlayerList->getLocalPlayer()->hasGodMode();
+
+		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
+		{
+			Player* player = ThePlayerList->getNthPlayer(n);
+			if (player->getPlayerType() == PLAYER_HUMAN)
+				player->enableGodMode(enable);
+		}
+
+		if (enable)
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOn", L"God青蛙无敌模式 Mode is ON"));
+TheInGameUI->message( UnicodeString( L"God QINGWA Mode\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is  ON" ));
+		else
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOff", L"God青蛙无敌模式 Mode is OFF"));Q
+TheInGameUI->message( UnicodeString( L"God QINGWA Mode\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is OFF" ));
+
+		disp = DESTROY_MESSAGE;
+		break;
+}
 		//------------------------------------------------------------------------------- DEMO MESSAGES
 		//-----------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_DEMO_TOGGLE_RENDER:
@@ -4671,21 +5367,28 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		//-----------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_DEMO_GIVE_ALL_SCIENCES:
 		{
-			Player *player = ThePlayerList->getLocalPlayer();
-			if (player)
+			//Player *player = ThePlayerList->getLocalPlayer();
+			//if (player)
+			// In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
+			for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
 			{
 				// cheese festival: do NOT imitate this code. it is for debug purposes only.
-				std::vector<AsciiString> v = TheScienceStore->friend_getScienceNames();
-				for (int i = 0; i < v.size(); ++i) 
-				{
-					ScienceType st = TheScienceStore->getScienceFromInternalName(v[i]);
-					if (st != SCIENCE_INVALID && TheScienceStore->isScienceGrantable(st))
-					{
-						player->grantScience(st);
-					}
-				}
+		//		std::vector<AsciiString> v = TheScienceStore->friend_getScienceNames();
+		//		for (int i = 0; i < v.size(); ++i) 
+		//		{
+		//			ScienceType st = TheScienceStore->getScienceFromInternalName(v[i]);
+		//			if (st != SCIENCE_INVALID && TheScienceStore->isScienceGrantable(st))
+		//			{
+		//				player->grantScience(st);
+		//			}
+		//		}
+				Player* player = ThePlayerList->getNthPlayer(n);
+				if (player->getPlayerType() == PLAYER_HUMAN)
+					giveAllSciences(player);
 			}
+			
 			TheInGameUI->message( UnicodeString( L"Granting all sciences!" ));
+            // TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGiveAllSciences", L"Granting all sciences!") );
 			disp = DESTROY_MESSAGE;
 			break;
 		}

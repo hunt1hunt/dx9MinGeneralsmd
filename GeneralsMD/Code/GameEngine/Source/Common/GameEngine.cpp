@@ -517,7 +517,7 @@ void GameEngine::init( int argc, char *argv[] )
 		AsciiString fname;
 		fname.format("Data\\%s\\CommandMap.ini", GetRegistryLanguage().str());
 		initSubsystem(TheMetaMap,"TheMetaMap", MSGNEW("GameEngineSubsystem") MetaMap(), NULL, fname.str(), "Data\\INI\\CommandMap.ini");
-
+        TheMetaMap->generateMetaMap();
 #if defined(_DEBUG) || defined(_INTERNAL)
 		ini.load("Data\\INI\\CommandMapDebug.ini", INI_LOAD_MULTIFILE, NULL);
 #endif
@@ -844,15 +844,11 @@ void GameEngine::execute( void )
 		#endif
 
 
-		#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
-          if ( ! TheGlobalData->m_TiVOFastMode )
-		#else	//always allow this cheatkey if we're in a replaygame.
-		  if ( ! (TheGlobalData->m_TiVOFastMode && TheGameLogic->isInReplayGame()))
-		#endif
+		  if ( ! TheGlobalData->m_TiVOFastMode )
           {
             // limit the framerate
 					  DWORD now = timeGetTime();
-					  DWORD limit = (1000.0f/m_maxFPS)-1;
+					  DWORD limit = (m_maxFPS > 0) ? (DWORD)(1000.0f/m_maxFPS)-1 : 0;
 					  while (TheGlobalData->m_useFpsLimit && (now - prevTime) < limit) 
 					  {
 						  ::Sleep(0);

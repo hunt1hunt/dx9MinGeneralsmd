@@ -141,6 +141,7 @@ Int copyRect(unsigned char *buf, Int bufSize, int oX, int oY, int width, int hei
  	IDirect3DSurface8 *surface=NULL;	///<previous render target
  	IDirect3DSurface8 *tempSurface=NULL;
 	Int result = 0;
+	UINT actualSize = 0;
 	HRESULT hr = S_OK;
 
  	LPDIRECT3DDEVICE8 m_pDev=DX8Wrapper::_Get_D3D_Device8();
@@ -148,7 +149,7 @@ Int copyRect(unsigned char *buf, Int bufSize, int oX, int oY, int width, int hei
 	if (!m_pDev)
 		goto error;
 
- 	m_pDev->GetRenderTarget(&surface);
+ 	m_pDev->GetRenderTarget(0, &surface);
 
 	if (!surface)
 		goto error;
@@ -167,12 +168,12 @@ Int copyRect(unsigned char *buf, Int bufSize, int oX, int oY, int width, int hei
 	dstPoint.x=0;
 	dstPoint.y=0;
 
- 	hr=m_pDev->CreateImageSurface(  width, height, desc.Format, &tempSurface);
+ 	hr=m_pDev->CreateOffscreenPlainSurface(  width, height, desc.Format, D3DPOOL_SYSTEMMEM, &tempSurface, NULL);
 
 	if (hr != S_OK)
 		goto error;
  
- 	hr=m_pDev->CopyRects(surface,&srcRect,1,tempSurface,&dstPoint);
+ 	hr=m_pDev->UpdateSurface(surface,&srcRect,tempSurface,&dstPoint);
 
 	if (hr != S_OK)
 		goto error;
@@ -186,8 +187,9 @@ Int copyRect(unsigned char *buf, Int bufSize, int oX, int oY, int width, int hei
 
  	tempSurface->GetDesc(&desc);
 
-	if (desc.Size < bufSize)
-		bufSize = desc.Size;
+	// D3D9: D3DSURFACE_DESC no longer has .Size, compute from pitch * height
+	if (actualSize < (UINT)bufSize)
+		bufSize = actualSize;
 		
 	memcpy(buf,lrect.pBits,bufSize);
 	result = bufSize;
@@ -259,7 +261,7 @@ Bool W3DSmudgeManager::testHardwareSupport(void)
 
 		//draw polygons like this is very inefficient but for only 2 triangles, it's
 		//not worth bothering with index/vertex buffers.
-		pDev->SetVertexShader(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+		pDev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
 
 		pDev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANS_LIT_TEX_VERTEX));
 

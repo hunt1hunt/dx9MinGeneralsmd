@@ -98,6 +98,8 @@
 
 #define MESH_SINGLE_MATERIAL_HACK		0		// (gth) forces all multi-material meshes to use their first material only. (NOT RECOMMENDED, TESTING ONLY!)
 #define MESH_FORCE_STATIC_SORT_HACK	0		// (gth) forces all sorting meshes to use static sort level 1 instead.
+
+//BOOL Get_Secondary_Gradient();
 /**
 ** MeshLoadContextClass
 ** This class is just used as a temporary scratchpad while a mesh is being
@@ -1031,6 +1033,7 @@ WW3DErrorType MeshModelClass::read_textures(ChunkLoadClass & cload,MeshLoadConte
  * HISTORY:                                                                                    *
  *   2/16/99    GTH : Created.                                                                 *
  *=============================================================================================*/
+/*
 WW3DErrorType MeshModelClass::read_material_pass(ChunkLoadClass & cload,MeshLoadContextClass * context)
 {
 	context->CurTexStage = 0;
@@ -1074,7 +1077,98 @@ WW3DErrorType MeshModelClass::read_material_pass(ChunkLoadClass & cload,MeshLoad
 	context->CurPass++;
 	return WW3D_ERROR_OK;
 }
-
+*/
+//
+WW3DErrorType MeshModelClass::read_material_pass(ChunkLoadClass & cload, MeshLoadContextClass * context)  
+{  
+	context->CurTexStage = 0;  
+  
+	while (cload.Open_Chunk()) {  
+		WW3DErrorType error = WW3D_ERROR_OK;  
+		switch (cload.Cur_Chunk_ID()) {  
+			case W3D_CHUNK_VERTEX_MATERIAL_IDS:  
+				error = read_vertex_material_ids(cload, context);  
+				break;  
+			case W3D_CHUNK_SHADER_IDS:  
+				error = read_shader_ids(cload, context);  
+				break;  
+			case W3D_CHUNK_DCG:  
+				error = read_dcg(cload, context);  
+				break;  
+			case W3D_CHUNK_DIG:  
+				error = read_dig(cload, context);  
+				break;  
+			case W3D_CHUNK_SCG:  
+				error = read_scg(cload, context);  
+				break;  
+			case W3D_CHUNK_TEXTURE_STAGE:  
+				error = read_texture_stage(cload, context);  
+				break;  
+		};  
+		if (error != WW3D_ERROR_OK) {  
+			return error;  
+		}  
+		cload.Close_Chunk();  
+	}  
+  
+	// =====================================================================  
+	// SPECULAR HIGHLIGHT OVERRIDE锟斤拷read_material_pass 锟斤拷只锟斤拷锟斤拷 Blend Mode 锟饺ｏ拷  
+	// SECONDARY_GRADIENT 锟斤拷锟节此达拷锟斤拷锟矫ｏ拷统一锟斤拷 install_materials 末尾锟斤拷锟斤拷  
+	// =====================================================================  
+	/*{  
+		int pass = context->CurPass;  
+		bool is_secondary_pass = (pass > 0);  
+  
+		if (!DefMatDesc->Has_Shader_Array(pass))  
+		{  
+			if (!is_secondary_pass)  
+				// pass0锟斤拷强锟斤拷 Opaque 模式  
+			//	DefMatDesc->Shader[pass].Set_Depth_Compare(ShaderClass::PASS_LEQUAL);  
+				DefMatDesc->Shader[pass].Set_Depth_Mask(ShaderClass::DEPTH_WRITE_ENABLE);  //造成某些某些模型穿模的两行代码
+				DefMatDesc->Shader[pass].Set_Color_Mask(ShaderClass::COLOR_WRITE_ENABLE);  //造成某些某些模型穿模的两行代码
+			//	DefMatDesc->Shader[pass].Set_Src_Blend_Func(ShaderClass::SRCBLEND_ONE);  
+			//	DefMatDesc->Shader[pass].Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ZERO);  
+			//	DefMatDesc->Shader[pass].Set_Alpha_Test(ShaderClass::ALPHATEST_DISABLE);  
+			//	DefMatDesc->Shader[pass].Set_Primary_Gradient(ShaderClass::GRADIENT_MODULATE);  
+			//	DefMatDesc->Shader[pass].Set_Post_Detail_Color_Func(ShaderClass::DETAILCOLOR_DISABLE);  
+			//	DefMatDesc->Shader[pass].Set_Post_Detail_Alpha_Func(ShaderClass::DETAILALPHA_DISABLE);  
+			}  
+			// SECONDARY_GRADIENT 锟斤拷时锟斤拷锟斤拷为 DISABLE锟斤拷锟斤拷 install_materials 末尾统一锟斤拷锟斤拷  
+			DefMatDesc->Shader[pass].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_DISABLE);  
+		}  
+		else  
+		{  
+			if (DefMatDesc->ShaderArray[pass])  
+			{  
+				for (int i = 0; i < DefMatDesc->ShaderArray[pass]->Get_Count(); i++)  
+				{  
+					if (!is_secondary_pass)  
+					{  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Depth_Compare(ShaderClass::PASS_LEQUAL);  
+						DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Depth_Mask(ShaderClass::DEPTH_WRITE_ENABLE);  
+						DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Color_Mask(ShaderClass::COLOR_WRITE_ENABLE);  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Src_Blend_Func(ShaderClass::SRCBLEND_ONE);  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ZERO);  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Alpha_Test(ShaderClass::ALPHATEST_DISABLE);  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Primary_Gradient(ShaderClass::GRADIENT_MODULATE);  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Post_Detail_Color_Func(ShaderClass::DETAILCOLOR_DISABLE);  
+				//		DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Post_Detail_Alpha_Func(ShaderClass::DETAILALPHA_DISABLE);  
+					}  
+					// SECONDARY_GRADIENT 锟斤拷时锟斤拷锟斤拷为 DISABLE  
+				//	DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_DISABLE);  
+			//	DefMatDesc->ShaderArray[pass]->Get_Element(i).Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_ENABLE);  
+				}  
+			}  
+		}  
+	}*/  
+	// =====================================================================  
+	// END SPECULAR HIGHLIGHT OVERRIDE  
+	// =====================================================================  
+  
+	context->CurPass++;  
+	return WW3D_ERROR_OK;  
+}
+//
 
 /***********************************************************************************************
  * MeshModelClass::read_vertex_material_ids -- read the vmat ids for a pass                    *
@@ -1684,6 +1778,276 @@ void MeshModelClass::post_process()
 	if (WW3D::Is_Overbright_Modify_On_Load_Enabled()) {
 		modify_for_overbright();
 	}
+
+	//
+ // ---- 锟斤拷锟斤拷锟斤拷为锟斤拷模锟酵匡拷锟斤拷锟竭光：锟斤拷锟斤拷 pass 0 锟斤拷锟斤拷锟竭光，锟斤拷为锟斤拷锟斤拷模锟斤拷 pass 0 锟斤拷锟斤拷锟竭癸拷 ----  
+{  
+    // 
+    if (DefMatDesc->Material[0] != NULL) {  
+        Vector3 spec;  
+        DefMatDesc->Material[0]->Get_Specular(&spec); 
+        if ((spec.X > 0.86f && spec.Y > 0.86f && spec.Z > 0.86f) || (spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f)) { 
+             DefMatDesc->Material[0]->Set_Specular(0.80f, 0.80f, 0.80f);
+             DefMatDesc->Material[0]->Set_Shininess(50.0f);
+        }  
+    }  
+
+    // 
+    if (DefMatDesc->MaterialArray[0] != NULL) {  
+        VertexMaterialClass *prev_mtl = NULL;  
+        int vert_count = DefMatDesc->Get_Vertex_Count();  
+        for (int vidx = 0; vidx < vert_count; vidx++) {  
+            VertexMaterialClass *mtl = DefMatDesc->Peek_Material(vidx, 0);  
+            if (mtl != NULL && mtl != prev_mtl) {  
+                // 
+                if (mtl->Get_Opacity() >= 1.0f) {
+                    Vector3 spec;  
+                    mtl->Get_Specular(&spec);  
+                    if ((spec.X > 0.86f && spec.Y > 0.86f && spec.Z > 0.86f) || (spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f)) { 
+                       mtl->Set_Specular(0.80f, 0.80f, 0.80f);
+                       mtl->Set_Shininess(50.0f);               
+                    }  
+                }
+                prev_mtl = mtl;  
+            }  
+        }  
+    }  
+
+    // 
+    int pass = 0; 
+    {  
+        // 
+        if (!DefMatDesc->Has_Material_Array(pass))  
+        {  
+            VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
+            if (vmat)  
+            {  
+                // 
+                if (vmat->Get_Opacity() >= 1.0f) {
+                    Vector3 spec;  
+                    vmat->Get_Specular(&spec); 
+                    if (spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f) {
+                        vmat->Set_Specular(100.0f / 255.0f, 100.0f / 255.0f, 100.0f / 255.0f); 
+                    }
+                    if (vmat->Get_Shininess() == 0.0f)  
+                        vmat->Set_Shininess(50.0f);  
+                    vmat->Set_Opacity(1.0f);  
+                } else {
+                    // 
+                    if (vmat->Get_Shininess() == 0.0f)
+                        vmat->Set_Shininess(30.0f);
+                }
+            }  
+        }  
+        else  
+        {  
+            if (DefMatDesc->MaterialArray[pass])  
+            {  
+                for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
+                {  
+                    VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
+                    if (vmat)  
+                    {  
+                        if (vmat->Get_Opacity() >= 1.0f) {
+                            Vector3 spec;  
+                            vmat->Get_Specular(&spec);  
+                            if (spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f) {
+                                vmat->Set_Specular(100.0f / 255.0f, 100.0f / 255.0f, 100.0f / 255.0f);
+                            }
+                            if (vmat->Get_Shininess() == 0.0f)  
+                                vmat->Set_Shininess(50.0f);  
+                            vmat->Set_Opacity(1.0f);  
+                        } else {
+                            if (vmat->Get_Shininess() == 0.0f)
+                                vmat->Set_Shininess(30.0f);
+                        }
+                    }  
+                }  
+            }  
+        } 	
+
+        // 
+        bool can_enable_specular = true;
+        if (can_enable_specular)  
+        {  
+            if (!DefMatDesc->Has_Material_Array(pass))  
+            {  
+                VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
+                if (vmat)  
+                {  
+                    vmat->Set_Lighting(true);
+                    // 
+                }  
+            }  
+            else  
+            {  
+                if (DefMatDesc->MaterialArray[pass])  
+                {  
+                    for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
+                    {  
+                        VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
+                        if (vmat)  
+                        {  
+                            vmat->Set_Lighting(true);
+                            // 
+                        }  
+                    }  
+                }  
+            }  
+        }  
+    }  
+
+    // 
+    bool is_transparent = false;
+    if (DefMatDesc->Material[0] != NULL && DefMatDesc->Material[0]->Get_Opacity() < 1.0f) {
+        is_transparent = true;
+    }
+
+    if (!is_transparent) {
+        DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_ENABLE);  
+        if (DefMatDesc->ShaderArray[0] != NULL) {  
+            for (int tri = 0; tri < DefMatDesc->ShaderArray[0]->Get_Count(); tri++) {  
+                DefMatDesc->ShaderArray[0]->Get_Element(tri).Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_ENABLE);  
+            }  
+        }  
+    } else {
+        // 
+        DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_DISABLE);
+    }
+}  
+// ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ----
+    // ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ---- 
+
+	//
+/*
+	// ---- 锟斤拷锟斤拷锟斤拷为锟斤拷模锟酵匡拷锟斤拷锟竭光：锟睫革拷水平锟斤拷浒碉拷锟斤拷猓拷锟斤拷锟絍C6.0 ----  
+{  
+    // 锟斤拷锟斤拷 pass 0 锟侥碉拷一锟斤拷锟斤拷  
+    if (DefMatDesc->Material[0] != NULL) {  
+        Vector3 spec;  
+        DefMatDesc->Material[0]->Get_Specular(&spec); 
+        // 锟斤拷锟斤拷原锟斤拷锟叫断ｏ拷锟斤拷锟斤拷锟竭癸拷透吖锟街革拷锟斤拷锟絍C6 D38 锟斤拷准值锟斤拷
+        if (spec.X > 0.86f && spec.Y > 0.86f && spec.Z > 0.86f || spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f ) { 
+            // 统一锟竭癸拷值锟斤拷锟斤拷锟解覆锟角筹拷突
+            DefMatDesc->Material[0]->Set_Specular(0.40f, 0.40f, 0.40f);
+		 // DefMatDesc->Material[0]->Set_Specular(0.85f, 0.85f, 0.85f);
+            //  critical fix锟斤拷锟斤拷锟斤拷为VC6锟斤拷锟捷的高癸拷指锟斤拷锟斤拷锟斤拷锟剿斤拷锟戒暗
+            DefMatDesc->Material[0]->Set_Shininess(25.0f);
+        }  
+    }  
+    // 锟斤拷锟斤拷 pass 0 锟斤拷锟金顶碉拷锟斤拷锟斤拷锟斤拷锟�  
+    if (DefMatDesc->MaterialArray[0] != NULL) {  
+        VertexMaterialClass *prev_mtl = NULL;  
+        int vert_count = DefMatDesc->Get_Vertex_Count();  
+        for (int vidx = 0; vidx < vert_count; vidx++) {  
+            VertexMaterialClass *mtl = DefMatDesc->Peek_Material(vidx, 0);  
+            if (mtl != NULL && mtl != prev_mtl) {  
+                Vector3 spec;  
+                mtl->Get_Specular(&spec);  
+                if (spec.X > 0.86f && spec.Y > 0.86f && spec.Z > 0.86f || spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f ) { 
+                    // 统一锟竭癸拷值
+                   mtl->Set_Specular(0.40f, 0.40f, 0.40f);
+				// mtl->Set_Specular(0.85f, 0.85f, 0.85f);
+                    // critical fix锟斤拷锟斤拷锟斤拷锟竭癸拷指锟斤拷
+                    mtl->Set_Shininess(25.0f);
+                }  
+                prev_mtl = mtl;  
+            }  
+        }  
+    }  
+
+    for (int pass = 0; pass < DefMatDesc->PassCount; pass++)  
+    {  
+        // ---------------------------------------------------------------  
+        // 锟斤拷锟斤拷1锟斤拷锟斤拷全锟斤拷锟斤拷锟斤拷什锟斤拷锟斤拷锟斤拷锟斤拷锟� pass 锟斤拷执锟叫ｏ拷  
+        // ---------------------------------------------------------------  
+        if (!DefMatDesc->Has_Material_Array(pass))  
+        {  
+            VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
+            if (vmat)  
+            {  
+                Vector3 spec;  
+                vmat->Get_Specular(&spec); 
+                // 统一锟竭癸拷值锟斤拷删锟斤拷锟斤拷突锟斤拷0.458锟叫讹拷
+                if (spec.X > 0.86f || spec.Y > 0.86f || spec.Z > 0.86f) 
+                    vmat->Set_Specular(0.40f, 0.40f, 0.40f); 
+				//vmat->Set_Specular(0.85f, 0.85f, 0.85f);
+                if (vmat->Get_Shininess() == 0.0f)  
+                    vmat->Set_Shininess(25.0f);  
+            }  
+        }  
+        else  
+        {  
+            if (DefMatDesc->MaterialArray[pass])  
+            {  
+                for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
+                {  
+                    VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
+                    if (vmat)  
+                    {  
+                        Vector3 spec;  
+                        vmat->Get_Specular(&spec);  
+                        if (spec.X > 0.86f || spec.Y > 0.86f || spec.Z > 0.86f) 
+                            vmat->Set_Specular(0.40f, 0.40f, 0.40f);
+					// vmat->Set_Specular(0.85f, 0.85f, 0.85f);
+                        if (vmat->Get_Shininess() == 0.0f)  
+                            vmat->Set_Shininess(25.0f);  
+                    }  
+                }  
+            }  
+        } 	
+  
+        // ---------------------------------------------------------------  
+        //  critical fix锟斤拷删锟斤拷锟斤拷锟斤拷摹锟斤拷吖锟斤拷锟斤拷锟斤拷锟矫癸拷锟秸★拷锟竭硷拷  
+        //  直锟斤拷强锟狡匡拷锟斤拷锟斤拷锟秸ｏ拷锟斤拷锟剿斤拷锟戒暗锟斤拷锟斤拷  
+        // ---------------------------------------------------------------  
+        bool can_enable_specular = true;
+
+        // ---------------------------------------------------------------  
+        // 锟斤拷锟斤拷4锟斤拷强锟狡匡拷锟斤拷锟斤拷锟秸和高光（VC6 D3D8锟斤拷准写锟斤拷锟斤拷  
+        // ---------------------------------------------------------------  
+        if (can_enable_specular)  
+        {  
+            if (!DefMatDesc->Has_Material_Array(pass))  
+            {  
+                VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
+                if (vmat)  
+                {  
+                    vmat->Set_Lighting(true);  
+                    vmat->Set_Diffuse_Color_Source(VertexMaterialClass::COLOR1); 
+                }  
+            }  
+            else  
+            {  
+                if (DefMatDesc->MaterialArray[pass])  
+                {  
+                    for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
+                    {  
+                        VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
+                        if (vmat)  
+                        {  
+                            vmat->Set_Lighting(true);  
+                            vmat->Set_Diffuse_Color_Source(VertexMaterialClass::COLOR1); 
+                        }  
+                    }  
+                }  
+            }  
+        }  
+    }  
+
+    // 为锟斤拷锟斤拷模锟斤拷 pass 0 锟斤拷锟斤拷 SECONDARY_GRADIENT锟斤拷锟竭光）  
+   DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_ENABLE);  
+  // DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_DISABLE);  
+    if (DefMatDesc->ShaderArray[0] != NULL) {  
+        for (int tri = 0; tri < DefMatDesc->ShaderArray[0]->Get_Count(); tri++) {  
+            DefMatDesc->ShaderArray[0]->Get_Element(tri).Set_Secondary_Gradient(  
+                ShaderClass::SECONDARY_GRADIENT_ENABLE);  
+		//ShaderClass::SECONDARY_GRADIENT_DISABLE); 
+        }  
+    }  
+}  
+// ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ----
+	//*/
 }
 
 void MeshModelClass::post_process_fog(void)
@@ -1863,18 +2227,15 @@ void MeshModelClass::modify_for_overbright(void)
 
 }
 
+/*
 void MeshModelClass::install_materials(MeshLoadContextClass * context)
 {
 	int i;
 
-	/*
-	** If alternate material chunks were loaded, initialize the AlternateMatDesc
-	*/
+	
 	install_alternate_material_desc(context);
 	
-	/*
-	** Finish configuring the vertex materials and color arrays.
-	*/
+	
 	bool lighting_enabled=true;
 	// vertex-lit models need the lighting turned off!
 	if (Get_Flag(MeshGeometryClass::PRELIT_VERTEX)) {
@@ -1885,19 +2246,41 @@ void MeshModelClass::install_materials(MeshLoadContextClass * context)
 		AlternateMatDesc->Post_Load_Process (lighting_enabled,this);
 	}
 
-	/*
-	** transfer the refs to our textures into the MatInfo
-	*/
+	
 	for (i=0; i<context->Texture_Count(); i++) {
 		MatInfo->Add_Texture(context->Peek_Texture(i));
 	}
 
-	/*
-	** transfer the refs to our vertex materials into the MatInfo
-	*/
+	
 	for (i=0; i<context->Vertex_Material_Count(); i++) {
 		MatInfo->Add_Vertex_Material(context->Peek_Vertex_Material(i));
 	}
+}
+*/
+
+void MeshModelClass::install_materials(MeshLoadContextClass * context)  
+{  
+    int i;  
+  
+    install_alternate_material_desc(context);  
+  
+    bool lighting_enabled = true;  
+    if (Get_Flag(MeshGeometryClass::PRELIT_VERTEX)) {  
+        lighting_enabled = false;  
+    }  
+    DefMatDesc->Post_Load_Process(lighting_enabled, this);  
+    if (AlternateMatDesc != NULL) {  
+        AlternateMatDesc->Post_Load_Process(lighting_enabled, this);  
+    }  
+  
+    for (i = 0; i < context->Texture_Count(); i++) {  
+        MatInfo->Add_Texture(context->Peek_Texture(i));  
+    }  
+    for (i = 0; i < context->Vertex_Material_Count(); i++) {  
+        MatInfo->Add_Vertex_Material(context->Peek_Vertex_Material(i));  
+    }  
+  
+   
 }
 
 
@@ -2623,6 +3006,10 @@ WW3DErrorType MeshModelClass::write_material_pass(ChunkSaveClass & csave,MeshSav
 	write_texture_stage(csave,context);
 
 	csave.End_Chunk();
+//
+
+
+//
 	context->CurPass++;
 
 	return WW3D_ERROR_OK;

@@ -76,6 +76,30 @@ static Bool TheHurtSelectionMode = false;
 static Bool TheDebugSelectionMode = false;
 #endif
 
+// 在文件顶部或类外添加  
+static void toggleInvincibilityCallback(Object* obj, void* userData)  
+{  
+    if (!obj) return;  
+      
+    Bool enableInvincibility = *((Bool*)userData);  
+      
+    // 排除投射物、导弹和炸弹类对象  
+    if (obj->isKindOf(KINDOF_PROJECTILE) ||  
+        obj->isKindOf(KINDOF_SMALL_MISSILE) ||  
+        obj->isKindOf(KINDOF_BALLISTIC_MISSILE))  
+    {  
+        return; // 不对这些对象应用无敌状态  
+    }  
+      
+	// 获取身体模块并设置无敌状态  
+	BodyModuleInterface* body = obj->getBodyModule();  
+    if (body)  
+    {  
+        body->setIndestructible(enableInvincibility);  
+    }  
+}
+
+
 //-----------------------------------------------------------------------------
 static Bool currentlyLookingForSelection( )
 {
@@ -286,6 +310,7 @@ SelectionTranslator::SelectionTranslator()
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
   m_HandOfGodSelectionMode = FALSE;
+	m_qwwudiSelectionMode = FALSE;
 #endif
 }
 
@@ -1305,6 +1330,22 @@ GameMessageDisposition SelectionTranslator::translateGameMessage(const GameMessa
 			{
 				m_HandOfGodSelectionMode = !m_HandOfGodSelectionMode;
 				TheInGameUI->message( UnicodeString( L"Hand-Of-God Mode is %s" ), m_HandOfGodSelectionMode ? L"ON" : L"OFF" );
+				disp = DESTROY_MESSAGE;
+			}
+			break;
+		}
+		//-----------------------------------------------------------------------------------------
+		case GameMessage::MSG_CHEAT_qw_wudi_MODE: // NOTICE THE DIFFERENT NAME
+		{
+			if ( !TheGameLogic->isInMultiplayerGame() )
+			{
+				m_qwwudiSelectionMode = !m_qwwudiSelectionMode;
+				Player* localPlayer = ThePlayerList->getLocalPlayer();
+				if (localPlayer)
+				{
+					localPlayer->iterateObjects(toggleInvincibilityCallback, (void*)&m_qwwudiSelectionMode);
+				}
+				TheInGameUI->message( UnicodeString( L"QW WUDI Mode is %s" ), m_qwwudiSelectionMode ? L"ON" : L"OFF" );
 				disp = DESTROY_MESSAGE;
 			}
 			break;

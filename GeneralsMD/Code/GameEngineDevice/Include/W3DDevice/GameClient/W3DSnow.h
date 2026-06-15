@@ -26,7 +26,10 @@
 class DX8IndexBufferClass;
 class RenderInfoClass;
 class TextureClass;
+#include "d3d8compat.h"
+#ifndef D3D8COMPAT_H
 struct IDirect3DVertexBuffer8;
+#endif
 
 class W3DSnowManager : public SnowManager
 {

@@ -27,6 +27,17 @@
 // Author: Colin Day, April 2001
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+// ====================== 新增以下2行，修复所有错误 ======================
+//#include "W3DAssetManager.h"    // 修复：W3DAssetManager 未定义
+#include "W3DDevice/GameClient/W3DAssetManager.h"  // ✅ 完整路径，编译器能找到
+//#include "TerrainLogic.h"       // 修复：TheTerrainLogic 未声明
+#include "GameLogic/TerrainLogic.h"                // 你找到的地形逻辑头文件
+// ======================================================================
+// ====================== 【正确】引擎原生头文件 ======================
+//#include "W3DAsset.h"       // ✅ 修复：W3DAssetManager 未定义（真实头文件）
+//#include "Terrain.h"        // ✅ 修复：TheTerrainLogic 未声明（真实头文件）
+// ==================================================================
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -166,6 +177,13 @@ W3DTerrainVisual::W3DTerrainVisual()
 	TheWaterRenderObj = NULL;
 	
   m_logicHeightMap   = NULL;
+  /*// >>>>>> 新增 <<<<<<  
+    m_flatModelRenderObj  = NULL;  
+	m_flatModelRenderObjB  = NULL;  
+	m_flatModelRenderObjC  = NULL;  
+	m_flatModelRenderObjD  = NULL;  
+	m_flatModelRenderObjE  = NULL; */
+    // >>>>>> 新增结束 <<<<<<  
   
 #ifdef DO_SEISMIC_SIMULATIONS
   m_clientHeightMap = NULL;
@@ -346,7 +364,51 @@ void W3DTerrainVisual::reset( void )
 #ifdef DO_SEISMIC_SIMULATIONS
   m_seismicSimulationList.clear();
 #endif
-  
+ /* // >>>>>> 新增：释放平面模型渲染对象 <<<<<<  
+    if( m_flatModelRenderObj )  
+    {  
+        if( m_flatModelRenderObj->Peek_Scene() != NULL )  
+            W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObj );  
+        REF_PTR_RELEASE( m_flatModelRenderObj );  
+        m_flatModelRenderObj = NULL;  
+    }  
+    // >>>>>> 新增结束 <<<<<< 
+	// >>>>>> 新增：释放平面模型渲染对象 <<<<<<  
+    if( m_flatModelRenderObjB )  
+    {  
+        if( m_flatModelRenderObjB->Peek_Scene() != NULL )  
+            W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjB );  
+        REF_PTR_RELEASE( m_flatModelRenderObjB );  
+        m_flatModelRenderObjB = NULL;  
+    }  
+    // >>>>>> 新增结束 <<<<<< 
+	// >>>>>> 新增：释放平面模型渲染对象 <<<<<<  
+    if( m_flatModelRenderObjC )  
+	{  
+		if( m_flatModelRenderObjC->Peek_Scene() != NULL )  
+			W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjC );  
+		REF_PTR_RELEASE( m_flatModelRenderObjC );  
+		m_flatModelRenderObjC = NULL;  
+	}
+    // >>>>>> 新增结束 <<<<<< 
+	// >>>>>> 新增：释放平面模型渲染对象 <<<<<<  
+    if( m_flatModelRenderObjD )  
+	{  
+		if( m_flatModelRenderObjD->Peek_Scene() != NULL )  
+			W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjD );  
+		REF_PTR_RELEASE( m_flatModelRenderObjD );  
+		m_flatModelRenderObjD = NULL;  
+	}
+    // >>>>>> 新增结束 <<<<<< 
+	// >>>>>> 新增：释放平面模型渲染对象 <<<<<<  
+    if( m_flatModelRenderObjE )  
+	{  
+		if( m_flatModelRenderObjE->Peek_Scene() != NULL )  
+			W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjE );  
+		REF_PTR_RELEASE( m_flatModelRenderObjE );  
+		m_flatModelRenderObjE = NULL;  
+	}
+    // >>>>>> 新增结束 <<<<<< */
 }  // end reset
 
 //-------------------------------------------------------------------------------------------------
@@ -703,12 +765,216 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 		pMapObj = pMapObj->getNext();
 	}
 
-	// reset water render object if present
+	/*// reset water render object if present
 	if( m_waterRenderObject )
 	{
 		m_waterRenderObject->load();
 	}
+// >>>>>> 新增：在地表下 -50 处插入 a.w3d 平面模型在地图中添加W3D模型 <<<<<<  
+    {  
+        // 释放上一次可能残留的对象（地图重载时）  
+        if( m_flatModelRenderObj )  
+        {  
+            if( m_flatModelRenderObj->Peek_Scene() != NULL )  
+                W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObj );  
+            REF_PTR_RELEASE( m_flatModelRenderObj );  
+            m_flatModelRenderObj = NULL;  
+        }  
+  
+        // 加载 a.w3d（资产管理器会在 Art/ 目录下查找 a.w3d）  
+       m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
+	//    m_flatModelRenderObjC = W3DDisplay::m_assetManager->Create_Render_Obj( "0qsnwateryy1" );
+//	 m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_S" ); // BloomBox_D
+ //  m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BLOOMBOX" ); 
+        if( m_flatModelRenderObj )  
+        {  
+            // 获取地图范围，计算地图中心 XY 及最低地表 Z  
+            Region3D extent;  
+            TheTerrainLogic->getExtent( &extent );  
+  
+            Real centerX = ( extent.lo.x + extent.hi.x ) * 0.5f;  
+            Real centerY = ( extent.lo.y + extent.hi.y ) * 0.5f;  
+            Real belowZ  = extent.lo.z - 50.0f;  // 地表最低点再向下 50 单位  
+  
+            // 设置位置变换矩阵  
+            Matrix3D transform;  
+            transform.Make_Identity();  
+            transform.Set_X_Translation( centerX );  
+            transform.Set_Y_Translation( centerY );  
+            transform.Set_Z_Translation( belowZ );  
+            m_flatModelRenderObj->Set_Transform( transform );  
+  
+            // 加入 3D 场景  
+            W3DDisplay::m_3DScene->Add_Render_Object( m_flatModelRenderObj );  
+            // 注意：不 Release_Ref，因为我们需要持有指针以便 reset 时移除  
+        }  
+        else  
+        {  
+            DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load BloomBox_R.w3d\n" ));  
+        }  
+    }  
+    // >>>>>> 新增结束 <<<<<<
+	 // ====================== 加载 b.w3d（新增第二个模型） ======================
+      {    // 释放上一次可能残留的 b 对象
+        if( m_flatModelRenderObjB )
+        {
+            if( m_flatModelRenderObjB->Peek_Scene() != NULL )
+                W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjB );
+            REF_PTR_RELEASE( m_flatModelRenderObjB );
+            m_flatModelRenderObjB = NULL;
+        }
 
+        // 加载 b.w3d
+        m_flatModelRenderObjB = W3DDisplay::m_assetManager->Create_Render_Obj( "qingwaddskybox" );
+
+        if( m_flatModelRenderObjB )
+        {
+            Region3D extent;
+            TheTerrainLogic->getExtent( &extent );
+
+            Real centerX = ( extent.lo.x + extent.hi.x ) * 0.5f;
+            Real centerY = ( extent.lo.y + extent.hi.y ) * 0.5f;
+            Real belowZ  = extent.lo.z - 0.0f;  // 和 a 同一高度，可自行修改
+
+            Matrix3D transform;
+            transform.Make_Identity();
+            transform.Set_X_Translation( centerX );
+            transform.Set_Y_Translation( centerY );
+            transform.Set_Z_Translation( belowZ );
+            m_flatModelRenderObjB->Set_Transform( transform );
+
+            W3DDisplay::m_3DScene->Add_Render_Object( m_flatModelRenderObjB );
+        }
+        else
+        {
+            DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load qingwaddskybox.w3d\n" ));
+        }
+    }
+    // >>>>>> 新增结束 <<<<<<
+	// ====================== 加载 0qsnwateryy1（新增第三个模型） ======================
+      {    // 释放上一次可能残留的 b 对象
+        if( m_flatModelRenderObjC )
+        {
+            if( m_flatModelRenderObjC->Peek_Scene() != NULL )
+                W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjC );
+            REF_PTR_RELEASE( m_flatModelRenderObjC );
+            m_flatModelRenderObjC = NULL;
+        }
+
+        // 加载 b.w3d
+        m_flatModelRenderObjC = W3DDisplay::m_assetManager->Create_Render_Obj( "0qsnwateryy1" );
+//m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
+        if( m_flatModelRenderObjC )
+        {
+            Region3D extent;
+            TheTerrainLogic->getExtent( &extent );
+
+            Real centerX = ( extent.lo.x + extent.hi.x ) * 0.6f;
+            Real centerY = ( extent.lo.y + extent.hi.y ) * 0.6f;
+           // Real belowZ  = extent.lo.z - 4.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 7.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 5.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 7.1f;  // 和 a 同一高度，可自行修改
+Real belowZ  = extent.lo.z + 7.0f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 3.0f; 
+            Matrix3D transform;
+            transform.Make_Identity();
+            transform.Set_X_Translation( centerX );
+            transform.Set_Y_Translation( centerY );
+            transform.Set_Z_Translation( belowZ );
+            m_flatModelRenderObjC->Set_Transform( transform );
+
+            W3DDisplay::m_3DScene->Add_Render_Object( m_flatModelRenderObjC );
+        }
+        else
+        {
+            DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load 0qsnwateryy1.w3d\n" ));
+        }
+    }
+    // >>>>>> 新增结束 <<<<<<
+	//
+// ====================== 加载 0qsnwateryy1（新增第四个模型） ======================
+      {    // 释放上一次可能残留的 b 对象
+        if( m_flatModelRenderObjD )
+        {
+            if( m_flatModelRenderObjD->Peek_Scene() != NULL )
+                W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjD );
+            REF_PTR_RELEASE( m_flatModelRenderObjD );
+            m_flatModelRenderObjD = NULL;
+        }
+
+        // 加载 b.w3d
+        m_flatModelRenderObjD = W3DDisplay::m_assetManager->Create_Render_Obj( "Wave8000" );
+//m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
+        if( m_flatModelRenderObjD )
+        {
+            Region3D extent;
+            TheTerrainLogic->getExtent( &extent );
+
+            Real centerX = ( extent.lo.x + extent.hi.x ) * 0.6f;
+            Real centerY = ( extent.lo.y + extent.hi.y ) * 0.6f;
+           // Real belowZ  = extent.lo.z - 4.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 7.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 5.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 7.1f;  // 和 a 同一高度，可自行修改
+Real belowZ  = extent.lo.z + 7.0f;  // 和 a 同一高度，可自行修改
+            Matrix3D transform;
+            transform.Make_Identity();
+            transform.Set_X_Translation( centerX );
+            transform.Set_Y_Translation( centerY );
+            transform.Set_Z_Translation( belowZ );
+            m_flatModelRenderObjD->Set_Transform( transform );
+
+            W3DDisplay::m_3DScene->Add_Render_Object( m_flatModelRenderObjD );
+        }
+        else
+        {
+            DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load Wave8000.w3d\n" ));
+        }
+    }
+    // >>>>>> 新增结束 <<<<<<
+	//
+// ====================== 加载 0qsnwateryy1（新增第五个模型） ======================
+      {    // 释放上一次可能残留的 b 对象
+        if( m_flatModelRenderObjE )
+        {
+            if( m_flatModelRenderObjE->Peek_Scene() != NULL )
+                W3DDisplay::m_3DScene->Remove_Render_Object( m_flatModelRenderObjE );
+            REF_PTR_RELEASE( m_flatModelRenderObjE );
+            m_flatModelRenderObjE = NULL;
+        }
+
+        // 加载 b.w3d
+        m_flatModelRenderObjE = W3DDisplay::m_assetManager->Create_Render_Obj( "Reflect8000" );
+//m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
+        if( m_flatModelRenderObjE )
+        {
+            Region3D extent;
+            TheTerrainLogic->getExtent( &extent );
+
+            Real centerX = ( extent.lo.x + extent.hi.x ) * 0.6f;
+            Real centerY = ( extent.lo.y + extent.hi.y ) * 0.6f;
+           // Real belowZ  = extent.lo.z - 4.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 7.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 5.5f;  // 和 a 同一高度，可自行修改
+//Real belowZ  = extent.lo.z + 7.1f;  // 和 a 同一高度，可自行修改
+Real belowZ  = extent.lo.z + 7.0f;  // 和 a 同一高度，可自行修改
+            Matrix3D transform;
+            transform.Make_Identity();
+            transform.Set_X_Translation( centerX );
+            transform.Set_Y_Translation( centerY );
+            transform.Set_Z_Translation( belowZ );
+            m_flatModelRenderObjE->Set_Transform( transform );
+
+            W3DDisplay::m_3DScene->Add_Render_Object( m_flatModelRenderObjE );
+        }
+        else
+        {
+            DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load Reflect8000.w3d\n" ));
+        }
+    }
+    // >>>>>> 新增结束 <<<<<<*/
+	//
 	return TRUE;  // success
 
 }  // end load

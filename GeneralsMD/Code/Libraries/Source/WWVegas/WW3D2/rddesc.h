@@ -44,8 +44,7 @@
 
 #include "vector.h"
 #include "wwstring.h"
-#include <d3d8types.h>
-#include <d3d8caps.h>
+#include "d3d8compat.h"
 
 class ResolutionDescClass
 {

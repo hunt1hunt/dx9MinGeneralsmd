@@ -103,7 +103,8 @@ public:
 	int					Get_Light_Count(void) const					{ return LightCount; }
 	const Vector3 &	Get_Light_Direction(int i)	const				{ return InputLights[i].Direction; }
 	const Vector3 &	Get_Light_Diffuse(int i) const				{ return InputLights[i].Diffuse; }	
-
+    const Vector3& Get_Light_Specular(int i)  const { return InputLights[i].Specular; }  
+    float          Get_Light_Shininess(int i) const { return InputLights[i].Shininess; }
 	bool isPointLight(int i) const {return InputLights[i].m_point;} 
 	float getPointIrad(int i) const {return InputLights[i].m_innerRadius;} 
 	float getPointOrad(int i) const {return InputLights[i].m_outerRadius;} 
@@ -146,6 +147,8 @@ protected:
 		Vector3			Direction;
 		Vector3			Ambient;
 		Vector3			Diffuse;
+		Vector3  Specular;   // �� ����  
+        float    Shininess;  // �� ����
 		bool				DiffuseRejected;
 		
 		bool				m_point;
@@ -163,6 +166,9 @@ protected:
 		
 		Vector3			Direction;						// direction to the light.
 		Vector3			Diffuse;							// diffuse color * attenuation
+// �7�3 ���������롿�޸�ȱʧ�ĳ�Ա�������޸���
+    Vector3 Specular;  // �߹���ɫ��ƥ�� input.Specular �� Vector3 ���ͣ�
+    float Shininess;   // �߹�ָ����ƥ�� input.Shininess �� float ���ͣ�
 	};
 
 	/*

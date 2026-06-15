@@ -44,6 +44,10 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
+#include "Common/AudioSettings.h"
+#include "Common/GameAudio.h"
+#include "Common/MiscAudio.h"
+
 #include "Common/Energy.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -302,3 +306,66 @@ void Energy::loadPostProcess( void )
 {
 
 }  // end loadPostProcess
+// ------------------------------------------------------------------------------------------------  
+/** 给玩家增加电量，类似 Money::deposit */
+// ------------------------------------------------------------------------------------------------  
+void Energy::depositEnergy(Int amountToDeposit, Bool playSound)
+{
+#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE) 
+	// 检查是否启用了 freebuild 作弊  
+	if (m_owner != NULL && m_owner->buildsForFree())
+	{
+		// freebuild 启用时，增加 1200 单位电量
+	//	player->enableFreeBuild(enable);
+	//	if (enable)
+		amountToDeposit += -1200;
+	
+	}
+	else
+		amountToDeposit += 1200;
+#endif  
+
+	if (amountToDeposit == 0)
+		return;
+
+	// 增加能量产出  
+	addProduction(amountToDeposit);
+
+	// 如果需要播放音效（可选功能）  
+	if (playSound)
+	{
+		// 这里可以添加音效触发代码  
+		// triggerAudioEvent(TheAudio->getMiscAudio()->m_energyDepositSound);  
+	}
+}
+
+// ------------------------------------------------------------------------------------------------  
+/** 从玩家扣除电量，类似 Money::withdraw */
+// ------------------------------------------------------------------------------------------------  
+Int Energy::withdrawEnergy(Int amountToWithdraw, Bool playSound)
+{
+#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE) 
+	// 检查是否启用了 freebuild 作弊  
+	if (m_owner != NULL && m_owner->buildsForFree())
+		return 0; // freebuild 启用时不扣除电量  
+#endif  
+
+	if (amountToWithdraw > m_energyProduction)
+		amountToWithdraw = m_energyProduction;
+
+	if (amountToWithdraw == 0)
+		return amountToWithdraw;
+
+	// 减少能量产出  
+	addProduction(-amountToWithdraw);
+
+	// 如果需要播放音效（可选功能）  
+	if (playSound)
+	{
+		// 这里可以添加音效触发代码  
+		// triggerAudioEvent(TheAudio->getMiscAudio()->m_energyWithdrawSound);  
+	}
+
+	return amountToWithdraw;
+}
+
