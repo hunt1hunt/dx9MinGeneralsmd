@@ -382,6 +382,7 @@ WaterRenderObjClass::WaterRenderObjClass(void)
 
 	m_dwWavePixelShader=NULL;
 	m_waveShaderNoBump=NULL;
+		m_waveShaderPBR=NULL;
 	m_dwWaveVertexShader=NULL;
 	m_meshData=NULL;
 	m_meshDataSize = 0;
@@ -861,8 +862,10 @@ void WaterRenderObjClass::ReleaseResources(void)
 		m_dwWavePixelShader->Release();
 
 	if (m_waveShaderNoBump)
-		m_waveShaderNoBump->Release();
-
+		if (m_waveShaderNoBump)
+			m_waveShaderNoBump->Release();
+		if (m_waveShaderPBR)
+			m_waveShaderPBR->Release();
 	if (m_dwWaveVertexShader)
 		m_dwWaveVertexShader->Release();
 
@@ -1064,6 +1067,69 @@ void WaterRenderObjClass::ReAcquireResources(void)
 			}
 		}
 
+
+		// Compile ps_2_0 PBR pixel shader (bump-perturbed reflection + Fresnel)
+		{
+			D3DCAPS8 caps;
+			memset(&caps, 0, sizeof(caps));
+			if (SUCCEEDED(m_pDev->GetDeviceCaps(&caps)) &&
+			    caps.PixelShaderVersion >= D3DPS_VERSION(2,0))
+			{
+				const char* psSource =
+					"sampler s0 : register(s0);\n"
+					"sampler s1 : register(s1);\n"
+					"float4 main(\n"
+					"    float2 bumpUV : TEXCOORD0,\n"
+					"    float2 reflUV : TEXCOORD1,\n"
+					"    float4 color : COLOR0)\n"
+					"    : COLOR\n"
+					"{\n"
+					"    float4 bump = tex2D(s0, bumpUV);\n"
+					"    float2 perturb = (bump.xy - 0.5) * 0.08;\n"
+					"    float2 perturbedUV = reflUV + perturb;\n"
+					"    float4 reflection = tex2D(s1, perturbedUV);\n"
+					"    // Fresnel: UV distance from center = view-angle proxy\n"
+					"    float2 fresnelUV = perturbedUV - 0.5;\n"
+					"    float fresnel = dot(fresnelUV, fresnelUV) * 2.0;\n"
+					"    fresnel = saturate(fresnel);\n"
+					"    fresnel = 0.02 + 0.98 * fresnel;\n"
+					"    float3 waterColor = float3(0.04, 0.08, 0.12);\n"
+					"    float3 result = lerp(waterColor, reflection.rgb, fresnel);\n"
+					"    return float4(result * color.rgb, color.a);\n"
+					"}\n"
+					;
+				ID3DXBuffer* compiledPS = NULL;
+				ID3DXBuffer* psErrors = NULL;
+				WaterDiag("CP7_PSPBR: assembling ps_2_0 PBR pixel shader via D3DXCompileShader");
+				HRESULT hrPSAsm = D3DXCompileShader(psSource, (UINT)strlen(psSource),
+					NULL, NULL, "main", "ps_2_0", 0, &compiledPS, &psErrors, NULL);
+				WaterDiagI("CP7_PSPBR: D3DXAssembleShader hr", (int)hrPSAsm);
+				if (psErrors) {
+					char* errText = (char*)psErrors->GetBufferPointer();
+					if (errText) {
+						WaterDiag("CP7_PSPBR: assembly error text follows:");
+						WaterDiag(errText);
+					}
+					psErrors->Release();
+				}
+				m_waveShaderPBR = NULL;
+				if (SUCCEEDED(hrPSAsm) && compiledPS) {
+					HRESULT hrPS = m_pDev->CreatePixelShader(
+						(const DWORD*)compiledPS->GetBufferPointer(),
+						&m_waveShaderPBR);
+					compiledPS->Release();
+					WaterDiagI("CP7_PSPBR: CreatePixelShader hr", (int)hrPS);
+					WaterDiagI("CP7_PSPBR: m_waveShaderPBR NULL?", (m_waveShaderPBR == NULL) ? 1 : 0);
+					if (SUCCEEDED(hrPS) && m_waveShaderPBR) {
+						WaterDiag("CP7_PSPBR: ps_2_0 PBR shader created OK");
+					}
+				} else {
+					WaterDiag("CP7_PSPBR: D3DXAssembleShader failed, PBR shader unavailable");
+				}
+			} else {
+				WaterDiag("CP7_PSPBR: ps_2_0 not supported, skipping PBR shader");
+			}
+		}
 	}
 
 	if (m_waterTrackSystem)
@@ -2221,7 +2287,9 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	// Our waveVS reads: v0=position, v5=diffuse, v7=bump-texcoord, v7=also-projective-reflect.
 	m_pDev->SetFVF(DX8_FVF_XYZDUV1);
 	m_pDev->SetVertexShader(m_dwWaveVertexShader);
-	m_pDev->SetPixelShader(m_waveShaderNoBump ? m_waveShaderNoBump : m_dwWavePixelShader);
+	// PBR preferred -> noBump -> original
+	m_pDev->SetPixelShader(m_waveShaderPBR ? m_waveShaderPBR :
+		(m_waveShaderNoBump ? m_waveShaderNoBump : m_dwWavePixelShader));
 
 	m_pDev->SetRenderState( D3DRS_SRCBLEND, D3DBLEND_SRCALPHA );
 	m_pDev->SetRenderState( D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA );

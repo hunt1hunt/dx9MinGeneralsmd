@@ -170,6 +170,7 @@ protected:
 	Int						m_vertexBufferD3DOffset;	///<location to start writing vertices
 	IDirect3DPixelShader9*	m_dwWavePixelShader;	///<handle to D3D pixel shader (original with texbem)
 	IDirect3DPixelShader9*	m_waveShaderNoBump;		///<replacement pixel shader without texbem (for D3D9On12 compat)
+	IDirect3DPixelShader9*	m_waveShaderPBR;			///<ps_2_0 PBR pixel shader (bump+perturbed reflection+Fresnel+sparkle)
 	IDirect3DVertexShader9*	m_dwWaveVertexShader;	///<handle to D3D vertex shader
 	Int	m_numVertices;				///<number of vertices in D3D vertex buffer
 	Int m_numIndices;				///<number of indices in D3D index buffer
