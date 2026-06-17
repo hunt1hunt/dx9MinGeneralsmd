@@ -1078,6 +1078,8 @@ void WaterRenderObjClass::ReAcquireResources(void)
 				const char* psSource =
 					"sampler s0 : register(s0);\n"
 					"sampler s1 : register(s1);\n"
+					"float3 sunDirection : register(c0);\n"
+					"float3 sunColor : register(c1);\n"
 					"float4 main(\n"
 					"    float2 bumpUV : TEXCOORD0,\n"
 					"    float2 reflUV : TEXCOORD1,\n"
@@ -1095,6 +1097,13 @@ void WaterRenderObjClass::ReAcquireResources(void)
 					"    fresnel = 0.02 + 0.98 * fresnel;\n"
 					"    float3 waterColor = float3(0.04, 0.08, 0.12);\n"
 					"    float3 result = lerp(waterColor, reflection.rgb, fresnel);\n"
+					"    // Sun specular sparkle via Blinn-Phong\n"
+					"    float3 N = normalize(float3((bump.x - 0.5) * 2.0, (bump.y - 0.5) * 2.0, 0.25));\n"
+					"    float3 L = normalize(sunDirection);\n"
+					"    float3 V = float3(0, 0, 1);\n"
+					"    float3 H = normalize(L + V);\n"
+					"    float spec = pow(saturate(dot(N, H)), 64.0);\n"
+					"    result += sunColor * spec * 0.85;\n"
 					"    return float4(result * color.rgb, color.a);\n"
 					"}\n"
 					;
@@ -2287,6 +2296,37 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	// Our waveVS reads: v0=position, v5=diffuse, v7=bump-texcoord, v7=also-projective-reflect.
 	m_pDev->SetFVF(DX8_FVF_XYZDUV1);
 	m_pDev->SetVertexShader(m_dwWaveVertexShader);
+	// Pass sun direction + color for PBR sparkle specular
+	if (m_waveShaderPBR && TheGlobalData) {
+		float sunDir[4] = {
+			-TheGlobalData->m_terrainLightPos[0].x,
+			-TheGlobalData->m_terrainLightPos[0].y,
+			-TheGlobalData->m_terrainLightPos[0].z,
+			0.0f};
+		float len = (float)sqrt(sunDir[0]*sunDir[0] + sunDir[1]*sunDir[1] + sunDir[2]*sunDir[2]);
+		if (len > 0.001f) { sunDir[0]/=len; sunDir[1]/=len; sunDir[2]/=len; }
+		float sunColor[4] = {
+			TheGlobalData->m_terrainAmbient[0].red + TheGlobalData->m_terrainDiffuse[0].red,
+			TheGlobalData->m_terrainAmbient[0].green + TheGlobalData->m_terrainDiffuse[0].green,
+			TheGlobalData->m_terrainAmbient[0].blue + TheGlobalData->m_terrainDiffuse[0].blue,
+			0.0f};
+		m_pDev->SetPixelShaderConstantF(0, sunDir, 1);
+		m_pDev->SetPixelShaderConstantF(1, sunColor, 1);
+		// Log once for debug
+		{
+			static Bool sparkleDiagOnce = FALSE;
+			if (!sparkleDiagOnce) {
+				FILE *f = fopen("E:\\water_diag.log", "a");
+				if (f) {
+					fprintf(f, "[%d] SPARKLE: sunDir=(%.3f,%.3f,%.3f) len=%.3f sunColor=(%.3f,%.3f,%.3f)\n",
+						timeGetTime(), sunDir[0], sunDir[1], sunDir[2], len, sunColor[0], sunColor[1], sunColor[2]);
+					fclose(f);
+				}
+				sparkleDiagOnce = TRUE;
+			}
+		}
+	}
+
 	// PBR preferred -> noBump -> original
 	m_pDev->SetPixelShader(m_waveShaderPBR ? m_waveShaderPBR :
 		(m_waveShaderNoBump ? m_waveShaderNoBump : m_dwWavePixelShader));

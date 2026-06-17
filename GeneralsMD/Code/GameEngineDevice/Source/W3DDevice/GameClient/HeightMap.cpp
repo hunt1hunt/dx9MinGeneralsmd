@@ -2030,7 +2030,8 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  				st = W3DShaderManager::ST_TERRAIN_PBR;
  		}
  		
- 		//set correct shader based on current settings
+ 		// Only override noise variants if PBR not active
+ 		if (st != W3DShaderManager::ST_TERRAIN_PBR) {
  		if (!ShaderClass::Is_Backface_Culling_Inverted())
  		{	//not reflection pass
  			if (TheGlobalData->m_useLightMap && doCloud)
@@ -2051,6 +2052,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  		{	//reflection pass, just do base texture
  			st=W3DShaderManager::ST_TERRAIN_BASE;
  		}
+		}
  
  		//Find number of passes required to render current shader
  		devicePasses=W3DShaderManager::getShaderPasses(st);
@@ -2078,6 +2080,35 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  				DX8Wrapper::Set_Shader(ShaderClass::_PresetOpaque2DShader);
  				DX8Wrapper::Set_Texture(0,NULL);
    			} else {
+				// Pass sun constants for PBR terrain shader
+				if (st == W3DShaderManager::ST_TERRAIN_PBR && TheGlobalData) {
+					float sunDir[4] = {
+						-TheGlobalData->m_terrainLightPos[0].x,
+						-TheGlobalData->m_terrainLightPos[0].y,
+						-TheGlobalData->m_terrainLightPos[0].z,
+						0.0f};
+					float sunLen = (float)sqrt(sunDir[0]*sunDir[0] + sunDir[1]*sunDir[1] + sunDir[2]*sunDir[2]);
+					if (sunLen > 0.001f) { sunDir[0]/=sunLen; sunDir[1]/=sunLen; sunDir[2]/=sunLen; }
+					float sunColor[4] = {
+						TheGlobalData->m_terrainAmbient[0].red + TheGlobalData->m_terrainDiffuse[0].red,
+						TheGlobalData->m_terrainAmbient[0].green + TheGlobalData->m_terrainDiffuse[0].green,
+						TheGlobalData->m_terrainAmbient[0].blue + TheGlobalData->m_terrainDiffuse[0].blue,
+						0.0f};
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, sunDir, 1);
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(1, sunColor, 1);
+					// Log once for debug
+					static Bool pbrDiagOnce = FALSE;
+					if (!pbrDiagOnce) {
+						FILE *f = fopen("E:\\terrain_diag.log", "a");
+						if (f) {
+							fprintf(f, "[%d] HT_PBR_RENDER: sunDir=(%.3f,%.3f,%.3f) sunColor=(%.3f,%.3f,%.3f)\n",
+								timeGetTime(), sunDir[0], sunDir[1], sunDir[2],
+								sunColor[0], sunColor[1], sunColor[2]);
+							fclose(f);
+						}
+						pbrDiagOnce = TRUE;
+					}
+				}
  				W3DShaderManager::setShader(st, pass);
 			}
 		}
