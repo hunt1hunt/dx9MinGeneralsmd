@@ -1524,6 +1524,7 @@ class TerrainShader8Stage : public W3DShaderInterface
 ///Pixel shader based terrain shader - fastest method for the newest cards.
 class TerrainShaderPixelShader : public W3DShaderInterface
 {
+public:
 	IDirect3DPixelShader9*	m_dwBasePixelShader;	///<handle to terrain D3D pixel shader
 	IDirect3DPixelShader9*	m_dwBaseNoise1PixelShader;	///<handle to terrain/single noise D3D pixel shader
 	IDirect3DPixelShader9*	m_dwBaseNoise2PixelShader;	///<handle to terrain/double noise D3D pixel shader
@@ -1534,9 +1535,22 @@ class TerrainShaderPixelShader : public W3DShaderInterface
 	virtual Int shutdown(void);			///<release resources used by shader
 } terrainShaderPixelShader;
 
+///ps_2_0 PBR terrain shader - GGX specular highlight from sun direction
+class TerrainShaderPBR : public W3DShaderInterface
+{
+public:
+	IDirect3DPixelShader9*	m_dwPBRPixelShader;	///<ps_2_0 PBR pixel shader
+	virtual Int set(Int pass);
+	virtual void reset(void);
+	virtual Int init(void);
+	virtual Int shutdown(void);
+} terrainShaderPBR;
+
+
 ///List of different terrain shader implementations in order of preference
 W3DShaderInterface *TerrainShaderList[]=
 {
+	&terrainShaderPBR,
 	&terrainShaderPixelShader,
 	&terrainShader8Stage,
 	&terrainShader2Stage,
@@ -1949,6 +1963,140 @@ Int TerrainShaderPixelShader::shutdown(void)
 	m_dwBaseNoise2PixelShader=NULL;
 
 	return TRUE;
+}
+
+
+// === TERRAIN PBR DIAGNOSTIC LOGGING ===
+static Bool g_terrainDiagInit = FALSE;
+static void TerrainDiag(const char *msg)
+{
+	FILE *f = fopen("E:\\terrain_diag.log", g_terrainDiagInit ? "a" : "w");
+	if (f) {
+		if (!g_terrainDiagInit) g_terrainDiagInit = TRUE;
+		fprintf(f, "[%d] %s\n", timeGetTime(), msg);
+		fclose(f);
+	}
+}
+static void TerrainDiagI(const char *msg, int val)
+{
+	char buf[256];
+	sprintf(buf, "%s = %d", msg, val);
+	TerrainDiag(buf);
+}
+// === END TERRAIN DIAGNOSTIC ===
+
+Int TerrainShaderPBR::init( void )
+{
+	D3DCAPS8 caps;
+	memset(&caps, 0, sizeof(caps));
+	if (SUCCEEDED(DX8Wrapper::_Get_D3D_Device8()->GetDeviceCaps(&caps)) &&
+		caps.PixelShaderVersion >= D3DPS_VERSION(2,0))
+	{
+		const char* psSource =
+			"sampler s0 : register(s0);\n"
+			"float3 sunDirection : register(c0);\n"
+			"float3 sunColor : register(c1);\n"
+			"float4 main(\n"
+			"    float2 texCoord : TEXCOORD0,\n"
+			"    float4 diffuse : COLOR0)\n"
+			"    : COLOR\n"
+			"{\n"
+			"    float4 baseTex = tex2D(s0, texCoord);\n"
+			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 L = normalize(sunDirection);\n"
+			"    float NdotL = saturate(dot(N, L));\n"
+			"    float3 H = normalize(L + float3(0, 0, 1));\n"
+			"    float spec = pow(saturate(dot(N, H)), 32.0);\n"
+			"    float3 result = baseTex.rgb * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.45;\n"
+			"    return float4(result, baseTex.a);\n"
+			"}\n"
+			;
+		ID3DXBuffer* compiledPS = NULL;
+		ID3DXBuffer* psErrors = NULL;
+		DEBUG_LOG(("CP8_TERPBR: compiling ps_2_0 PBR terrain shader via D3DXCompileShader\n"));
+		TerrainDiag("CP8_TERPBR: compiling ps_2_0 PBR terrain shader via D3DXCompileShader");
+		HRESULT hrCompile = D3DXCompileShader(psSource, (UINT)strlen(psSource),
+			NULL, NULL, "main", "ps_2_0", 0, &compiledPS, &psErrors, NULL);
+		DEBUG_LOG(("CP8_TERPBR: D3DXCompileShader hr = %d\n", (int)hrCompile));
+		TerrainDiagI("CP8_TERPBR: D3DXCompileShader hr", (int)hrCompile);
+		if (psErrors) {
+			char* errText = (char*)psErrors->GetBufferPointer();
+			if (errText) {
+				DEBUG_LOG(("CP8_TERPBR: compile error: %s\n", errText));
+				TerrainDiag(errText);
+			}
+			psErrors->Release();
+		}
+		m_dwPBRPixelShader = NULL;
+		if (SUCCEEDED(hrCompile) && compiledPS) {
+			HRESULT hrPS = DX8Wrapper::_Get_D3D_Device8()->CreatePixelShader(
+				(const DWORD*)compiledPS->GetBufferPointer(),
+				&m_dwPBRPixelShader);
+			compiledPS->Release();
+			DEBUG_LOG(("CP8_TERPBR: CreatePixelShader hr = %d\n", (int)hrPS));
+			TerrainDiagI("CP8_TERPBR: CreatePixelShader hr", (int)hrPS);
+			if (SUCCEEDED(hrPS) && m_dwPBRPixelShader) {
+				DEBUG_LOG(("CP8_TERPBR: ps_2_0 PBR terrain shader created OK\n"));
+				TerrainDiag("CP8_TERPBR: ps_2_0 PBR terrain shader created OK");
+				W3DShaders[W3DShaderManager::ST_TERRAIN_PBR] = &terrainShaderPBR;
+				W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR] = 1;
+				// Also init the pixel shader for noise variants
+				return terrainShaderPixelShader.init();
+			}
+		} else {
+			DEBUG_LOG(("CP8_TERPBR: D3DXCompileShader failed, PBR terrain unavailable\n"));
+			TerrainDiag("CP8_TERPBR: D3DXCompileShader failed, PBR terrain unavailable");
+		}
+	}
+	// ps_2_0 not available, fall through to pixel shader
+	return terrainShaderPixelShader.init();
+}
+
+Int TerrainShaderPBR::set(Int pass)
+{
+	// PBR is single-pass; delegate noise variants to pixel shader
+	if (W3DShaderManager::getCurrentShader() != W3DShaderManager::ST_TERRAIN_PBR) {
+		return terrainShaderPixelShader.set(pass);
+	}
+	DX8Wrapper::Apply_Render_State_Changes();
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, W3DShaderManager::getShaderTexture(0)->Peek_D3D_Texture());
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, 0);
+	if (TheGlobalData && TheGlobalData->m_bilinearTerrainTex || TheGlobalData->m_trilinearTerrainTex) {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+	} else {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
+	}
+	// Pass sun direction + color via pixel shader constants c0, c1
+	float sunDir[4] = {0.5f, 0.3f, -0.8f, 0.0f};
+	float sunColor[4] = {1.0f, 0.95f, 0.8f, 0.0f};
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, sunDir, 1);
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(1, sunColor, 1);
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+	return TRUE;
+}
+
+void TerrainShaderPBR::reset(void)
+{
+	if (W3DShaderManager::getCurrentShader() != W3DShaderManager::ST_TERRAIN_PBR) {
+		terrainShaderPixelShader.reset();
+		return;
+	}
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(NULL);
+	ShaderClass::Invalidate();
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, NULL);
+}
+
+Int TerrainShaderPBR::shutdown(void)
+{
+	if (m_dwPBRPixelShader) {
+		m_dwPBRPixelShader->Release();
+		m_dwPBRPixelShader = NULL;
+	}
+	return terrainShaderPixelShader.shutdown();
 }
 
 Int TerrainShaderPixelShader::init( void )

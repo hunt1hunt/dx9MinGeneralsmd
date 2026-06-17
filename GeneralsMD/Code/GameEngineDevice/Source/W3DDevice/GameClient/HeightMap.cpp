@@ -2014,6 +2014,21 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 		}
 
  		st=W3DShaderManager::ST_TERRAIN_BASE; //set default shader
+ 		// Prefer PBR terrain shader when ps_2_0 is available
+ 		{
+ 			static Bool diagOnce = FALSE;
+ 			Int passes = W3DShaderManager::getShaderPasses(W3DShaderManager::ST_TERRAIN_PBR);
+ 			if (!diagOnce) {
+ 				FILE *f = fopen("E:\\terrain_diag.log", "a");
+ 				if (f) {
+ 					fprintf(f, "[%d] HT_PBR_SELECT: ST_TERRAIN_PBR passes = %d\n", timeGetTime(), (int)passes);
+ 					fclose(f);
+ 				}
+ 				diagOnce = TRUE;
+ 			}
+ 			if (passes > 0)
+ 				st = W3DShaderManager::ST_TERRAIN_PBR;
+ 		}
  		
  		//set correct shader based on current settings
  		if (!ShaderClass::Is_Backface_Culling_Inverted())

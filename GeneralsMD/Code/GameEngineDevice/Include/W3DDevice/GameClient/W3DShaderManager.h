@@ -62,6 +62,7 @@ public:
 		ST_TERRAIN_BASE_NOISE1,	//shader to apply base texture and cloud/noise 1.
 		ST_TERRAIN_BASE_NOISE2,	//shader to apply base texture and cloud/noise 2.
 		ST_TERRAIN_BASE_NOISE12,//shader to apply base texture and both cloud/noise
+		ST_TERRAIN_PBR,			//ps_2_0 PBR terrain shader with GGX specular
 		ST_SHROUD_TEXTURE,		//shader to apply shroud texture projection.
 		ST_MASK_TEXTURE,		//shader to apply alpha mask texture projection.
 		ST_ROAD_BASE,	//shader to apply base terrain texture only
