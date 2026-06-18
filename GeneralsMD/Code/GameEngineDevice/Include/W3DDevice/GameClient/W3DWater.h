@@ -228,6 +228,7 @@ protected:
 	IDirect3DPixelShader9*	m_riverWaterPixelShader;		///<D3D handle to pixel shader.
 	IDirect3DPixelShader9*	m_trapezoidWaterPixelShader;	///<handle to D3D vertex shader
 	TextureClass *m_waterSparklesTexture;
+	TextureClass *m_sparkleTexture;		///< procedural sparkle overlay for drawSea PBR
 	Real m_riverXOffset;
 	Real m_riverYOffset;
 	Bool m_drawingRiver;

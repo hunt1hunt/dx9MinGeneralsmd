@@ -61,6 +61,11 @@
 #include "stripoptimizer.h"
 #include "meshgeometry.h"
 
+// PBR shader externs (set by W3DShaderManager)
+extern IDirect3DPixelShader9 *g_pbrUnitOpaqueShader;
+extern IDirect3DPixelShader9 *g_pbrUnitAlphaShader;
+extern bool g_pbrUnitShaderEnabled;
+
 /*
 ** Global Instance of the DX8MeshRender
 */
@@ -1750,7 +1755,33 @@ void DX8TextureCategoryClass::Render(void)
 			continue;
 		}
 
-		SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
+					// Phase 3.5: Set legacy PBR shader constants
+			{
+				MeshModelClass *meshModel = mesh->Peek_Model();
+				if (meshModel && meshModel->Has_Legacy_PBR()) {
+					float pbrParams[4] = { 1.0f, meshModel->Get_Legacy_Roughness(), 1.0f, meshModel->Get_Legacy_Metalness() };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
+				} else {
+					float pbrParams[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
+				}
+			}
+
+		// Phase 4c: Activate PBR pixel shader for PBR-eligible meshes
+		IDirect3DPixelShader9 *prevPBRShader = DX8Wrapper::Pixel_Shader;
+		if (g_pbrUnitShaderEnabled) {
+			MeshModelClass *pbrModel = mesh->Peek_Model();
+			if (pbrModel && pbrModel->Has_Legacy_PBR()) {
+				bool pbrSorting = (!!mesh->Peek_Model()->Get_Flag(MeshGeometryClass::SORT)) && WW3D::Is_Sorting_Enabled();
+				if (pbrSorting && g_pbrUnitAlphaShader) {
+					DX8Wrapper::Set_Pixel_Shader(g_pbrUnitAlphaShader);
+				} else if (g_pbrUnitOpaqueShader) {
+					DX8Wrapper::Set_Pixel_Shader(g_pbrUnitOpaqueShader);
+				}
+			}
+		}
+
+SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 
 		#ifdef WWDEBUG	
 		// Debug rendering: if it exists, expose prelighting on this mesh by disabling all base textures.
@@ -1939,6 +1970,11 @@ void DX8TextureCategoryClass::Render(void)
 
 
         } // (gth) non-tabbed to aviod per-force merge problems...
+
+		// Phase 4c: Restore previous pixel shader after PBR render
+		if (prevPBRShader) {
+			DX8Wrapper::Set_Pixel_Shader(prevPBRShader);
+		}
 
 		/*
 		** Move to the next render task.  Note that the delete should be fast because prt's are pooled
@@ -2275,10 +2311,4 @@ void DX8MeshRendererClass::Invalidate( bool shutdown)
 
 	texture_category_container_lists_rigid.Delete_All();
 }
-
-
-
-
-
-
 

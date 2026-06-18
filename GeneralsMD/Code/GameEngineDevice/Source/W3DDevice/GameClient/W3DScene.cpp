@@ -424,7 +424,8 @@ void RTS3DScene::Visibility_Check(CameraClass * camera)
 
 			draw=NULL;
 			drawInfo = (DrawableInfo *)robj->Get_User_Data();
-			if (drawInfo)
+
+		if (drawInfo)
 				draw=drawInfo->m_drawable;
 
 			if( draw )
@@ -786,37 +787,98 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		lightEnv.Pre_Render_Update(rinfo.Camera.Get_Transform());
 		rinfo.light_environment = &lightEnv;
 
-		if (drawInfo)
-		{
-#if defined(_DEBUG) || defined(_INTERNAL)
-			if (!TheGlobalData->m_shroudOn)
-				ss = OBJECTSHROUD_CLEAR;
-#endif
-			
-			if (m_customPassMode == SCENE_PASS_DEFAULT)	
+		// Phase 4b: Set PBR pixel shader per-frame constants for unit/building rendering
+		if (TheGlobalData && TheGlobalData->m_useLegacyPBR) {
+			IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
+			if (pDev) {
+				// c0 = sun direction (negated light position, normalized to unit length)
+				float sunDir[4] = {
+					-TheGlobalData->m_terrainLightPos[0].x,
+					-TheGlobalData->m_terrainLightPos[0].y,
+					-TheGlobalData->m_terrainLightPos[0].z,
+					0.0f};
+				float sunLen = (float)sqrt(sunDir[0]*sunDir[0] + sunDir[1]*sunDir[1] + sunDir[2]*sunDir[2]);
+				if (sunLen > 0.001f) {
+					sunDir[0] /= sunLen; sunDir[1] /= sunLen; sunDir[2] /= sunLen;
+				}
+				pDev->SetPixelShaderConstantF(0, sunDir, 1);
+
+				// c1 = sun diffuse color (from GlobalData terrain lighting)
+				float sunColor[4] = {
+					TheGlobalData->m_terrainDiffuse[0].red,
+					TheGlobalData->m_terrainDiffuse[0].green,
+					TheGlobalData->m_terrainDiffuse[0].blue,
+					0.0f};
+				pDev->SetPixelShaderConstantF(1, sunColor, 1);
+
+				// c2 = camera position (world space)
+				Vector3 camPos = rinfo.Camera.Get_Position();
+				float camPosF[4] = { camPos.X, camPos.Y, camPos.Z, 0.0f };
+				pDev->SetPixelShaderConstantF(2, camPosF, 1);
+
+				// c4-c9 = additional global lights (indices 1..m_numGlobalLights-1)
+				// Each light consumes 2 registers: float4 direction + float4 color
+				Int maxAddLights = m_numGlobalLights > 4 ? 4 : m_numGlobalLights;
+				for (Int li = 1; li < maxAddLights; li++) {
+					if (m_globalLight[li]) {
+						// Extract world-space direction from light's transform Z-axis
+						Vector3 lightDirVec = -m_globalLight[li]->Get_Transform().Get_Z_Vector();
+						lightDirVec.Normalize();
+						Vector3 lightDiff;
+						m_globalLight[li]->Get_Diffuse(&lightDiff);
+						Int reg = 4 + (li - 1) * 2;
+						float dirF[4] = { lightDirVec.X, lightDirVec.Y, lightDirVec.Z, 0.0f };
+						float colF[4] = { lightDiff.X, lightDiff.Y, lightDiff.Z, 0.0f };
+						pDev->SetPixelShaderConstantF(reg, dirF, 1);
+						pDev->SetPixelShaderConstantF(reg + 1, colF, 1);
+					}
+				}
+				// Zero out any unused additional light slots
+				for (Int li = maxAddLights; li < 4; li++) {
+					Int reg = 4 + (li - 1) * 2;
+					float zero[4] = { 0, 0, 0, 0 };
+					pDev->SetPixelShaderConstantF(reg, zero, 1);
+					pDev->SetPixelShaderConstantF(reg + 1, zero, 1);
+				}
+
+				// c10 = scene ambient
+				Vector3 ambient = Get_Ambient_Light();
+				float ambientF[4] = { ambient.X, ambient.Y, ambient.Z, 0.0f };
+				pDev->SetPixelShaderConstantF(10, ambientF, 1);
+			}
+		}
+
+			if (drawInfo)
 			{
-				if (ss <= OBJECTSHROUD_CLEAR)
-					robj->Render(rinfo);
-				else
-				{	
+#if defined(_DEBUG) || defined(_INTERNAL)
+				if (!TheGlobalData->m_shroudOn)
+					ss = OBJECTSHROUD_CLEAR;
+#endif
+				
+				if (m_customPassMode == SCENE_PASS_DEFAULT)
+				{
+					if (ss <= OBJECTSHROUD_CLEAR)
+						robj->Render(rinfo);
+					else
+					{	
 						rinfo.Push_Material_Pass(m_shroudMaterialPass);
 						robj->Render(rinfo);
 						rinfo.Pop_Material_Pass();
+					}
 				}
-			}
+				else
+				if (m_maskMaterialPass)
+				{	rinfo.Push_Material_Pass(m_maskMaterialPass);
+					rinfo.Push_Override_Flags(RenderInfoClass::RINFO_OVERRIDE_ADDITIONAL_PASSES_ONLY);
+					robj->Render(rinfo);
+					rinfo.Pop_Override_Flags();
+					rinfo.Pop_Material_Pass();
+				}
+			}//drawInfo exists so rendering a drawable.
 			else
-			if (m_maskMaterialPass)
-			{	rinfo.Push_Material_Pass(m_maskMaterialPass);
-				rinfo.Push_Override_Flags(RenderInfoClass::RINFO_OVERRIDE_ADDITIONAL_PASSES_ONLY);
+			{
 				robj->Render(rinfo);
-				rinfo.Pop_Override_Flags();
-				rinfo.Pop_Material_Pass();
 			}
-		}//drawInfo exists so rendering a drawable.
-		else
-		{
-			robj->Render(rinfo);
-		}
 	}//drawable or robj is not hidden
 
 	rinfo.light_environment = NULL;

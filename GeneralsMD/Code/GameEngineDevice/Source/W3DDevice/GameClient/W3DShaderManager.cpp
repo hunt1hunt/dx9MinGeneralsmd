@@ -119,6 +119,15 @@ IDirect3DSurface8 *W3DShaderManager::m_oldRenderSurface=NULL;	///<previous rende
 IDirect3DTexture8 *W3DShaderManager::m_renderTexture=NULL;		///<texture into which rendering will be redirected.
 IDirect3DSurface8 *W3DShaderManager::m_newRenderSurface=NULL;	///<new render target inside m_renderTexture
 IDirect3DSurface8 *W3DShaderManager::m_oldDepthSurface=NULL;	///<previous depth buffer surface
+
+// PBR texture pipeline static data (Phase 3+)
+W3DShaderManager::PBRTextureMap *W3DShaderManager::m_pbrTextureMap = NULL;
+W3DShaderManager::LegacyPBRParamsMap *W3DShaderManager::m_legacyPBRParamsMap = NULL;
+
+// Phase 4: Extern globals for unit PBR shader handles (accessed from dx8renderer.cpp)
+IDirect3DPixelShader9 *g_pbrUnitOpaqueShader = NULL;
+IDirect3DPixelShader9 *g_pbrUnitAlphaShader = NULL;
+Bool g_pbrUnitShaderEnabled = FALSE;
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
 /*===========================================================================================*/
@@ -1535,11 +1544,35 @@ public:
 	virtual Int shutdown(void);			///<release resources used by shader
 } terrainShaderPixelShader;
 
+///Unit/building PBR shader (Phase 3+), compiled at runtime via D3DX
+class W3DPBRShader : public W3DShaderInterface
+{
+public:
+	IDirect3DPixelShader9*	m_dwPBRPixelShader;	    ///<unit PBR opaque pixel shader (4 lights)
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShader;///<unit PBR alpha blend pixel shader
+	IDirect3DPixelShader9*	m_dwPBRPixelShaderNT;   ///<unit PBR opaque, no PBR texture variant
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShaderNT;///<unit PBR alpha, no PBR texture variant
+	virtual Int set(Int pass);		///<setup shader for specified rendering pass
+	virtual void reset(void);		///<restore W3D state after PBR
+	virtual Int init(void);			///<compile HLSL and create shaders
+	virtual Int shutdown(void);		///<release shader resources
+} w3dPBRShader;
+
+///List of PBR unit shader implementations in order of preference
+W3DShaderInterface *PBRShaderList[]=
+{
+	&w3dPBRShader,
+	NULL
+};
+
 ///ps_2_0 PBR terrain shader - GGX specular highlight from sun direction
 class TerrainShaderPBR : public W3DShaderInterface
 {
 public:
-	IDirect3DPixelShader9*	m_dwPBRPixelShader;	///<ps_2_0 PBR pixel shader
+	IDirect3DPixelShader9*	m_dwPBRPixelShader;	        ///<ps_2_0 PBR pixel shader (base)
+	IDirect3DPixelShader9*	m_dwPBRNoise1PixelShader;	///<ps_2_0 PBR + cloud (noise1)
+	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShader;	///<ps_2_0 PBR + lightmap (noise2)
+	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader;	///<ps_2_0 PBR + cloud + lightmap
 	virtual Int set(Int pass);
 	virtual void reset(void);
 	virtual Int init(void);
@@ -1985,80 +2018,198 @@ static void TerrainDiagI(const char *msg, int val)
 }
 // === END TERRAIN DIAGNOSTIC ===
 
+///Helper to compile a ps_2_0 shader from source string.
+static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppShader, const char* tag)
+{
+	ID3DXBuffer* compiled = NULL;
+	ID3DXBuffer* errors = NULL;
+	DEBUG_LOG(("CP8_TERPBR: compiling %s\n", tag));
+	TerrainDiag(tag);
+	HRESULT hr = D3DXCompileShader(source, (UINT)strlen(source),
+		NULL, NULL, "main", "ps_2_0", 0, &compiled, &errors, NULL);
+	DEBUG_LOG(("CP8_TERPBR: %s D3DXCompileShader hr = %d\n", tag, (int)hr));
+	TerrainDiagI(tag, (int)hr);
+	if (errors) {
+		const char* errText = (const char*)errors->GetBufferPointer();
+		if (errText) {
+			DEBUG_LOG(("CP8_TERPBR: %s error: %s\n", tag, errText));
+			TerrainDiag(errText);
+		}
+		errors->Release();
+	}
+	if (SUCCEEDED(hr) && compiled) {
+		hr = DX8Wrapper::_Get_D3D_Device8()->CreatePixelShader(
+			(const DWORD*)compiled->GetBufferPointer(), ppShader);
+		compiled->Release();
+		DEBUG_LOG(("CP8_TERPBR: %s CreatePixelShader hr = %d\n", tag, (int)hr));
+		TerrainDiagI(tag, (int)hr);
+	}
+	return hr;
+}
+
 Int TerrainShaderPBR::init( void )
 {
 	D3DCAPS8 caps;
 	memset(&caps, 0, sizeof(caps));
-	if (SUCCEEDED(DX8Wrapper::_Get_D3D_Device8()->GetDeviceCaps(&caps)) &&
-		caps.PixelShaderVersion >= D3DPS_VERSION(2,0))
+	if (FAILED(DX8Wrapper::_Get_D3D_Device8()->GetDeviceCaps(&caps)) ||
+		caps.PixelShaderVersion < D3DPS_VERSION(2,0))
 	{
-		const char* psSource =
+		// ps_2_0 not available, fall through to pixel shader path
+		return terrainShaderPixelShader.init();
+	}
+
+	// Initialize 2Stage shader so updateNoise1/updateNoise2 helpers are available
+	terrainShader2Stage.init();
+
+	m_dwPBRPixelShader = NULL;
+	m_dwPBRNoise1PixelShader = NULL;
+	m_dwPBRNoise2PixelShader = NULL;
+	m_dwPBRNoise12PixelShader = NULL;
+
+	// --- Base PBR shader: s0 + sun ---
+	{
+		const char* src =
 			"sampler s0 : register(s0);\n"
+			"sampler s1 : register(s1);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(\n"
-			"    float2 texCoord : TEXCOORD0,\n"
-			"    float4 diffuse : COLOR0)\n"
-			"    : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
-			"    float4 baseTex = tex2D(s0, texCoord);\n"
+			"    float4 base0 = tex2D(s0, tex0);\n"
+			"    float4 base1 = tex2D(s1, tex1);\n"
+			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + float3(0, 0, 1));\n"
-			"    float spec = pow(saturate(dot(N, H)), 32.0);\n"
-			"    float3 result = baseTex.rgb * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.45;\n"
-			"    return float4(result, baseTex.a);\n"
-			"}\n"
-			;
-		ID3DXBuffer* compiledPS = NULL;
-		ID3DXBuffer* psErrors = NULL;
-		DEBUG_LOG(("CP8_TERPBR: compiling ps_2_0 PBR terrain shader via D3DXCompileShader\n"));
-		TerrainDiag("CP8_TERPBR: compiling ps_2_0 PBR terrain shader via D3DXCompileShader");
-		HRESULT hrCompile = D3DXCompileShader(psSource, (UINT)strlen(psSource),
-			NULL, NULL, "main", "ps_2_0", 0, &compiledPS, &psErrors, NULL);
-		DEBUG_LOG(("CP8_TERPBR: D3DXCompileShader hr = %d\n", (int)hrCompile));
-		TerrainDiagI("CP8_TERPBR: D3DXCompileShader hr", (int)hrCompile);
-		if (psErrors) {
-			char* errText = (char*)psErrors->GetBufferPointer();
-			if (errText) {
-				DEBUG_LOG(("CP8_TERPBR: compile error: %s\n", errText));
-				TerrainDiag(errText);
-			}
-			psErrors->Release();
-		}
-		m_dwPBRPixelShader = NULL;
-		if (SUCCEEDED(hrCompile) && compiledPS) {
-			HRESULT hrPS = DX8Wrapper::_Get_D3D_Device8()->CreatePixelShader(
-				(const DWORD*)compiledPS->GetBufferPointer(),
-				&m_dwPBRPixelShader);
-			compiledPS->Release();
-			DEBUG_LOG(("CP8_TERPBR: CreatePixelShader hr = %d\n", (int)hrPS));
-			TerrainDiagI("CP8_TERPBR: CreatePixelShader hr", (int)hrPS);
-			if (SUCCEEDED(hrPS) && m_dwPBRPixelShader) {
-				DEBUG_LOG(("CP8_TERPBR: ps_2_0 PBR terrain shader created OK\n"));
-				TerrainDiag("CP8_TERPBR: ps_2_0 PBR terrain shader created OK");
-				W3DShaders[W3DShaderManager::ST_TERRAIN_PBR] = &terrainShaderPBR;
-				W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR] = 1;
-				// Also init the pixel shader for noise variants
-				return terrainShaderPixelShader.init();
-			}
-		} else {
-			DEBUG_LOG(("CP8_TERPBR: D3DXCompileShader failed, PBR terrain unavailable\n"));
-			TerrainDiag("CP8_TERPBR: D3DXCompileShader failed, PBR terrain unavailable");
+			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
+			"    float3 result = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    return float4(result, base0.a);\n"
+			"}\n";
+		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr")))
+			return terrainShaderPixelShader.init();
+	}
+
+	W3DShaders[W3DShaderManager::ST_TERRAIN_PBR] = &terrainShaderPBR;
+	W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR] = 1;
+
+	// --- PBR + cloud (NOISE1): s0 + s2 cloud ---
+	{
+		const char* src =
+			"sampler s0 : register(s0);\n"
+			"sampler s1 : register(s1);\n"
+			"sampler s2 : register(s2);\n"
+			"float3 sunDirection : register(c0);\n"
+			"float3 sunColor : register(c1);\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 base0 = tex2D(s0, tex0);\n"
+			"    float4 base1 = tex2D(s1, tex1);\n"
+			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float4 cloudTex = tex2D(s2, tex2);\n"
+			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 L = normalize(sunDirection);\n"
+			"    float NdotL = saturate(dot(N, L));\n"
+			"    float3 H = normalize(L + float3(0, 0, 1));\n"
+			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
+			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
+			"    return float4(lit, base0.a);\n"
+			"}\n";
+		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise1PixelShader, "terrain_pbr_noise1"))) {
+			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
+			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
 		}
 	}
-	// ps_2_0 not available, fall through to pixel shader
-	return terrainShaderPixelShader.init();
+
+	// --- PBR + lightmap (NOISE2): s0 + s2 lightmap ---
+	{
+		const char* src =
+			"sampler s0 : register(s0);\n"
+			"sampler s1 : register(s1);\n"
+			"sampler s2 : register(s2);\n"
+			"float3 sunDirection : register(c0);\n"
+			"float3 sunColor : register(c1);\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 base0 = tex2D(s0, tex0);\n"
+			"    float4 base1 = tex2D(s1, tex1);\n"
+			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float4 lightmapTex = tex2D(s2, tex2);\n"
+			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 L = normalize(sunDirection);\n"
+			"    float NdotL = saturate(dot(N, L));\n"
+			"    float3 H = normalize(L + float3(0, 0, 1));\n"
+			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
+			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    lit *= lightmapTex.rgb;\n"
+			"    return float4(lit, base0.a);\n"
+			"}\n";
+		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise2PixelShader, "terrain_pbr_noise2"))) {
+			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
+			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
+		}
+	}
+
+	// --- PBR + cloud + lightmap (NOISE12): s0 + s2 + s3 ---
+	{
+		const char* src =
+			"sampler s0 : register(s0);\n"
+			"sampler s1 : register(s1);\n"
+			"sampler s2 : register(s2);\n"
+			"sampler s3 : register(s3);\n"
+			"float3 sunDirection : register(c0);\n"
+			"float3 sunColor : register(c1);\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 base0 = tex2D(s0, tex0);\n"
+			"    float4 base1 = tex2D(s1, tex1);\n"
+			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float4 cloudTex = tex2D(s2, tex2);\n"
+			"    float4 lightmapTex = tex2D(s3, tex3);\n"
+			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 L = normalize(sunDirection);\n"
+			"    float NdotL = saturate(dot(N, L));\n"
+			"    float3 H = normalize(L + float3(0, 0, 1));\n"
+			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
+			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
+			"    return float4(lit, base0.a);\n"
+			"}\n";
+		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise12PixelShader, "terrain_pbr_noise12"))) {
+			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
+			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
+		}
+	}
+
+		// DIAG: log which PBR variants are registered
+		{
+			FILE *f = fopen("E:	errain_diag.log", "a");
+			if (f) {
+				fprintf(f, "[%d] PBR_INIT: base=%d noise1=%d noise2=%d noise12=%d\n",
+					timeGetTime(),
+					W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR],
+					W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1],
+					W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2],
+					W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12]);
+				fclose(f);
+			}
+		}
+	return TRUE;
 }
 
 Int TerrainShaderPBR::set(Int pass)
 {
-	// PBR is single-pass; delegate noise variants to pixel shader
-	if (W3DShaderManager::getCurrentShader() != W3DShaderManager::ST_TERRAIN_PBR) {
+	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
+
+	// Fall back to non-PBR pixel shader for unrecognized shader types
+	if (curShader < W3DShaderManager::ST_TERRAIN_PBR || curShader > W3DShaderManager::ST_TERRAIN_PBR_NOISE12) {
 		return terrainShaderPixelShader.set(pass);
 	}
+
 	DX8Wrapper::Apply_Render_State_Changes();
+
+	// Base texture s0 with vertex UV set 0
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, W3DShaderManager::getShaderTexture(0)->Peek_D3D_Texture());
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
@@ -2066,28 +2217,147 @@ Int TerrainShaderPBR::set(Int pass)
 	if (TheGlobalData && TheGlobalData->m_bilinearTerrainTex || TheGlobalData->m_trilinearTerrainTex) {
 		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
 		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		if (TheGlobalData->m_trilinearTerrainTex) {
+			DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MINFILTER, D3DTEXF_ANISOTROPIC);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MAXANISOTROPY, 4);
+		}
 	} else {
 		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
 		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
 	}
-	// Pass sun direction + color via pixel shader constants c0, c1
-	float sunDir[4] = {0.5f, 0.3f, -0.8f, 0.0f};
-	float sunColor[4] = {1.0f, 0.95f, 0.8f, 0.0f};
-	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, sunDir, 1);
-	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(1, sunColor, 1);
-	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+	if (TheGlobalData && TheGlobalData->m_trilinearTerrainTex) {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MIPFILTER, D3DTEXF_LINEAR);
+	} else {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MIPFILTER, D3DTEXF_POINT);
+	}
+	// Stage 1: detail texture blend with TEXCOORD1
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, W3DShaderManager::getShaderTexture(1)->Peek_D3D_Texture());
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXCOORDINDEX, 1);
+	if (TheGlobalData && TheGlobalData->m_bilinearTerrainTex || TheGlobalData->m_trilinearTerrainTex) {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		if (TheGlobalData->m_trilinearTerrainTex) {
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MINFILTER, D3DTEXF_ANISOTROPIC);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MAXANISOTROPY, 4);
+		}
+	} else {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MINFILTER, D3DTEXF_POINT);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MAGFILTER, D3DTEXF_POINT);
+	}
+	if (TheGlobalData && TheGlobalData->m_trilinearTerrainTex) {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MIPFILTER, D3DTEXF_LINEAR);
+	} else {
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MIPFILTER, D3DTEXF_POINT);
+	}
+
+
+	// Setup noise texture stages for variants that need them
+	if (curShader >= W3DShaderManager::ST_TERRAIN_PBR_NOISE1) {
+		Matrix4x4 curView;
+		DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, curView);
+		D3DXMATRIX inv;
+		float det;
+		D3DXMatrixInverse(&inv, &det, (D3DXMATRIX*)&curView);
+
+		// Stage 2: camera-space projected noise input
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+
+		if (curShader == W3DShaderManager::ST_TERRAIN_PBR_NOISE1 || curShader == W3DShaderManager::ST_TERRAIN_PBR_NOISE12) {
+			// Cloud texture in stage 2
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, W3DShaderManager::getShaderTexture(2)->Peek_D3D_Texture());
+			terrainShader2Stage.updateNoise1(((D3DXMATRIX*)&curView), &inv);
+			DX8Wrapper::_Set_DX8_Transform(D3DTS_TEXTURE2, curView);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		} else {
+			// Lightmap in stage 2
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, W3DShaderManager::getShaderTexture(3)->Peek_D3D_Texture());
+			terrainShader2Stage.updateNoise2(((D3DXMATRIX*)&curView), &inv);
+			DX8Wrapper::_Set_DX8_Transform(D3DTS_TEXTURE2, curView);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MINFILTER, D3DTEXF_POINT);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		}
+
+		if (curShader == W3DShaderManager::ST_TERRAIN_PBR_NOISE12) {
+			// Both cloud and lightmap: stage 3 for lightmap
+			DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(3, W3DShaderManager::getShaderTexture(3)->Peek_D3D_Texture());
+			terrainShader2Stage.updateNoise2(((D3DXMATRIX*)&curView), &inv);
+			DX8Wrapper::_Set_DX8_Transform(D3DTS_TEXTURE3, curView);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_MINFILTER, D3DTEXF_POINT);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		}
+	}
+
+
+		// DIAG: log PBR shader selection (first call only)
+		{
+			static Bool pbrSetDiag = FALSE;
+			if (!pbrSetDiag) {
+				FILE *f = fopen("E:	errain_diag.log", "a");
+				if (f) {
+					fprintf(f, "[%d] PBR_SET: curShader=%d\n", timeGetTime(), (int)curShader);
+					fclose(f);
+				}
+				pbrSetDiag = TRUE;
+			}
+		}
+	// Select the correct pixel shader for this variant
+	switch (curShader) {
+		case W3DShaderManager::ST_TERRAIN_PBR:
+			DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+			break;
+		case W3DShaderManager::ST_TERRAIN_PBR_NOISE1:
+			if (m_dwPBRNoise1PixelShader)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShader);
+			else
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+			break;
+		case W3DShaderManager::ST_TERRAIN_PBR_NOISE2:
+			if (m_dwPBRNoise2PixelShader)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShader);
+			else
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+			break;
+		case W3DShaderManager::ST_TERRAIN_PBR_NOISE12:
+			if (m_dwPBRNoise12PixelShader)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShader);
+			else
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+			break;
+	}
 	return TRUE;
 }
 
 void TerrainShaderPBR::reset(void)
 {
-	if (W3DShaderManager::getCurrentShader() != W3DShaderManager::ST_TERRAIN_PBR) {
+	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
+	if (curShader < W3DShaderManager::ST_TERRAIN_PBR || curShader > W3DShaderManager::ST_TERRAIN_PBR_NOISE12) {
 		terrainShaderPixelShader.reset();
 		return;
 	}
 	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(NULL);
 	ShaderClass::Invalidate();
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(3, NULL);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|1);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|2);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|3);
 }
 
 Int TerrainShaderPBR::shutdown(void)
@@ -2096,7 +2366,207 @@ Int TerrainShaderPBR::shutdown(void)
 		m_dwPBRPixelShader->Release();
 		m_dwPBRPixelShader = NULL;
 	}
+	if (m_dwPBRNoise1PixelShader) {
+		m_dwPBRNoise1PixelShader->Release();
+		m_dwPBRNoise1PixelShader = NULL;
+	}
+	if (m_dwPBRNoise2PixelShader) {
+		m_dwPBRNoise2PixelShader->Release();
+		m_dwPBRNoise2PixelShader = NULL;
+	}
+	if (m_dwPBRNoise12PixelShader) {
+		m_dwPBRNoise12PixelShader->Release();
+		m_dwPBRNoise12PixelShader = NULL;
+	}
 	return terrainShaderPixelShader.shutdown();
+}
+
+// W3DPBRShader ==========================================================================
+Int W3DPBRShader::init( void )
+{
+	m_dwPBRPixelShader = NULL;
+	m_dwPBRAlphaPixelShader = NULL;
+	m_dwPBRPixelShaderNT = NULL;
+	m_dwPBRAlphaPixelShaderNT = NULL;
+
+	// Phase 4: 4-light GGX shader with PBR texture support
+	// Register layout:
+	//   s0 = albedo/diffuse, s2 = PBR (R=rough,G=metal,B=AO)
+	//   c0 = sun dir, c1 = sun color, c2 = camera pos
+	//   c3 = { roughnessOverride, roughness, metalnessOverride, metalness }
+	//   c4 = light2 dir, c5 = light2 color
+	//   c6 = light3 dir, c7 = light3 color
+	//   c8 = light4 dir, c9 = light4 color
+	//   c10 = ambient
+	{
+		const char* src =
+			"sampler s0 : register(s0);\n"
+			"sampler s2 : register(s2);\n"
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float3 c2 : register(c2);\n"
+			"float4 c3 : register(c3);\n"
+			"float3 c4 : register(c4);\n"
+			"float3 c5 : register(c5);\n"
+			"float3 c6 : register(c6);\n"
+			"float3 c7 : register(c7);\n"
+			"float3 c8 : register(c8);\n"
+			"float3 c9 : register(c9);\n"
+			"float3 c10 : register(c10);\n"
+			"float4 main(float2 tex0 : TEXCOORD0,\n"
+			"    float3 worldPos : TEXCOORD1,\n"
+			"    float3 worldNormal : TEXCOORD4,\n"
+			"    float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    float4 pbrMap = tex2D(s2, tex0);\n"
+			"    float3 N = normalize(worldNormal);\n"
+			"    float3 V = normalize(c2.xyz - worldPos);\n"
+			"    float NdotV = saturate(dot(N, V));\n"
+			"    float useOverride = step(0.5, c3.x);\n"
+			"    float roughness = lerp(max(pbrMap.r, 0.04), c3.y, useOverride);\n"
+			"    float metalness = lerp(saturate(pbrMap.g), c3.w, useOverride);\n"
+			"    float ao = lerp(pbrMap.b, 1.0, useOverride);\n"
+			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness);\n"
+			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
+			"    float invPI = 0.31831;\n"
+			"    float3 result = float3(0,0,0);\n"
+			"    float3 L, H; float NdotL, NdotH, VdotH, d, D, G_L, G, f, f5;\n"
+			"    float3 specular;\n"
+			"    L = normalize(c0.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c1.xyz * NdotL;\n"
+			"    L = normalize(c4.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c5.xyz * NdotL;\n"
+			"    L = normalize(c6.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c7.xyz * NdotL;\n"
+			"    L = normalize(c8.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c9.xyz * NdotL;\n"
+			"    result += diffuseColor * c10.xyz * ao;\n"
+			"    return float4(result, albedo.a);\n"
+			"}\n";
+		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "pbr_unit")))
+			DEBUG_LOG(("PBR: W3DPBRShader init FAILED - no PBR shader available\n"));
+		else
+			DEBUG_LOG(("PBR: W3DPBRShader init OK\n"));
+	}
+
+	// Register for unit shader types
+	W3DShaders[W3DShaderManager::ST_PBR_UNIT_OPAQUE] = this;
+	W3DShadersPassCount[W3DShaderManager::ST_PBR_UNIT_OPAQUE] = 1;
+	W3DShaders[W3DShaderManager::ST_PBR_UNIT_ALPHA] = this;
+	W3DShadersPassCount[W3DShaderManager::ST_PBR_UNIT_ALPHA] = 1;
+
+	// Export shader handles for dx8renderer.cpp (cross-library)
+	g_pbrUnitOpaqueShader = m_dwPBRPixelShader;
+	g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader;
+	g_pbrUnitShaderEnabled = (m_dwPBRPixelShader != NULL) ? TRUE : FALSE;
+
+	return (m_dwPBRPixelShader != NULL) ? TRUE : FALSE;
+}
+
+Int W3DPBRShader::set(Int pass)
+{
+	if (!m_dwPBRPixelShader) return FALSE;
+	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
+
+	// Select opaque or alpha shader
+	IDirect3DPixelShader9* pShader = NULL;
+	if (curShader == W3DShaderManager::ST_PBR_UNIT_ALPHA && m_dwPBRAlphaPixelShader)
+		pShader = m_dwPBRAlphaPixelShader;
+	else
+		pShader = m_dwPBRPixelShader;
+
+	DX8Wrapper::Apply_Render_State_Changes();
+
+	// Set up texture stage 0 (albedo) from shader texture slot
+	TextureClass *albedoTex = W3DShaderManager::getShaderTexture(0);
+	if (albedoTex && albedoTex->Peek_D3D_Texture()) {
+		DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, albedoTex->Peek_D3D_Texture());
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, 0);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+	}
+
+	// Set up texture stage 2 (PBR) from shader texture slot
+	TextureClass *pbrTex = W3DShaderManager::getShaderTexture(2);
+	if (pbrTex && pbrTex->Peek_D3D_Texture()) {
+		DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, pbrTex->Peek_D3D_Texture());
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, 0);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+	}
+
+	// Set alpha blend states for alpha pass
+	if (curShader == W3DShaderManager::ST_PBR_UNIT_ALPHA) {
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHABLENDENABLE, TRUE);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+	} else {
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHABLENDENABLE, FALSE);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_SRCBLEND, D3DBLEND_ONE);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_DESTBLEND, D3DBLEND_ZERO);
+	}
+
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(pShader);
+	return TRUE;
+}
+
+void W3DPBRShader::reset(void)
+{
+	ShaderClass::Invalidate();
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(NULL);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHABLENDENABLE, FALSE);
+}
+
+Int W3DPBRShader::shutdown(void)
+{
+	if (m_dwPBRPixelShader) { m_dwPBRPixelShader->Release(); m_dwPBRPixelShader = NULL; }
+	if (m_dwPBRAlphaPixelShader) { m_dwPBRAlphaPixelShader->Release(); m_dwPBRAlphaPixelShader = NULL; }
+	if (m_dwPBRPixelShaderNT) { m_dwPBRPixelShaderNT->Release(); m_dwPBRPixelShaderNT = NULL; }
+	if (m_dwPBRAlphaPixelShaderNT) { m_dwPBRAlphaPixelShaderNT->Release(); m_dwPBRAlphaPixelShaderNT = NULL; }
+	g_pbrUnitOpaqueShader = NULL;
+	g_pbrUnitAlphaShader = NULL;
+	g_pbrUnitShaderEnabled = FALSE;
+	return TRUE;
 }
 
 Int TerrainShaderPixelShader::init( void )
@@ -2677,6 +3147,7 @@ W3DShaderInterface **MasterShaderList[]=
 	MaskShaderList,
 	CloudShaderList,
 	FlatTerrainShaderList,
+	PBRShaderList,
 	NULL
 };
 
@@ -2946,6 +3417,59 @@ void W3DShaderManager::drawViewport(Int color)
 	pDev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
 
 	pDev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANS_LIT_TEX_VERTEX));
+}
+
+// PBR texture pipeline methods (Phase 3+)
+//=============================================================================
+void W3DShaderManager::registerPBRTexture(const char *albedoName, const char *pbrName)
+{
+	if (!m_pbrTextureMap) {
+		m_pbrTextureMap = NEW PBRTextureMap;
+	}
+	AsciiString key(albedoName);
+	(*m_pbrTextureMap)[key] = true;
+	DEBUG_LOG(("PBR: registered texture %s -> %s
+", albedoName, pbrName));
+}
+
+Bool W3DShaderManager::hasPBRTexture(const char *albedoName)
+{
+	if (!m_pbrTextureMap) return false;
+	AsciiString key(albedoName);
+	PBRTextureMap::iterator it = m_pbrTextureMap->find(key);
+	return (it != m_pbrTextureMap->end());
+}
+
+void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness, float metalness)
+{
+	if (!m_legacyPBRParamsMap) {
+		m_legacyPBRParamsMap = NEW LegacyPBRParamsMap;
+	}
+	AsciiString key(meshName);
+	LegacyPBRParams params;
+	params.roughness = roughness;
+	params.metalness = metalness;
+	params.pad[0] = 0.0f;
+	params.pad[1] = 0.0f;
+	(*m_legacyPBRParamsMap)[key] = params;
+}
+
+Bool W3DShaderManager::getLegacyPBRParams(const char *meshName, LegacyPBRParams *outParams)
+{
+	if (!m_legacyPBRParamsMap || !outParams) return false;
+	AsciiString key(meshName);
+	LegacyPBRParamsMap::iterator it = m_legacyPBRParamsMap->find(key);
+	if (it != m_legacyPBRParamsMap->end()) {
+		*outParams = it->second;
+		return true;
+	}
+	return false;
+}
+
+Bool W3DShaderManager::isLegacyPBREnabled(void)
+{
+	if (!TheGlobalData) return false;
+	return TheGlobalData->m_useLegacyPBR;
 }
 
 // W3DShaderManager::startRenderToTexture =======================================================

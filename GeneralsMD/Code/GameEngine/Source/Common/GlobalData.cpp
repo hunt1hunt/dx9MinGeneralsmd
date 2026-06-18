@@ -82,12 +82,15 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseLightMap",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useLightMap ) },
 	{ "BilinearTerrainTex",				INI::parseBool,				NULL,			offsetof( GlobalData, m_bilinearTerrainTex ) },
 	{ "TrilinearTerrainTex",			INI::parseBool,				NULL,			offsetof( GlobalData, m_trilinearTerrainTex ) },
+	{ "UseDetailTerrainTex",			INI::parseBool,				NULL,			offsetof( GlobalData, m_useDetailTerrainTex ) },
 	{ "MultiPassTerrain",					INI::parseBool,				NULL,			offsetof( GlobalData, m_multiPassTerrain ) },
 	{ "AdjustCliffTextures",			INI::parseBool,				NULL,			offsetof( GlobalData, m_adjustCliffTextures ) },
 	{ "Use3WayTerrainBlends",			INI::parseInt,				NULL,			offsetof( GlobalData, m_use3WayTerrainBlends ) },
 	{ "StretchTerrain",						INI::parseBool,				NULL,			offsetof( GlobalData, m_stretchTerrain ) },
 	{ "UseHalfHeightMap",					INI::parseBool,				NULL,			offsetof( GlobalData, m_useHalfHeightMap ) },
+	{ "UsePBRTextures",							INI::parseBool,				NULL,			offsetof( GlobalData, m_usePBRTextures ) },
 	
+	{ "UseLegacyPBR",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useLegacyPBR ) },
 	
 	{ "DrawEntireTerrain",					INI::parseBool,				NULL,			offsetof( GlobalData, m_drawEntireTerrain ) },
 	{ "TerrainLOD",									INI::parseIndexList,	TerrainLODNames,	offsetof( GlobalData, m_terrainLOD ) },
@@ -664,6 +667,8 @@ GlobalData::GlobalData()
 
 	m_playStats = -1;
 	m_incrementalAGPBuf = FALSE;
+	m_usePBRTextures = FALSE;
+	m_useLegacyPBR = FALSE;
 	m_mapName.clear();
 	m_moveHintName.clear();
 	m_useTrees = 0;
@@ -683,6 +688,7 @@ GlobalData::GlobalData()
 	m_useLightMap = FALSE;
 	m_bilinearTerrainTex = FALSE;
 	m_trilinearTerrainTex = FALSE;
+	m_useDetailTerrainTex = FALSE;
 	m_multiPassTerrain = FALSE;
 	m_adjustCliffTextures = FALSE;
 	m_stretchTerrain = FALSE;

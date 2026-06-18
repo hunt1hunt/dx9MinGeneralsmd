@@ -316,6 +316,7 @@ WaterRenderObjClass::~WaterRenderObjClass(void)
 	REF_PTR_RELEASE (m_waterNoiseTexture);
 	REF_PTR_RELEASE (m_riverAlphaEdge);
 	REF_PTR_RELEASE (m_waterSparklesTexture);
+		REF_PTR_RELEASE (m_sparkleTexture);
 
 	Int i;
 
@@ -410,6 +411,7 @@ WaterRenderObjClass::WaterRenderObjClass(void)
 	m_riverWaterPixelShader=NULL;		///<D3D handle to pixel shader.
 	m_trapezoidWaterPixelShader=NULL;		///<D3D handle to pixel shader.
 	m_waterSparklesTexture=0;
+		m_sparkleTexture=NULL;
 	m_riverXOffset=0;
 	m_riverYOffset=0;
 }
@@ -1080,6 +1082,8 @@ void WaterRenderObjClass::ReAcquireResources(void)
 					"sampler s1 : register(s1);\n"
 					"float3 sunDirection : register(c0);\n"
 					"float3 sunColor : register(c1);\n"
+					"float2 timeOffset : register(c2);\n"
+					"sampler s2 : register(s2);\n"
 					"float4 main(\n"
 					"    float2 bumpUV : TEXCOORD0,\n"
 					"    float2 reflUV : TEXCOORD1,\n"
@@ -1094,16 +1098,21 @@ void WaterRenderObjClass::ReAcquireResources(void)
 					"    float2 fresnelUV = perturbedUV - 0.5;\n"
 					"    float fresnel = dot(fresnelUV, fresnelUV) * 2.0;\n"
 					"    fresnel = saturate(fresnel);\n"
-					"    fresnel = 0.02 + 0.98 * fresnel;\n"
-					"    float3 waterColor = float3(0.04, 0.08, 0.12);\n"
+					"    fresnel = 0.25 + 0.75 * fresnel;\n"
+					"    float3 waterColor = float3(0.01, 0.03, 0.05);\n"
 					"    float3 result = lerp(waterColor, reflection.rgb, fresnel);\n"
 					"    // Sun specular sparkle via Blinn-Phong\n"
 					"    float3 N = normalize(float3((bump.x - 0.5) * 2.0, (bump.y - 0.5) * 2.0, 0.25));\n"
 					"    float3 L = normalize(sunDirection);\n"
 					"    float3 V = float3(0, 0, 1);\n"
 					"    float3 H = normalize(L + V);\n"
-					"    float spec = pow(saturate(dot(N, H)), 64.0);\n"
-					"    result += sunColor * spec * 0.85;\n"
+					"    float spec = pow(saturate(dot(N, H)), 32.0);\n"
+					"    result += sunColor * spec * 1.2;\n"
+					"    // Sparkle overlay texture\n"
+					"    float2 sparkleUV = bumpUV * 4.0 + timeOffset;\n"
+					"    float4 sparkle = tex2D(s2, sparkleUV);\n"
+					"    float sparkleAmt = dot(sparkle.rgb, float3(0.299, 0.587, 0.114));\n"
+					"    result += sunColor * sparkleAmt * fresnel * 0.4;\n"
 					"    return float4(result * color.rgb, color.a);\n"
 					"}\n"
 					;
@@ -2380,7 +2389,48 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 			WaterDiagI("CP5_DRAWSEA: reflTex NULL?", (reflTex == NULL) ? 1 : 0);
 			if (!reflTex) continue;
 
+			// Bind bump map (s0) for PBR/nobump/original shader paths.
+			// Without this, tex2D(s0, bumpUV) samples black, producing constant
+			// normals and a uniform specular sheen instead of true sparkle.
+			m_pDev->SetTexture(0, m_pBumpTexture[m_iBumpFrame]);
+
 			m_pDev->SetTexture(1, reflTex->Peek_D3D_Texture());
+
+			// === Procedural sparkle overlay (s2) ===
+			if (!m_sparkleTexture) {
+				m_sparkleTexture = NEW TextureClass(64, 64, WW3D_FORMAT_A8R8G8B8,
+					MIP_LEVELS_1, TextureClass::POOL_MANAGED, false, false);
+				SurfaceClass *surf = m_sparkleTexture->Get_Surface_Level();
+				int pitch;
+				unsigned char *dst = (unsigned char *)surf->Lock(&pitch);
+				for (int y = 0; y < 64; y++) {
+					for (int x = 0; x < 64; x++) {
+						unsigned char *pixel = dst + y * pitch + x * 4;
+						int h = x * 13 + y * 7;
+						int r = (h * (h * h * 15731 + 789221) + 1376312589) & 0x7FFFFFFF;
+						if ((r % 100) < 1) {
+							unsigned char bright = (unsigned char)(200 + (r >> 8) % 56);
+							pixel[0] = bright; pixel[1] = bright;
+							pixel[2] = bright; pixel[3] = 255;
+						} else {
+							pixel[0] = 0; pixel[1] = 0; pixel[2] = 0; pixel[3] = 0;
+						}
+					}
+				}
+				surf->Unlock();
+				REF_PTR_RELEASE(surf);
+			}
+			if (m_sparkleTexture) {
+				if (!m_sparkleTexture->Is_Initialized())
+					m_sparkleTexture->Init();
+				m_pDev->SetTexture(2, m_sparkleTexture->Peek_D3D_Texture());
+				m_pDev->SetSamplerState(2, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+				m_pDev->SetSamplerState(2, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+				m_pDev->SetSamplerState(2, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+				m_pDev->SetSamplerState(2, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+				float sparkleTime[4] = { m_uOffset * 0.5f, m_vOffset * 0.5f, 0, 0 };
+				m_pDev->SetPixelShaderConstantF(2, sparkleTime, 1);
+			}
 
 			// ==============================================
 			// Branch 1: Mountain lake (height >= 37) - DrawPrimitiveUP

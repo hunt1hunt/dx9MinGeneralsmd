@@ -74,6 +74,8 @@ MeshModelClass::MeshModelClass(void) :
 	CurMatDesc(NULL),
 	MatInfo(NULL),
 	GapFiller(NULL)
+		m_legacyPBRRoughness(-1.0f),
+		m_legacyPBRMetalness(-1.0f),
 {
 	Set_Flag(DIRTY_BOUNDS,true);
 
@@ -92,6 +94,8 @@ MeshModelClass::MeshModelClass(const MeshModelClass & that) :
 	CurMatDesc(NULL),
 	MatInfo(NULL),
 	GapFiller(NULL),
+		m_legacyPBRRoughness(-1.0f),
+		m_legacyPBRMetalness(-1.0f),
 	HasBeenInUse(false)
 {
 	DefMatDesc = W3DNEW MeshMatDescClass(*(that.DefMatDesc));

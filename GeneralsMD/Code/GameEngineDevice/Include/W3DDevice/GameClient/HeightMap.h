@@ -103,6 +103,7 @@ protected:
 	Int m_originX; ///<  Origin point in the grid.  Slides around.
 	Int m_originY; ///< Origin point in the grid.  Slides around.
 	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining triangles in a VB tile.
+	TextureClass				*m_detailTexture;	///<procedural detail texture for PBR terrain
 	Int	m_numVBTilesX;	///<dimensions of array containing all the vertex buffers 
 	Int	m_numVBTilesY;	///<dimensions of array containing all the vertex buffers
 	Int m_numVertexBufferTiles;	///<number of vertex buffers needed to store this heightmap

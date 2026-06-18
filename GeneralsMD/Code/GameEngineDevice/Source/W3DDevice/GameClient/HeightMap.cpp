@@ -161,6 +161,7 @@ void HeightMapRenderObjClass::freeIndexVertexBuffers(void)
 Int HeightMapRenderObjClass::freeMapResources(void)
 {
 	BaseHeightMapRenderObjClass::freeMapResources();
+	REF_PTR_RELEASE(m_detailTexture);
 	freeIndexVertexBuffers();
 
 	return 0;
@@ -1100,6 +1101,7 @@ m_vertexBufferBackup(NULL),
 m_originX(0),
 m_originY(0),
 m_indexBuffer(NULL),
+m_detailTexture(NULL),
 m_numVBTilesX(0),
 m_numVBTilesY(0),
 m_numVertexBufferTiles(0),
@@ -2014,45 +2016,27 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 		}
 
  		st=W3DShaderManager::ST_TERRAIN_BASE; //set default shader
- 		// Prefer PBR terrain shader when ps_2_0 is available
- 		{
- 			static Bool diagOnce = FALSE;
- 			Int passes = W3DShaderManager::getShaderPasses(W3DShaderManager::ST_TERRAIN_PBR);
- 			if (!diagOnce) {
- 				FILE *f = fopen("E:\\terrain_diag.log", "a");
- 				if (f) {
- 					fprintf(f, "[%d] HT_PBR_SELECT: ST_TERRAIN_PBR passes = %d\n", timeGetTime(), (int)passes);
- 					fclose(f);
- 				}
- 				diagOnce = TRUE;
- 			}
- 			if (passes > 0)
- 				st = W3DShaderManager::ST_TERRAIN_PBR;
- 		}
- 		
- 		// Only override noise variants if PBR not active
- 		if (st != W3DShaderManager::ST_TERRAIN_PBR) {
+ 		Bool pbrAvail = (W3DShaderManager::getShaderPasses(W3DShaderManager::ST_TERRAIN_PBR) > 0);
+
  		if (!ShaderClass::Is_Backface_Culling_Inverted())
  		{	//not reflection pass
  			if (TheGlobalData->m_useLightMap && doCloud)
- 			{	st=W3DShaderManager::ST_TERRAIN_BASE_NOISE12;
- 			}
+ 				st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR_NOISE12 : W3DShaderManager::ST_TERRAIN_BASE_NOISE12;
+ 			else if (TheGlobalData->m_useLightMap)
+ 				st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR_NOISE2 : W3DShaderManager::ST_TERRAIN_BASE_NOISE2;
+ 			else if (doCloud)
+ 				st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR_NOISE1 : W3DShaderManager::ST_TERRAIN_BASE_NOISE1;
  			else
- 			if (TheGlobalData->m_useLightMap)
- 			{	//lightmap only
- 				st=W3DShaderManager::ST_TERRAIN_BASE_NOISE2;
- 			}
- 			else
- 			if (doCloud)
- 			{	//cloudmap only
- 				st=W3DShaderManager::ST_TERRAIN_BASE_NOISE1;
- 			}
+ 				st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR : W3DShaderManager::ST_TERRAIN_BASE;
  		}
  		else
  		{	//reflection pass, just do base texture
- 			st=W3DShaderManager::ST_TERRAIN_BASE;
+ 			st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR : W3DShaderManager::ST_TERRAIN_BASE;
  		}
-		}
+ 		// Fallback: if selected noise variant unavailable, use base variant
+ 		if (W3DShaderManager::getShaderPasses(st) == 0) {
+ 			st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR : W3DShaderManager::ST_TERRAIN_BASE;
+ 		}
  
  		//Find number of passes required to render current shader
  		devicePasses=W3DShaderManager::getShaderPasses(st);
@@ -2060,7 +2044,31 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  		if (m_disableTextures)
  			devicePasses=1;	//force to 1 lighting-only pass
  
- 		//Specify all textures that this shader may need.
+ 		//Create procedural detail texture for PBR terrain on first use
+		if (TheGlobalData->m_useDetailTerrainTex && !m_detailTexture) {
+			m_detailTexture = NEW TextureClass(256, 256, WW3D_FORMAT_A8R8G8B8, MIP_LEVELS_1, TextureClass::POOL_MANAGED, false, false);
+			if (m_detailTexture) {
+				SurfaceClass *surf = m_detailTexture->Get_Surface_Level(0);
+				if (surf) {
+					int pitch;
+					UnsignedInt *pixels = (UnsignedInt*)surf->Lock(&pitch);
+					if (pixels) {
+						for (int y = 0; y < 256; y++) {
+							for (int x = 0; x < 256; x++) {
+								UnsignedInt h = x * 374761393 + y * 668265263;
+								h = (h ^ (h >> 13)) * 1274126177;
+								UnsignedByte v = (UnsignedByte)(h >> 16);
+								pixels[y * pitch/4 + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
+							}
+						}
+						surf->Unlock();
+					}
+					REF_PTR_RELEASE(surf);
+				}
+			}
+		}
+
+		//Specify all textures that this shader may need.
  		W3DShaderManager::setTexture(0,m_stageZeroTexture);
  		W3DShaderManager::setTexture(1,m_stageZeroTexture);
  		W3DShaderManager::setTexture(2,m_stageTwoTexture);	//cloud
@@ -2081,7 +2089,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  				DX8Wrapper::Set_Texture(0,NULL);
    			} else {
 				// Pass sun constants for PBR terrain shader
-				if (st == W3DShaderManager::ST_TERRAIN_PBR && TheGlobalData) {
+				if (st >= W3DShaderManager::ST_TERRAIN_PBR && TheGlobalData) {
 					float sunDir[4] = {
 						-TheGlobalData->m_terrainLightPos[0].x,
 						-TheGlobalData->m_terrainLightPos[0].y,

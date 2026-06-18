@@ -38,6 +38,7 @@
 
 #include "WW3D2/Texture.h"
 #include "d3d8compat.h"
+#include "Common/STLTypedefs.h"
 enum FilterTypes;
 enum CustomScenePassModes;
 enum StaticGameLODLevel;
@@ -63,6 +64,9 @@ public:
 		ST_TERRAIN_BASE_NOISE2,	//shader to apply base texture and cloud/noise 2.
 		ST_TERRAIN_BASE_NOISE12,//shader to apply base texture and both cloud/noise
 		ST_TERRAIN_PBR,			//ps_2_0 PBR terrain shader with GGX specular
+		ST_TERRAIN_PBR_NOISE1,	//PBR terrain + cloud texture
+		ST_TERRAIN_PBR_NOISE2,	//PBR terrain + lightmap texture
+		ST_TERRAIN_PBR_NOISE12,	//PBR terrain + cloud + lightmap
 		ST_SHROUD_TEXTURE,		//shader to apply shroud texture projection.
 		ST_MASK_TEXTURE,		//shader to apply alpha mask texture projection.
 		ST_ROAD_BASE,	//shader to apply base terrain texture only
@@ -75,6 +79,9 @@ public:
 		ST_FLAT_TERRAIN_BASE_NOISE2,	//shader to apply base texture and cloud/noise 2.
 		ST_FLAT_TERRAIN_BASE_NOISE12,//shader to apply base texture and both cloud/noise
 		ST_FLAT_SHROUD_TEXTURE,		//shader to apply shroud texture projection.
+		ST_PBR_UNIT_OPAQUE,			//unit/building PBR opaque pass (Phase 4)
+		ST_PBR_UNIT_ALPHA,			//unit/building PBR alpha pass (Phase 4)
+		ST_PBR_TERRAIN,				//terrain PBR (Phase 2 already done, reserved)
 		ST_MAX
 	};
 
@@ -115,6 +122,24 @@ public:
 	static Bool isRenderingToTexture(void) {return m_renderingToTexture; }
 	static void drawViewport(Int color);	///<draws 2 triangles covering the current tactical viewport
 
+	// PBR texture pipeline (Phase 3+)
+	enum PBRTextureStages {
+		PBR_STAGE_ALBEDO     = 0,
+		PBR_STAGE_NORMAL     = 1,
+		PBR_STAGE_ROUGHMETAL = 2,
+		PBR_STAGE_IBL_DIFF   = 3,	// Phase 5
+		PBR_STAGE_IBL_SPEC   = 4,	// Phase 5
+	};
+	struct LegacyPBRParams {
+		float roughness;	// 0=smooth, 1=rough
+		float metalness;	// 0=non-metal, 1=metal
+		float pad[2];		// float4 alignment
+	};
+	static void setLegacyPBRParams(const char *meshName, float roughness, float metalness);
+	static Bool getLegacyPBRParams(const char *meshName, LegacyPBRParams *outParams);
+	static Bool isLegacyPBREnabled(void);
+	static void registerPBRTexture(const char *albedoName, const char *pbrName);
+	static Bool hasPBRTexture(const char *albedoName);
 
 protected:
 	static TextureClass *m_Textures[8];	///textures assigned to each of the possible stages
@@ -132,6 +157,11 @@ protected:
 	static IDirect3DSurface8 *m_newRenderSurface;	///<new render target inside m_renderTexture
 	static IDirect3DSurface8 *m_oldDepthSurface;	///<previous depth buffer surface
 
+	// PBR texture pipeline data (Phase 3+)
+	typedef std::hash_map<AsciiString, Bool, rts::hash<AsciiString>, rts::equal_to<AsciiString> > PBRTextureMap;
+	typedef std::hash_map<AsciiString, LegacyPBRParams, rts::hash<AsciiString>, rts::equal_to<AsciiString> > LegacyPBRParamsMap;
+	static PBRTextureMap *m_pbrTextureMap;
+	static LegacyPBRParamsMap *m_legacyPBRParamsMap;
 
 };
 

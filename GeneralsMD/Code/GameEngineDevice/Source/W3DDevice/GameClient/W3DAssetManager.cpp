@@ -70,6 +70,8 @@
 #include "Common/PerfTimer.h"
 #include "Common/GlobalData.h"
 #include "Common/GameCommon.h"
+#include "Common/FileSystem.h"
+#include "W3DDevice/GameClient/W3DShaderManager.h"
 
 #ifdef _INTERNAL
 // for occasional debugging...
@@ -181,9 +183,39 @@ TextureClass *	W3DAssetManager::Get_Texture
 {
 	//Just call the base implementation after adjusting reduction to deal
 	//with our special types.
+	char pbrName[256];
+	char *pDot;
 
 	if (filename && *filename && _strnicmp(filename,"ZHC",3) == 0)
 		allow_reduction = false;	//don't allow reduction on our infantry textures.
+
+	// Probe for _pbr.dds variant (Phase 3 PBR texture pipeline)
+	if (filename && *filename && TheGlobalData && TheGlobalData->m_usePBRTextures) {
+		strncpy(pbrName, filename, 250);
+		pbrName[250] = 0;
+		pDot = strrchr(pbrName, '.');
+		if (pDot) {
+			*pDot = 0;
+			strcat(pbrName, "_pbr.dds");
+			if (TheFileSystem && TheFileSystem->doesFileExist(pbrName)) {
+				W3DShaderManager::registerPBRTexture(filename, pbrName);
+				DEBUG_LOG(("PBR: detected _pbr.dds for %s -> %s
+", filename, pbrName));
+			}
+		}
+		// Also probe for _n.dds normal map
+		strncpy(pbrName, filename, 250);
+		pbrName[250] = 0;
+		pDot = strrchr(pbrName, '.');
+		if (pDot) {
+			*pDot = 0;
+			strcat(pbrName, "_n.dds");
+			if (TheFileSystem && TheFileSystem->doesFileExist(pbrName)) {
+				DEBUG_LOG(("PBR: detected normal map %s for %s
+", pbrName, filename));
+			}
+		}
+	}
 
 	return WW3DAssetManager::Get_Texture(	filename, 
 		mip_level_count,

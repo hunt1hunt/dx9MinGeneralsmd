@@ -278,7 +278,12 @@ public: // Jani: I need to have an access to these for now...
 		return CurMatDesc->Get_Shader_Array(pass,create);
 	}
 
-protected:
+		void							Set_Legacy_PBR(float roughness, float metalness) { m_legacyPBRRoughness = roughness; m_legacyPBRMetalness = metalness; }
+		float							Get_Legacy_Roughness(void) const { return m_legacyPBRRoughness; }
+		float							Get_Legacy_Metalness(void) const { return m_legacyPBRMetalness; }
+		bool							Has_Legacy_PBR(void) const { return (m_legacyPBRRoughness >= 0.0f && m_legacyPBRMetalness >= 0.0f); }
+
+	protected:
 
 	int Register_Type();
 
@@ -337,7 +342,10 @@ protected:
 	// Jani: Adding this here temporarily... must fine better place
 	GapFillerClass *										GapFiller;
 	bool														HasBeenInUse;	// For debugging purposes!
+	float										m_legacyPBRRoughness;	///< PBR roughness derived from material shininess, -1 = uninitialized
+	float										m_legacyPBRMetalness;	///< PBR metalness derived from material specular, -1 = uninitialized
 
+	
 	friend class MeshClass;
 	friend class MeshDeformSetClass;
 	friend class MeshDeformClass;

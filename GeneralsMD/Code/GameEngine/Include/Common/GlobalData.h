@@ -111,6 +111,7 @@ public:
 	Bool m_useLightMap;
 	Bool m_bilinearTerrainTex;
 	Bool m_trilinearTerrainTex;
+	Bool m_useDetailTerrainTex;
 	Bool m_multiPassTerrain;
 	Bool m_adjustCliffTextures;
 	Bool m_stretchTerrain;
@@ -139,6 +140,8 @@ public:
 	Bool m_showSoftWaterEdge;
 	Bool m_usingWaterTrackEditor;
 	Bool m_isWorldBuilder;
+		Bool m_usePBRTextures;	///< enable PBR texture pipeline (normal/roughness/metalness)
+		Bool m_useLegacyPBR;		///< enable legacy PBR fallback for old models without _pbr.dds
 
 	Int m_featherWater;
 

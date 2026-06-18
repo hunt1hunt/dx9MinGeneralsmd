@@ -2049,6 +2049,52 @@ void MeshModelClass::post_process()
 // ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ----
 	//*/
 }
+	// ---- Legacy PBR parameter derivation (Phase 3.5) ----
+	if (DefMatDesc->Material[0] != NULL) {
+		Vector3 spec;
+		float shiny = DefMatDesc->Material[0]->Get_Shininess();
+		DefMatDesc->Material[0]->Get_Specular(&spec);
+		float roughness = 1.0f;
+		if (shiny > 0.0f) {
+			float s = shiny;
+			if (s > 200.0f) s = 200.0f;
+			roughness = (float)sqrt(2.0 / (double)(s + 2.0));
+			if (roughness > 1.0f) roughness = 1.0f;
+			if (roughness < 0.04f) roughness = 0.04f;
+		}
+		float specLum = spec.X * 0.299f + spec.Y * 0.587f + spec.Z * 0.114f;
+		float metalness = 0.0f;
+		if (specLum > 0.04f) {
+			metalness = (specLum - 0.04f) / 0.5f;
+			if (metalness > 1.0f) metalness = 1.0f;
+		}
+		Set_Legacy_PBR(roughness, metalness);
+	} else if (!DefMatDesc->Has_Material_Array(0)) {
+		VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(0);
+		if (vmat) {
+			Vector3 spec;
+			float shiny = vmat->Get_Shininess();
+			vmat->Get_Specular(&spec);
+			float roughness = 1.0f;
+			if (shiny > 0.0f) {
+				float s = shiny;
+				if (s > 200.0f) s = 200.0f;
+				roughness = (float)sqrt(2.0 / (double)(s + 2.0));
+				if (roughness > 1.0f) roughness = 1.0f;
+				if (roughness < 0.04f) roughness = 0.04f;
+			}
+			float specLum = spec.X * 0.299f + spec.Y * 0.587f + spec.Z * 0.114f;
+			float metalness = 0.0f;
+			if (specLum > 0.04f) {
+				metalness = (specLum - 0.04f) / 0.5f;
+				if (metalness > 1.0f) metalness = 1.0f;
+			}
+			Set_Legacy_PBR(roughness, metalness);
+		}
+	}
+	// ---- end Legacy PBR ----
+
+
 
 void MeshModelClass::post_process_fog(void)
 {
