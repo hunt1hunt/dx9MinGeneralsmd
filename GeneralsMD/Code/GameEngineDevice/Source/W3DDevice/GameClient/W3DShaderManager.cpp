@@ -2068,7 +2068,7 @@ Int TerrainShaderPBR::init( void )
 	m_dwPBRNoise2PixelShader = NULL;
 	m_dwPBRNoise12PixelShader = NULL;
 
-	// --- Base PBR shader: s0 + sun ---
+	// --- Base PBR shader: s0 + sun (GGX) ---
 	{
 		const char* src =
 			"sampler s0 : register(s0);\n"
@@ -2083,9 +2083,20 @@ Int TerrainShaderPBR::init( void )
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
-			"    float3 H = normalize(L + float3(0, 0, 1));\n"
-			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
-			"    float3 result = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    float3 H = normalize(L + N);\n"
+			"    float NdotH = saturate(dot(N, H));\n"
+			"    float VdotH = NdotH;\n"
+			"    float roughness = 0.6;\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"    float D = a2 / (3.14159 * d * d);\n"
+			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
+			"    float3 result = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL);\n"
+			"    result += sunColor * specular * 0.25;\n"
 			"    return float4(result, base0.a);\n"
 			"}\n";
 		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr")))
@@ -2095,7 +2106,7 @@ Int TerrainShaderPBR::init( void )
 	W3DShaders[W3DShaderManager::ST_TERRAIN_PBR] = &terrainShaderPBR;
 	W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR] = 1;
 
-	// --- PBR + cloud (NOISE1): s0 + s2 cloud ---
+	// --- PBR + cloud (NOISE1): s0 + s2 cloud (GGX) ---
 	{
 		const char* src =
 			"sampler s0 : register(s0);\n"
@@ -2112,9 +2123,20 @@ Int TerrainShaderPBR::init( void )
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
-			"    float3 H = normalize(L + float3(0, 0, 1));\n"
-			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
-			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    float3 H = normalize(L + N);\n"
+			"    float NdotH = saturate(dot(N, H));\n"
+			"    float VdotH = NdotH;\n"
+			"    float roughness = 0.6;\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"    float D = a2 / (3.14159 * d * d);\n"
+			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
+			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL);\n"
+			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
@@ -2124,7 +2146,7 @@ Int TerrainShaderPBR::init( void )
 		}
 	}
 
-	// --- PBR + lightmap (NOISE2): s0 + s2 lightmap ---
+	// --- PBR + lightmap (NOISE2): s0 + s2 lightmap (GGX) ---
 	{
 		const char* src =
 			"sampler s0 : register(s0);\n"
@@ -2141,9 +2163,20 @@ Int TerrainShaderPBR::init( void )
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
-			"    float3 H = normalize(L + float3(0, 0, 1));\n"
-			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
-			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    float3 H = normalize(L + N);\n"
+			"    float NdotH = saturate(dot(N, H));\n"
+			"    float VdotH = NdotH;\n"
+			"    float roughness = 0.6;\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"    float D = a2 / (3.14159 * d * d);\n"
+			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
+			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL);\n"
+			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= lightmapTex.rgb;\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
@@ -2153,7 +2186,7 @@ Int TerrainShaderPBR::init( void )
 		}
 	}
 
-	// --- PBR + cloud + lightmap (NOISE12): s0 + s2 + s3 ---
+	// --- PBR + cloud + lightmap (NOISE12): s0 + s2 + s3 (GGX) ---
 	{
 		const char* src =
 			"sampler s0 : register(s0);\n"
@@ -2172,9 +2205,20 @@ Int TerrainShaderPBR::init( void )
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
-			"    float3 H = normalize(L + float3(0, 0, 1));\n"
-			"    float spec = pow(saturate(dot(N, H)), 16.0);\n"
-			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL) + sunColor * spec * 0.15;\n"
+			"    float3 H = normalize(L + N);\n"
+			"    float NdotH = saturate(dot(N, H));\n"
+			"    float VdotH = NdotH;\n"
+			"    float roughness = 0.6;\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"    float D = a2 / (3.14159 * d * d);\n"
+			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
+			"    float3 lit = terrainColor * diffuse.rgb * (0.4 + 0.6 * NdotL);\n"
+			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
@@ -2186,7 +2230,7 @@ Int TerrainShaderPBR::init( void )
 
 		// DIAG: log which PBR variants are registered
 		{
-			FILE *f = fopen("E:	errain_diag.log", "a");
+			FILE *f = fopen("E:\\terrain_diag.log", "a");
 			if (f) {
 				fprintf(f, "[%d] PBR_INIT: base=%d noise1=%d noise2=%d noise12=%d\n",
 					timeGetTime(),
@@ -2304,7 +2348,7 @@ Int TerrainShaderPBR::set(Int pass)
 		{
 			static Bool pbrSetDiag = FALSE;
 			if (!pbrSetDiag) {
-				FILE *f = fopen("E:	errain_diag.log", "a");
+				FILE *f = fopen("E:\\terrain_diag.log", "a");
 				if (f) {
 					fprintf(f, "[%d] PBR_SET: curShader=%d\n", timeGetTime(), (int)curShader);
 					fclose(f);
@@ -2428,7 +2472,7 @@ Int W3DPBRShader::init( void )
 			"    float useOverride = step(0.5, c3.x);\n"
 			"    float roughness = lerp(max(pbrMap.r, 0.04), c3.y, useOverride);\n"
 			"    float metalness = lerp(saturate(pbrMap.g), c3.w, useOverride);\n"
-			"    float ao = lerp(pbrMap.b, 1.0, useOverride);\n"
+			"    float ao = lerp(pbrMap.b, c3.z, useOverride);\n"
 			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness);\n"
 			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
 			"    float a = roughness * roughness;\n"
@@ -2508,7 +2552,7 @@ Int W3DPBRShader::init( void )
 			"    float NdotV = saturate(dot(N, V));\n"
 			"    float roughness = max(c3.y, 0.04);\n"
 			"    float metalness = saturate(c3.w);\n"
-			"    float ao = 1.0;\n"
+			"    float ao = c3.z;\n"
 			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness);\n"
 			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
 			"    float a = roughness * roughness;\n"

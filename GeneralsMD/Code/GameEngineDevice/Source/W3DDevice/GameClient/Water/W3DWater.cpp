@@ -864,10 +864,9 @@ void WaterRenderObjClass::ReleaseResources(void)
 		m_dwWavePixelShader->Release();
 
 	if (m_waveShaderNoBump)
-		if (m_waveShaderNoBump)
-			m_waveShaderNoBump->Release();
-		if (m_waveShaderPBR)
-			m_waveShaderPBR->Release();
+		m_waveShaderNoBump->Release();
+	if (m_waveShaderPBR)
+		m_waveShaderPBR->Release();
 	if (m_dwWaveVertexShader)
 		m_dwWaveVertexShader->Release();
 
@@ -1101,13 +1100,26 @@ void WaterRenderObjClass::ReAcquireResources(void)
 					"    fresnel = 0.25 + 0.75 * fresnel;\n"
 					"    float3 waterColor = float3(0.01, 0.03, 0.05);\n"
 					"    float3 result = lerp(waterColor, reflection.rgb, fresnel);\n"
-					"    // Sun specular sparkle via Blinn-Phong\n"
+					"    // Sun specular via GGX microfacets\n"
 					"    float3 N = normalize(float3((bump.x - 0.5) * 2.0, (bump.y - 0.5) * 2.0, 0.25));\n"
 					"    float3 L = normalize(sunDirection);\n"
 					"    float3 V = float3(0, 0, 1);\n"
 					"    float3 H = normalize(L + V);\n"
-					"    float spec = pow(saturate(dot(N, H)), 32.0);\n"
-					"    result += sunColor * spec * 1.2;\n"
+					"    float NdotV = saturate(dot(N, V));\n"
+					"    float NdotL = saturate(dot(N, L));\n"
+					"    float NdotH = saturate(dot(N, H));\n"
+					"    float VdotH = saturate(dot(V, H));\n"
+					"    float roughness = 0.2;\n"
+					"    float a = roughness * roughness;\n"
+					"    float a2 = a * a;\n"
+					"    float k = a * 0.5;\n"
+					"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
+					"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+					"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+					"    float D = a2 / (3.14159 * d * d);\n"
+					"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+					"    float3 specular = D * G_V * G_L * (float3(0.02,0.02,0.02) + (1.0 - 0.02) * f5);\n"
+					"    result += sunColor * specular / max(4.0 * NdotV * NdotL, 0.001);\n"
 					"    // Sparkle overlay texture\n"
 					"    float2 sparkleUV = bumpUV * 4.0 + timeOffset;\n"
 					"    float4 sparkle = tex2D(s2, sparkleUV);\n"
@@ -2398,18 +2410,23 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 
 			// === Procedural sparkle overlay (s2) ===
 			if (!m_sparkleTexture) {
+				SurfaceClass *surf;
+				int pitch;
+				unsigned char *dst;
+				int y, x, h, r;
+				unsigned char bright;
+				unsigned char *pixel;
 				m_sparkleTexture = NEW TextureClass(64, 64, WW3D_FORMAT_A8R8G8B8,
 					MIP_LEVELS_1, TextureClass::POOL_MANAGED, false, false);
-				SurfaceClass *surf = m_sparkleTexture->Get_Surface_Level();
-				int pitch;
-				unsigned char *dst = (unsigned char *)surf->Lock(&pitch);
-				for (int y = 0; y < 64; y++) {
-					for (int x = 0; x < 64; x++) {
-						unsigned char *pixel = dst + y * pitch + x * 4;
-						int h = x * 13 + y * 7;
-						int r = (h * (h * h * 15731 + 789221) + 1376312589) & 0x7FFFFFFF;
+				surf = m_sparkleTexture->Get_Surface_Level();
+				dst = (unsigned char *)surf->Lock(&pitch);
+				for (y = 0; y < 64; y++) {
+					for (x = 0; x < 64; x++) {
+						pixel = dst + y * pitch + x * 4;
+						h = x * 13 + y * 7;
+						r = (h * (h * h * 15731 + 789221) + 1376312589) & 0x7FFFFFFF;
 						if ((r % 100) < 1) {
-							unsigned char bright = (unsigned char)(200 + (r >> 8) % 56);
+							bright = (unsigned char)(200 + (r >> 8) % 56);
 							pixel[0] = bright; pixel[1] = bright;
 							pixel[2] = bright; pixel[3] = 255;
 						} else {

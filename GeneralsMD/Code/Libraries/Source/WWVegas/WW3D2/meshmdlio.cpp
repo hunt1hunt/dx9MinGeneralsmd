@@ -1923,7 +1923,7 @@ void MeshModelClass::post_process()
 		if (shiny > 0.0f) {
 			float s = shiny;
 			if (s > 200.0f) s = 200.0f;
-			roughness = (float)sqrt(2.0 / (double)(s + 2.0));
+			roughness = (float)sqrt(sqrt(2.0 / (double)(s + 2.0)));
 			if (roughness > 1.0f) roughness = 1.0f;
 			if (roughness < 0.04f) roughness = 0.04f;
 		}
@@ -1944,7 +1944,7 @@ void MeshModelClass::post_process()
 			if (shiny > 0.0f) {
 				float s = shiny;
 				if (s > 200.0f) s = 200.0f;
-				roughness = (float)sqrt(2.0 / (double)(s + 2.0));
+				roughness = (float)sqrt(sqrt(2.0 / (double)(s + 2.0)));
 				if (roughness > 1.0f) roughness = 1.0f;
 				if (roughness < 0.04f) roughness = 0.04f;
 			}
