@@ -3428,8 +3428,7 @@ void W3DShaderManager::registerPBRTexture(const char *albedoName, const char *pb
 	}
 	AsciiString key(albedoName);
 	(*m_pbrTextureMap)[key] = true;
-	DEBUG_LOG(("PBR: registered texture %s -> %s
-", albedoName, pbrName));
+	DEBUG_LOG(("PBR: registered texture %s -> %s\n", albedoName, pbrName));
 }
 
 Bool W3DShaderManager::hasPBRTexture(const char *albedoName)

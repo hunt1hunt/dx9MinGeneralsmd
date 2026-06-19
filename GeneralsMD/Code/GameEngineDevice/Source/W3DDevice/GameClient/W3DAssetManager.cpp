@@ -199,8 +199,7 @@ TextureClass *	W3DAssetManager::Get_Texture
 			strcat(pbrName, "_pbr.dds");
 			if (TheFileSystem && TheFileSystem->doesFileExist(pbrName)) {
 				W3DShaderManager::registerPBRTexture(filename, pbrName);
-				DEBUG_LOG(("PBR: detected _pbr.dds for %s -> %s
-", filename, pbrName));
+				DEBUG_LOG(("PBR: detected _pbr.dds for %s -> %s\n", filename, pbrName));
 			}
 		}
 		// Also probe for _n.dds normal map
@@ -211,8 +210,7 @@ TextureClass *	W3DAssetManager::Get_Texture
 			*pDot = 0;
 			strcat(pbrName, "_n.dds");
 			if (TheFileSystem && TheFileSystem->doesFileExist(pbrName)) {
-				DEBUG_LOG(("PBR: detected normal map %s for %s
-", pbrName, filename));
+				DEBUG_LOG(("PBR: detected normal map %s for %s\n", pbrName, filename));
 			}
 		}
 	}

@@ -1768,7 +1768,7 @@ void DX8TextureCategoryClass::Render(void)
 			}
 
 		// Phase 4c: Activate PBR pixel shader for PBR-eligible meshes
-		IDirect3DPixelShader9 *prevPBRShader = DX8Wrapper::Pixel_Shader;
+		IDirect3DPixelShader9 *prevPBRShader = DX8Wrapper::Get_Pixel_Shader();
 		if (g_pbrUnitShaderEnabled) {
 			MeshModelClass *pbrModel = mesh->Peek_Model();
 			if (pbrModel && pbrModel->Has_Legacy_PBR()) {
