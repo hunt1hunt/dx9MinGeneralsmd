@@ -23,6 +23,7 @@ CMakeUserPresets.json
 *.vbw
 *.aps
 *.positions
+*.obj
 
 # VISUAL STUDIO (Modern)
 .vs/
@@ -151,6 +152,11 @@ libraries/11stlportOK.txt
 
 # GameSpy headers synced into GameEngine Include (third party)
 GeneralsMD/Code/GameEngine/Include/gamespy/
+
+# Binary archives (backup / working copies)
+*.rar
+*.zip
+*.7z
 
 # Backup / working copies / test artifacts
 *0.cpp

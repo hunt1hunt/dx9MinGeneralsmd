@@ -1914,141 +1914,6 @@ void MeshModelClass::post_process()
         // 
         DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_DISABLE);
     }
-}  
-// ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ----
-    // ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ---- 
-
-	//
-/*
-	// ---- 锟斤拷锟斤拷锟斤拷为锟斤拷模锟酵匡拷锟斤拷锟竭光：锟睫革拷水平锟斤拷浒碉拷锟斤拷猓拷锟斤拷锟絍C6.0 ----  
-{  
-    // 锟斤拷锟斤拷 pass 0 锟侥碉拷一锟斤拷锟斤拷  
-    if (DefMatDesc->Material[0] != NULL) {  
-        Vector3 spec;  
-        DefMatDesc->Material[0]->Get_Specular(&spec); 
-        // 锟斤拷锟斤拷原锟斤拷锟叫断ｏ拷锟斤拷锟斤拷锟竭癸拷透吖锟街革拷锟斤拷锟絍C6 D38 锟斤拷准值锟斤拷
-        if (spec.X > 0.86f && spec.Y > 0.86f && spec.Z > 0.86f || spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f ) { 
-            // 统一锟竭癸拷值锟斤拷锟斤拷锟解覆锟角筹拷突
-            DefMatDesc->Material[0]->Set_Specular(0.40f, 0.40f, 0.40f);
-		 // DefMatDesc->Material[0]->Set_Specular(0.85f, 0.85f, 0.85f);
-            //  critical fix锟斤拷锟斤拷锟斤拷为VC6锟斤拷锟捷的高癸拷指锟斤拷锟斤拷锟斤拷锟剿斤拷锟戒暗
-            DefMatDesc->Material[0]->Set_Shininess(25.0f);
-        }  
-    }  
-    // 锟斤拷锟斤拷 pass 0 锟斤拷锟金顶碉拷锟斤拷锟斤拷锟斤拷锟�  
-    if (DefMatDesc->MaterialArray[0] != NULL) {  
-        VertexMaterialClass *prev_mtl = NULL;  
-        int vert_count = DefMatDesc->Get_Vertex_Count();  
-        for (int vidx = 0; vidx < vert_count; vidx++) {  
-            VertexMaterialClass *mtl = DefMatDesc->Peek_Material(vidx, 0);  
-            if (mtl != NULL && mtl != prev_mtl) {  
-                Vector3 spec;  
-                mtl->Get_Specular(&spec);  
-                if (spec.X > 0.86f && spec.Y > 0.86f && spec.Z > 0.86f || spec.X == 0.0f && spec.Y == 0.0f && spec.Z == 0.0f ) { 
-                    // 统一锟竭癸拷值
-                   mtl->Set_Specular(0.40f, 0.40f, 0.40f);
-				// mtl->Set_Specular(0.85f, 0.85f, 0.85f);
-                    // critical fix锟斤拷锟斤拷锟斤拷锟竭癸拷指锟斤拷
-                    mtl->Set_Shininess(25.0f);
-                }  
-                prev_mtl = mtl;  
-            }  
-        }  
-    }  
-
-    for (int pass = 0; pass < DefMatDesc->PassCount; pass++)  
-    {  
-        // ---------------------------------------------------------------  
-        // 锟斤拷锟斤拷1锟斤拷锟斤拷全锟斤拷锟斤拷锟斤拷什锟斤拷锟斤拷锟斤拷锟斤拷锟� pass 锟斤拷执锟叫ｏ拷  
-        // ---------------------------------------------------------------  
-        if (!DefMatDesc->Has_Material_Array(pass))  
-        {  
-            VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
-            if (vmat)  
-            {  
-                Vector3 spec;  
-                vmat->Get_Specular(&spec); 
-                // 统一锟竭癸拷值锟斤拷删锟斤拷锟斤拷突锟斤拷0.458锟叫讹拷
-                if (spec.X > 0.86f || spec.Y > 0.86f || spec.Z > 0.86f) 
-                    vmat->Set_Specular(0.40f, 0.40f, 0.40f); 
-				//vmat->Set_Specular(0.85f, 0.85f, 0.85f);
-                if (vmat->Get_Shininess() == 0.0f)  
-                    vmat->Set_Shininess(25.0f);  
-            }  
-        }  
-        else  
-        {  
-            if (DefMatDesc->MaterialArray[pass])  
-            {  
-                for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
-                {  
-                    VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
-                    if (vmat)  
-                    {  
-                        Vector3 spec;  
-                        vmat->Get_Specular(&spec);  
-                        if (spec.X > 0.86f || spec.Y > 0.86f || spec.Z > 0.86f) 
-                            vmat->Set_Specular(0.40f, 0.40f, 0.40f);
-					// vmat->Set_Specular(0.85f, 0.85f, 0.85f);
-                        if (vmat->Get_Shininess() == 0.0f)  
-                            vmat->Set_Shininess(25.0f);  
-                    }  
-                }  
-            }  
-        } 	
-  
-        // ---------------------------------------------------------------  
-        //  critical fix锟斤拷删锟斤拷锟斤拷锟斤拷摹锟斤拷吖锟斤拷锟斤拷锟斤拷锟矫癸拷锟秸★拷锟竭硷拷  
-        //  直锟斤拷强锟狡匡拷锟斤拷锟斤拷锟秸ｏ拷锟斤拷锟剿斤拷锟戒暗锟斤拷锟斤拷  
-        // ---------------------------------------------------------------  
-        bool can_enable_specular = true;
-
-        // ---------------------------------------------------------------  
-        // 锟斤拷锟斤拷4锟斤拷强锟狡匡拷锟斤拷锟斤拷锟秸和高光（VC6 D3D8锟斤拷准写锟斤拷锟斤拷  
-        // ---------------------------------------------------------------  
-        if (can_enable_specular)  
-        {  
-            if (!DefMatDesc->Has_Material_Array(pass))  
-            {  
-                VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
-                if (vmat)  
-                {  
-                    vmat->Set_Lighting(true);  
-                    vmat->Set_Diffuse_Color_Source(VertexMaterialClass::COLOR1); 
-                }  
-            }  
-            else  
-            {  
-                if (DefMatDesc->MaterialArray[pass])  
-                {  
-                    for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
-                    {  
-                        VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
-                        if (vmat)  
-                        {  
-                            vmat->Set_Lighting(true);  
-                            vmat->Set_Diffuse_Color_Source(VertexMaterialClass::COLOR1); 
-                        }  
-                    }  
-                }  
-            }  
-        }  
-    }  
-
-    // 为锟斤拷锟斤拷模锟斤拷 pass 0 锟斤拷锟斤拷 SECONDARY_GRADIENT锟斤拷锟竭光）  
-   DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_ENABLE);  
-  // DefMatDesc->Shader[0].Set_Secondary_Gradient(ShaderClass::SECONDARY_GRADIENT_DISABLE);  
-    if (DefMatDesc->ShaderArray[0] != NULL) {  
-        for (int tri = 0; tri < DefMatDesc->ShaderArray[0]->Get_Count(); tri++) {  
-            DefMatDesc->ShaderArray[0]->Get_Element(tri).Set_Secondary_Gradient(  
-                ShaderClass::SECONDARY_GRADIENT_ENABLE);  
-		//ShaderClass::SECONDARY_GRADIENT_DISABLE); 
-        }  
-    }  
-}  
-// ---- 锟斤拷锟斤拷锟斤拷锟斤拷 ----
-	//*/
-}
 	// ---- Legacy PBR parameter derivation (Phase 3.5) ----
 	if (DefMatDesc->Material[0] != NULL) {
 		Vector3 spec;
@@ -2093,6 +1958,8 @@ void MeshModelClass::post_process()
 		}
 	}
 	// ---- end Legacy PBR ----
+	}
+}
 
 
 

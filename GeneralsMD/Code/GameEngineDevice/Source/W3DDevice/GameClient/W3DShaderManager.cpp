@@ -127,6 +127,8 @@ W3DShaderManager::LegacyPBRParamsMap *W3DShaderManager::m_legacyPBRParamsMap = N
 // Phase 4: Extern globals for unit PBR shader handles (accessed from dx8renderer.cpp)
 IDirect3DPixelShader9 *g_pbrUnitOpaqueShader = NULL;
 IDirect3DPixelShader9 *g_pbrUnitAlphaShader = NULL;
+IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader = NULL;  // no PBR texture variant
+IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader = NULL;    // alpha + no PBR texture
 Bool g_pbrUnitShaderEnabled = FALSE;
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
@@ -2472,6 +2474,92 @@ Int W3DPBRShader::init( void )
 			DEBUG_LOG(("PBR: W3DPBRShader init FAILED - no PBR shader available\n"));
 		else
 			DEBUG_LOG(("PBR: W3DPBRShader init OK\n"));
+
+		// Alpha variant: same HLSL, separate handle for alpha-blended meshes
+		if (FAILED(compilePBRShader(src, &m_dwPBRAlphaPixelShader, "pbr_unit_alpha")))
+			DEBUG_LOG(("PBR: alpha shader compile FAILED\n"));
+		else
+			DEBUG_LOG(("PBR: alpha shader compile OK\n"));
+	}
+
+	// NT variant: No PBR texture (s2) — uses c3.y/c3.w overrides directly
+	{
+		const char* srcNT =
+			"sampler s0 : register(s0);\n"
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float3 c2 : register(c2);\n"
+			"float4 c3 : register(c3);\n"
+			"float3 c4 : register(c4);\n"
+			"float3 c5 : register(c5);\n"
+			"float3 c6 : register(c6);\n"
+			"float3 c7 : register(c7);\n"
+			"float3 c8 : register(c8);\n"
+			"float3 c9 : register(c9);\n"
+			"float3 c10 : register(c10);\n"
+			"float4 main(float2 tex0 : TEXCOORD0,\n"
+			"    float3 worldPos : TEXCOORD1,\n"
+			"    float3 worldNormal : TEXCOORD4,\n"
+			"    float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    float3 N = normalize(worldNormal);\n"
+			"    float3 V = normalize(c2.xyz - worldPos);\n"
+			"    float NdotV = saturate(dot(N, V));\n"
+			"    float roughness = max(c3.y, 0.04);\n"
+			"    float metalness = saturate(c3.w);\n"
+			"    float ao = 1.0;\n"
+			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness);\n"
+			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
+			"    float invPI = 0.31831;\n"
+			"    float3 result = float3(0,0,0);\n"
+			"    float3 L, H; float NdotL, NdotH, VdotH, d, D, G_L, G, f, f5;\n"
+			"    float3 specular;\n"
+			"    L = normalize(c0.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c1.xyz * NdotL;\n"
+			"    L = normalize(c4.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c5.xyz * NdotL;\n"
+			"    L = normalize(c6.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c7.xyz * NdotL;\n"
+			"    L = normalize(c8.xyz); NdotL = saturate(dot(N, L));\n"
+			"    H = normalize(L + V); NdotH = saturate(dot(N, H)); VdotH = saturate(dot(V, H));\n"
+			"    d = (NdotH * a2 - NdotH) * NdotH + 1.0; D = a2 / (3.14159 * d * d);\n"
+			"    G_L = NdotL / (NdotL * (1.0 - k) + k); G = G_V * G_L;\n"
+			"    f = 1.0 - VdotH; f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
+			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c9.xyz * NdotL;\n"
+			"    result += diffuseColor * c10.xyz * ao;\n"
+			"    return float4(result, albedo.a);\n"
+			"}\n";
+		if (FAILED(compilePBRShader(srcNT, &m_dwPBRPixelShaderNT, "pbr_unit_nt")))
+			DEBUG_LOG(("PBR: NT shader compile FAILED\n"));
+		else
+			DEBUG_LOG(("PBR: NT shader compile OK\n"));
+
+		// Alpha NT variant: same NT HLSL, separate handle
+		if (FAILED(compilePBRShader(srcNT, &m_dwPBRAlphaPixelShaderNT, "pbr_unit_alphant")))
+			DEBUG_LOG(("PBR: alpha NT shader compile FAILED\n"));
+		else
+			DEBUG_LOG(("PBR: alpha NT shader compile OK\n"));
 	}
 
 	// Register for unit shader types
@@ -2483,6 +2571,8 @@ Int W3DPBRShader::init( void )
 	// Export shader handles for dx8renderer.cpp (cross-library)
 	g_pbrUnitOpaqueShader = m_dwPBRPixelShader;
 	g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader;
+	g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT;
+	g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT;
 	g_pbrUnitShaderEnabled = (m_dwPBRPixelShader != NULL) ? TRUE : FALSE;
 
 	return (m_dwPBRPixelShader != NULL) ? TRUE : FALSE;
@@ -2493,12 +2583,29 @@ Int W3DPBRShader::set(Int pass)
 	if (!m_dwPBRPixelShader) return FALSE;
 	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
 
-	// Select opaque or alpha shader
+	// Select shader variant based on alpha mode and PBR texture availability
+	TextureClass *pbrTex = W3DShaderManager::getShaderTexture(2);
+	bool hasPBRTex = (pbrTex && pbrTex->Peek_D3D_Texture());
 	IDirect3DPixelShader9* pShader = NULL;
-	if (curShader == W3DShaderManager::ST_PBR_UNIT_ALPHA && m_dwPBRAlphaPixelShader)
-		pShader = m_dwPBRAlphaPixelShader;
-	else
-		pShader = m_dwPBRPixelShader;
+
+	if (curShader == W3DShaderManager::ST_PBR_UNIT_ALPHA) {
+		if (hasPBRTex && m_dwPBRAlphaPixelShader)
+			pShader = m_dwPBRAlphaPixelShader;
+		else if (!hasPBRTex && m_dwPBRAlphaPixelShaderNT)
+			pShader = m_dwPBRAlphaPixelShaderNT;
+		else if (m_dwPBRAlphaPixelShader)
+			pShader = m_dwPBRAlphaPixelShader;
+	}
+
+	// Fallback: use opaque variant
+	if (!pShader) {
+		if (hasPBRTex && m_dwPBRPixelShader)
+			pShader = m_dwPBRPixelShader;
+		else if (!hasPBRTex && m_dwPBRPixelShaderNT)
+			pShader = m_dwPBRPixelShaderNT;
+		else if (m_dwPBRPixelShader)
+			pShader = m_dwPBRPixelShader;
+	}
 
 	DX8Wrapper::Apply_Render_State_Changes();
 
@@ -2516,7 +2623,6 @@ Int W3DPBRShader::set(Int pass)
 	}
 
 	// Set up texture stage 2 (PBR) from shader texture slot
-	TextureClass *pbrTex = W3DShaderManager::getShaderTexture(2);
 	if (pbrTex && pbrTex->Peek_D3D_Texture()) {
 		DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, pbrTex->Peek_D3D_Texture());
 		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
@@ -2565,6 +2671,8 @@ Int W3DPBRShader::shutdown(void)
 	if (m_dwPBRAlphaPixelShaderNT) { m_dwPBRAlphaPixelShaderNT->Release(); m_dwPBRAlphaPixelShaderNT = NULL; }
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;
+	g_pbrUnitOpaqueNTShader = NULL;
+	g_pbrUnitAlphaNTShader = NULL;
 	g_pbrUnitShaderEnabled = FALSE;
 	return TRUE;
 }
@@ -3437,6 +3545,12 @@ Bool W3DShaderManager::hasPBRTexture(const char *albedoName)
 	AsciiString key(albedoName);
 	PBRTextureMap::iterator it = m_pbrTextureMap->find(key);
 	return (it != m_pbrTextureMap->end());
+}
+
+// C-linkage wrapper for cross-library access from dx8renderer.cpp
+extern "C" bool PBR_HasTexture(const char *albedoName)
+{
+	return (W3DShaderManager::hasPBRTexture(albedoName) != 0);
 }
 
 void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness, float metalness)

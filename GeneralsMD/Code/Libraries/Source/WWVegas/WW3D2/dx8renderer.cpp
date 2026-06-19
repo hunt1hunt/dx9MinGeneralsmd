@@ -64,7 +64,12 @@
 // PBR shader externs (set by W3DShaderManager)
 extern IDirect3DPixelShader9 *g_pbrUnitOpaqueShader;
 extern IDirect3DPixelShader9 *g_pbrUnitAlphaShader;
+extern IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader;
+extern IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader;
 extern bool g_pbrUnitShaderEnabled;
+
+// C-linkage PBR texture query from W3DShaderManager (cross-library)
+extern "C" bool PBR_HasTexture(const char *albedoName);
 
 /*
 ** Global Instance of the DX8MeshRender
@@ -1767,16 +1772,31 @@ void DX8TextureCategoryClass::Render(void)
 				}
 			}
 
-		// Phase 4c: Activate PBR pixel shader for PBR-eligible meshes
+		// Phase 4c: Select PBR pixel shader variant per-mesh
 		IDirect3DPixelShader9 *prevPBRShader = DX8Wrapper::Get_Pixel_Shader();
 		if (g_pbrUnitShaderEnabled) {
 			MeshModelClass *pbrModel = mesh->Peek_Model();
 			if (pbrModel && pbrModel->Has_Legacy_PBR()) {
 				bool pbrSorting = (!!mesh->Peek_Model()->Get_Flag(MeshGeometryClass::SORT)) && WW3D::Is_Sorting_Enabled();
-				if (pbrSorting && g_pbrUnitAlphaShader) {
-					DX8Wrapper::Set_Pixel_Shader(g_pbrUnitAlphaShader);
-				} else if (g_pbrUnitOpaqueShader) {
-					DX8Wrapper::Set_Pixel_Shader(g_pbrUnitOpaqueShader);
+
+				// Check if a _pbr.dds was loaded for this mesh's albedo texture
+				bool hasPBRTex = false;
+				TextureClass *tex0 = Peek_Texture(0);
+				if (tex0) {
+					hasPBRTex = PBR_HasTexture(tex0->Get_Texture_Name().Peek_Buffer());
+				}
+
+				// Select NT variant (no s2 sampling) when no _pbr.dds exists
+				IDirect3DPixelShader9 *pbrShader = NULL;
+				if (pbrSorting) {
+					pbrShader = hasPBRTex ? g_pbrUnitAlphaShader : g_pbrUnitAlphaNTShader;
+					if (!pbrShader) pbrShader = hasPBRTex ? g_pbrUnitOpaqueShader : g_pbrUnitOpaqueNTShader;
+				} else {
+					pbrShader = hasPBRTex ? g_pbrUnitOpaqueShader : g_pbrUnitOpaqueNTShader;
+					if (!pbrShader) pbrShader = hasPBRTex ? g_pbrUnitAlphaShader : g_pbrUnitAlphaNTShader;
+				}
+				if (pbrShader) {
+					DX8Wrapper::Set_Pixel_Shader(pbrShader);
 				}
 			}
 		}

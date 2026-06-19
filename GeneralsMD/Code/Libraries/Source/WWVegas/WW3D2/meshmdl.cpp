@@ -73,9 +73,9 @@ MeshModelClass::MeshModelClass(void) :
 	AlternateMatDesc(NULL),
 	CurMatDesc(NULL),
 	MatInfo(NULL),
-	GapFiller(NULL)
-		m_legacyPBRRoughness(-1.0f),
-		m_legacyPBRMetalness(-1.0f),
+	GapFiller(NULL),
+	m_legacyPBRRoughness(-1.0f),
+	m_legacyPBRMetalness(-1.0f)
 {
 	Set_Flag(DIRTY_BOUNDS,true);
 
