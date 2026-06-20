@@ -3,6 +3,8 @@
 > 本计划融合原有 PBR_TERRAIN_SUMMARY.md + DeepWiki 搜索发现的技术方案
 > 基于 dx9MinGeneralsmd 代码库现状，严格遵守 VC++ 6.0 约束
 
+> **当前实施阶段：** Phase 5 — ps_3_0 + IBL。详细分步计划见 [`.claude/plans/proud-prancing-lynx.md`](.claude/plans/proud-prancing-lynx.md)
+
 ---
 
 ## 现状总览
@@ -11,11 +13,11 @@
 |-------|------|------|------|
 | **1** | 水面 PBR | ✅ **已完成** | bump 扰动反射 + Fresnel + Blinn-Phong + sparkle 纹理 |
 | **2** | 地形 PBR | ✅ **已完成** | 4 个 ps_2_0 变体 (base/noise1/noise2/noise12) |
-| **2.5** | 地形 Detail Texture | ⏸️ 暂停 | `m_detailTexture` 已创建未绑定，计划单独 s4 调制 specular |
-| **3** | **PBR 贴图管线** | ❌ 未开始 | `_pbr.dds` 命名约定 + 粗糙度/金属度/AO 贴图加载 |
-| **3.5** | **旧模型兼容 (Legacy PBR)** | ❌ 未开始 | 从 W3D 材质推导 PBR 参数，零资产改动 |
-| **4** | **单位/建筑 PBR (含 PS 3.0 首次引入)** | ❌ 未开始 | GGX BRDF + 4~8 光源 + 法线贴图（硬仗）|
-| **5** | **HDR 环境贴图 / IBL** | ❌ 未开始 | 预烘焙 IBL + ACES 色调映射（远期） |
+| **2.5** | 地形 Detail Texture | ⏸️ 暂停 | `m_detailTexture` 已创建未绑定，阶段 5.4 处理 |
+| **3** | **PBR 贴图管线** | ✅ **已完成** | `_pbr.dds` 运行时探测加载 + 4-light GGX 运行时编译 |
+| **3.5** | **旧模型兼容 (Legacy PBR)** | ⏸️ 暂停 | 从 W3D 材质推导 PBR 参数（旧模型需要时再做） |
+| **4** | **单位/建筑 PBR** | ✅ **已完成** | GGX BRDF + 4 光源 + 能量守恒补偿 + 地形/水面扩展 |
+| **5** | **ps_3_0 + IBL** | **▶️ 进行中** | 分阶段升级：5.0 预备 → 5.1 ps_3_0 基础设施 → 5.2 循环版 HLSL → 5.3 Diffuse IBL → 5.4 Specular IBL → 5.5 Debug 可视化 |
 
 ---
 

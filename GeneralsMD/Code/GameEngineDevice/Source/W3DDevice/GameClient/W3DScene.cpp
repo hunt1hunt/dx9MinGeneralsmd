@@ -835,7 +835,7 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 				}
 				// Zero out any unused additional light slots
 				for (Int j = maxAddLights; j < 4; j++) {
-					Int reg = 4 + (li - 1) * 2;
+					Int reg = 4 + (j - 1) * 2;
 					float zero[4] = { 0, 0, 0, 0 };
 					pDev->SetPixelShaderConstantF(reg, zero, 1);
 					pDev->SetPixelShaderConstantF(reg + 1, zero, 1);

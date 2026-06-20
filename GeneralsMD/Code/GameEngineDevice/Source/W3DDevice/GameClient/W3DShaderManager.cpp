@@ -1554,6 +1554,18 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShader;///<unit PBR alpha blend pixel shader
 	IDirect3DPixelShader9*	m_dwPBRPixelShaderNT;   ///<unit PBR opaque, no PBR texture variant
 	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShaderNT;///<unit PBR alpha, no PBR texture variant
+	// ps_3_0 base loop shader (Stage 5.2)
+	IDirect3DPixelShader9*	m_dwPBRPixelShader_30;	    ///<unit PBR opaque ps_3_0 loop variant
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShader_30;///<unit PBR alpha ps_3_0 variant
+	// Diffuse IBL variants (ps_3_0: texCUBE)
+	IDirect3DPixelShader9*	m_dwPBRPixelShader_30_IBL;	    ///<unit PBR opaque + IBL (ps_3_0)
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShader_30_IBL;///<unit PBR alpha + IBL (ps_3_0)
+	CubeTextureClass*	m_envIrradianceMap;	    ///<irradiance CubeMap for diffuse IBL (or NULL)
+	// Specular IBL variants (ps_3_0 only: texCUBElod + BRDF LUT)
+	IDirect3DPixelShader9*	m_dwPBRPixelShader_30_IBLSpec;	   ///<unit PBR opaque + specular IBL (ps_3_0)
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShader_30_IBLSpec;///<unit PBR alpha + specular IBL (ps_3_0)
+	CubeTextureClass*	m_envPrefilteredMap;	    ///<pre-filtered CubeMap for specular IBL (s4, or NULL)
+	TextureClass*		m_brdfLUT;		    ///<BRDF integration LUT 2D texture (s5, or NULL)
 	virtual Int set(Int pass);		///<setup shader for specified rendering pass
 	virtual void reset(void);		///<restore W3D state after PBR
 	virtual Int init(void);			///<compile HLSL and create shaders
@@ -2021,14 +2033,15 @@ static void TerrainDiagI(const char *msg, int val)
 // === END TERRAIN DIAGNOSTIC ===
 
 ///Helper to compile a ps_2_0 shader from source string.
-static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppShader, const char* tag)
+static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppShader, const char* tag,
+	const char* profile = "ps_2_0")
 {
 	ID3DXBuffer* compiled = NULL;
 	ID3DXBuffer* errors = NULL;
 	DEBUG_LOG(("CP8_TERPBR: compiling %s\n", tag));
 	TerrainDiag(tag);
 	HRESULT hr = D3DXCompileShader(source, (UINT)strlen(source),
-		NULL, NULL, "main", "ps_2_0", 0, &compiled, &errors, NULL);
+		NULL, NULL, "main", profile, 0, &compiled, &errors, NULL);
 	DEBUG_LOG(("CP8_TERPBR: %s D3DXCompileShader hr = %d\n", tag, (int)hr));
 	TerrainDiagI(tag, (int)hr);
 	if (errors) {
@@ -2434,6 +2447,15 @@ Int W3DPBRShader::init( void )
 	m_dwPBRAlphaPixelShader = NULL;
 	m_dwPBRPixelShaderNT = NULL;
 	m_dwPBRAlphaPixelShaderNT = NULL;
+	m_dwPBRPixelShader_30 = NULL;
+	m_dwPBRAlphaPixelShader_30 = NULL;
+	m_dwPBRPixelShader_30_IBL = NULL;
+	m_dwPBRAlphaPixelShader_30_IBL = NULL;
+	m_dwPBRPixelShader_30_IBLSpec = NULL;
+	m_dwPBRAlphaPixelShader_30_IBLSpec = NULL;
+	m_envIrradianceMap = NULL;
+	m_envPrefilteredMap = NULL;
+	m_brdfLUT = NULL;
 
 	// Phase 4: 4-light GGX shader with PBR texture support
 	// Register layout:
@@ -2606,8 +2628,289 @@ Int W3DPBRShader::init( void )
 			DEBUG_LOG(("PBR: alpha NT shader compile OK\n"));
 	}
 
-	// Register for unit shader types
-	W3DShaders[W3DShaderManager::ST_PBR_UNIT_OPAQUE] = this;
+		// ps_3_0 base shader: loop-based GGX (Stage 5.2)
+		{
+			const char* src30 =
+			"sampler s0 : register(s0)\n"
+			"sampler s2 : register(s2)\n"
+			"float3 c0 : register(c0)\n"
+			"float3 c1 : register(c1)\n"
+			"float3 c2 : register(c2)\n"
+			"float4 c3 : register(c3)\n"
+			"float3 c4 : register(c4)\n"
+			"float3 c5 : register(c5)\n"
+			"float3 c6 : register(c6)\n"
+			"float3 c7 : register(c7)\n"
+			"float3 c8 : register(c8)\n"
+			"float3 c9 : register(c9)\n"
+			"float3 c10 : register(c10)\n"
+			"float4 main(float2 tex0 : TEXCOORD0,\n"
+			"    float3 worldPos : TEXCOORD1,\n"
+			"    float3 worldNormal : TEXCOORD4,\n"
+			"    float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    float4 pbrMap = tex2D(s2, tex0);\n"
+			"    float3 N = normalize(worldNormal);\n"
+			"    float3 V = normalize(c2.xyz - worldPos);\n"
+			"    float NdotV = saturate(dot(N, V));\n"
+			"    float useOverride = step(0.5, c3.x);\n"
+			"    float roughness = lerp(max(pbrMap.r, 0.04), c3.y, useOverride);\n"
+			"    float metalness = lerp(saturate(pbrMap.g), c3.w, useOverride);\n"
+			"    float ao = lerp(pbrMap.b, c3.z, useOverride);\n"
+			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness) * (1.0 - 0.3 * metalness);\n"
+			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
+			"    float invPI = 0.31831;\n"
+			"    float3 result = float3(0,0,0);\n"
+			"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
+			"    float3 lightCol[4] = { c1.xyz, c5.xyz, c7.xyz, c9.xyz };\n"
+			"    [loop] for (int i = 0; i < 4; i++) {\n"
+			"        float3 L = normalize(lightDir[i]);\n"
+			"        float NdotL = dot(N, L);\n"
+			"        if (NdotL <= 0) continue;\n"
+			"        float3 H = normalize(L + V);\n"
+			"        float NdotH = saturate(dot(N, H));\n"
+			"        float VdotH = saturate(dot(V, H));\n"
+			"        float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"        float D = a2 / (3.14159 * d * d);\n"
+			"        float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"        float G = G_V * G_L;\n"
+			"        float f = 1.0 - VdotH;\n"
+			"        float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"        float3 F = F0 + (1.0 - F0) * f5;\n"
+			"        float3 specular = D * G * F;\n"
+			"        result += ((diffuseColor * (1.0 - F) * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * lightCol[i] * NdotL;\n"
+			"    }\n"
+			"    result += diffuseColor * c10.xyz * ao;\n"
+			"    return float4(result, albedo.a);\n"
+			"}\n";
+			if (FAILED(compilePBRShader(src30, &m_dwPBRPixelShader_30, "pbr_unit_ps30", "ps_3_0")))
+				DEBUG_LOG(("PBR: ps_3_0 opaque shader compile FAILED\n"));
+			else
+				DEBUG_LOG(("PBR: ps_3_0 opaque shader compiled OK\n"));
+
+			// Alpha variant
+			if (FAILED(compilePBRShader(src30, &m_dwPBRAlphaPixelShader_30, "pbr_unit_alpha_ps30", "ps_3_0")))
+				DEBUG_LOG(("PBR: ps_3_0 alpha shader compile FAILED\n"));
+			else
+				DEBUG_LOG(("PBR: ps_3_0 alpha shader compiled OK\n"));
+		}
+		// ps_3_0 diffuse IBL shader: texCUBE irradiance + c11 debug (Stage 5.3+5.5)
+		{
+			// Try loading irradiance CubeMap for diffuse IBL
+			try {
+				m_envIrradianceMap = NEW_REF(CubeTextureClass, ("env_irradiance.dds", NULL, MIP_LEVELS_1, WW3D_FORMAT_UNKNOWN, false, false));
+				DEBUG_LOG(("PBR IBL: env_irradiance.dds loaded OK\n"));
+			} catch (...) {
+				DEBUG_LOG(("PBR IBL: env_irradiance.dds not found\n"));
+			}
+
+			if (m_envIrradianceMap) {
+				const char* src30IBL =
+			"sampler s0 : register(s0)\n"
+			"sampler s2 : register(s2)\n"
+			"samplerCUBE s3 : register(s3)\n"
+			"float3 c0 : register(c0)\n"
+			"float3 c1 : register(c1)\n"
+			"float3 c2 : register(c2)\n"
+			"float4 c3 : register(c3)\n"
+			"float3 c4 : register(c4)\n"
+			"float3 c5 : register(c5)\n"
+			"float3 c6 : register(c6)\n"
+			"float3 c7 : register(c7)\n"
+			"float3 c8 : register(c8)\n"
+			"float3 c9 : register(c9)\n"
+			"float3 c10 : register(c10)\n"
+			"float4 c11 : register(c11)\n"
+			"float4 main(float2 tex0 : TEXCOORD0,\n"
+			"    float3 worldPos : TEXCOORD1,\n"
+			"    float3 worldNormal : TEXCOORD4,\n"
+			"    float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    float4 pbrMap = tex2D(s2, tex0);\n"
+			"    float3 N = normalize(worldNormal);\n"
+			"    float3 V = normalize(c2.xyz - worldPos);\n"
+			"    float NdotV = saturate(dot(N, V));\n"
+			"    float useOverride = step(0.5, c3.x);\n"
+			"    float roughness = lerp(max(pbrMap.r, 0.04), c3.y, useOverride);\n"
+			"    float metalness = lerp(saturate(pbrMap.g), c3.w, useOverride);\n"
+			"    float ao = lerp(pbrMap.b, c3.z, useOverride);\n"
+			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness) * (1.0 - 0.3 * metalness);\n"
+			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
+			"    float invPI = 0.31831;\n"
+			"    float3 result = float3(0,0,0);\n"
+			"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
+			"    float3 lightCol[4] = { c1.xyz, c5.xyz, c7.xyz, c9.xyz };\n"
+			"    [loop] for (int i = 0; i < 4; i++) {\n"
+			"        float3 L = normalize(lightDir[i]);\n"
+			"        float NdotL = dot(N, L);\n"
+			"        if (NdotL <= 0) continue;\n"
+			"        float3 H = normalize(L + V);\n"
+			"        float NdotH = saturate(dot(N, H));\n"
+			"        float VdotH = saturate(dot(V, H));\n"
+			"        float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"        float D = a2 / (3.14159 * d * d);\n"
+			"        float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"        float G = G_V * G_L;\n"
+			"        float f = 1.0 - VdotH;\n"
+			"        float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"        float3 F = F0 + (1.0 - F0) * f5;\n"
+			"        float3 specular = D * G * F;\n"
+			"        result += ((diffuseColor * (1.0 - F) * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * lightCol[i] * NdotL;\n"
+			"    }\n"
+			"    // Diffuse IBL\n"
+			"    float3 irradiance = texCUBE(s3, N);\n"
+			"    float3 envDiffuse = diffuseColor * irradiance * ao;\n"
+			"    // Debug visualization (c11.x = debug mode 0-7)\n"
+			"    float dbg = c11.x;\n"
+			"    if (dbg > 0.5 && dbg < 1.5) return float4(metalness.xxx, albedo.a);\n"
+			"    if (dbg > 1.5 && dbg < 2.5) return float4(roughness.xxx, albedo.a);\n"
+			"    if (dbg > 2.5 && dbg < 3.5) return float4(ao.xxx, albedo.a);\n"
+			"    if (dbg > 3.5 && dbg < 4.5) return float4(N * 0.5 + 0.5, albedo.a);\n"
+			"    result += envDiffuse;\n"
+			"    return float4(result, albedo.a);\n"
+			"}\n";
+			if (FAILED(compilePBRShader(src30IBL, &m_dwPBRPixelShader_30_IBL, "pbr_unit_ps30_ibl", "ps_3_0")))
+				DEBUG_LOG(("PBR IBL: ps_3_0 diffuse IBL opaque shader compile FAILED\n"));
+			else
+				DEBUG_LOG(("PBR IBL: ps_3_0 diffuse IBL opaque shader compiled OK\n"));
+
+			// Alpha variant
+			if (FAILED(compilePBRShader(src30IBL, &m_dwPBRAlphaPixelShader_30_IBL, "pbr_unit_alpha_ps30_ibl", "ps_3_0")))
+				DEBUG_LOG(("PBR IBL: ps_3_0 diffuse IBL alpha shader compile FAILED\n"));
+			else
+				DEBUG_LOG(("PBR IBL: ps_3_0 diffuse IBL alpha shader compiled OK\n"));
+			} else {
+				m_envIrradianceMap = NULL;
+			}
+		}
+		// ps_3_0 specular IBL shader: Split-Sum + c11 debug (Stage 5.4+5.5)
+		{
+			// Try loading pre-filtered environment CubeMap
+			try {
+				m_envPrefilteredMap = NEW_REF(CubeTextureClass, ("env_prefiltered.dds", NULL, MIP_LEVELS_ALL, WW3D_FORMAT_UNKNOWN, false, false));
+				DEBUG_LOG(("PBR IBL: env_prefiltered.dds loaded OK\n"));
+			} catch (...) {
+				DEBUG_LOG(("PBR IBL: env_prefiltered.dds not found\n"));
+			}
+
+			// Try loading BRDF LUT texture
+			try {
+				m_brdfLUT = NEW_REF(TextureClass, ("env_brdf_lut.dds", NULL, MIP_LEVELS_1, WW3D_FORMAT_UNKNOWN, false, false));
+				DEBUG_LOG(("PBR IBL: env_brdf_lut.dds loaded OK\n"));
+			} catch (...) {
+				DEBUG_LOG(("PBR IBL: env_brdf_lut.dds not found\n"));
+			}
+
+			if (m_envPrefilteredMap && m_brdfLUT) {
+				DEBUG_LOG(("PBR IBL: compiling specular IBL ps_3_0 shader variants\n"));
+
+				const char* src30SpecIBL =
+			"sampler s0 : register(s0)\n"
+			"sampler s2 : register(s2)\n"
+			"samplerCUBE s3 : register(s3)\n"
+			"samplerCUBE s4 : register(s4)\n"
+			"sampler s5 : register(s5)\n"
+			"float3 c0 : register(c0)\n"
+			"float3 c1 : register(c1)\n"
+			"float3 c2 : register(c2)\n"
+			"float4 c3 : register(c3)\n"
+			"float3 c4 : register(c4)\n"
+			"float3 c5 : register(c5)\n"
+			"float3 c6 : register(c6)\n"
+			"float3 c7 : register(c7)\n"
+			"float3 c8 : register(c8)\n"
+			"float3 c9 : register(c9)\n"
+			"float3 c10 : register(c10)\n"
+			"float4 c11 : register(c11)\n"
+			"float4 main(float2 tex0 : TEXCOORD0,\n"
+			"    float3 worldPos : TEXCOORD1,\n"
+			"    float3 worldNormal : TEXCOORD4,\n"
+			"    float4 diffuse : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    float4 pbrMap = tex2D(s2, tex0);\n"
+			"    float3 N = normalize(worldNormal);\n"
+			"    float3 V = normalize(c2.xyz - worldPos);\n"
+			"    float NdotV = saturate(dot(N, V));\n"
+			"    float useOverride = step(0.5, c3.x);\n"
+			"    float roughness = lerp(max(pbrMap.r, 0.04), c3.y, useOverride);\n"
+			"    float metalness = lerp(saturate(pbrMap.g), c3.w, useOverride);\n"
+			"    float ao = lerp(pbrMap.b, c3.z, useOverride);\n"
+			"    float3 diffuseColor = albedo.rgb * (1.0 - metalness) * (1.0 - 0.3 * metalness);\n"
+			"    float3 F0 = lerp(float3(0.04,0.04,0.04), albedo.rgb, metalness);\n"
+			"    float a = roughness * roughness;\n"
+			"    float a2 = a * a;\n"
+			"    float k = a * 0.5;\n"
+			"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
+			"    float invPI = 0.31831;\n"
+			"    float3 result = float3(0,0,0);\n"
+			"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
+			"    float3 lightCol[4] = { c1.xyz, c5.xyz, c7.xyz, c9.xyz };\n"
+			"    [loop] for (int i = 0; i < 4; i++) {\n"
+			"        float3 L = normalize(lightDir[i]);\n"
+			"        float NdotL = dot(N, L);\n"
+			"        if (NdotL <= 0) continue;\n"
+			"        float3 H = normalize(L + V);\n"
+			"        float NdotH = saturate(dot(N, H));\n"
+			"        float VdotH = saturate(dot(V, H));\n"
+			"        float d = (NdotH * a2 - NdotH) * NdotH + 1.0;\n"
+			"        float D = a2 / (3.14159 * d * d);\n"
+			"        float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
+			"        float G = G_V * G_L;\n"
+			"        float f = 1.0 - VdotH;\n"
+			"        float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
+			"        float3 F = F0 + (1.0 - F0) * f5;\n"
+			"        float3 specular = D * G * F;\n"
+			"        result += ((diffuseColor * (1.0 - F) * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * lightCol[i] * NdotL;\n"
+			"    }\n"
+			"    // Diffuse IBL\n"
+			"    float3 irradiance = texCUBE(s3, N);\n"
+			"    float kD = (1.0 - metalness);\n"
+			"    float3 envDiffuse = diffuseColor * irradiance * ao * kD;\n"
+			"    // Specular IBL (Split-Sum approximation)\n"
+			"    float3 reflectDir = reflect(-V, N);\n"
+			"    float lod = roughness * 4.0;\n"
+			"    float3 prefiltered = texCUBElod(s4, float4(reflectDir, lod));\n"
+			"    float2 envBRDF = tex2D(s5, float2(NdotV, roughness));\n"
+			"    float3 envSpecular = prefiltered * (F0 * envBRDF.x + envBRDF.y);\n"
+			"    // Debug visualization (c11.x = debug mode 0-7)\n"
+			"    float dbg = c11.x;\n"
+			"    if (dbg > 0.5 && dbg < 1.5) return float4(metalness.xxx, albedo.a);\n"
+			"    if (dbg > 1.5 && dbg < 2.5) return float4(roughness.xxx, albedo.a);\n"
+			"    if (dbg > 2.5 && dbg < 3.5) return float4(ao.xxx, albedo.a);\n"
+			"    if (dbg > 3.5 && dbg < 4.5) return float4(N * 0.5 + 0.5, albedo.a);\n"
+			"    if (dbg > 4.5 && dbg < 5.5) return float4(envDiffuse, albedo.a);\n"
+			"    if (dbg > 5.5 && dbg < 6.5) return float4(envSpecular, albedo.a);\n"
+			"    if (dbg > 6.5) return float4(result, albedo.a);\n"
+			"    result += envDiffuse + envSpecular;\n"
+			"    return float4(result, albedo.a);\n"
+			"}\n";
+			if (FAILED(compilePBRShader(src30SpecIBL, &m_dwPBRPixelShader_30_IBLSpec, "pbr_unit_ps30_specibl", "ps_3_0")))
+				DEBUG_LOG(("PBR IBL: ps_3_0 specular IBL opaque shader compile FAILED\n"));
+			else
+				DEBUG_LOG(("PBR IBL: ps_3_0 specular IBL opaque shader compiled OK\n"));
+
+			// Alpha variant
+			if (FAILED(compilePBRShader(src30SpecIBL, &m_dwPBRAlphaPixelShader_30_IBLSpec, "pbr_unit_alpha_ps30_specibl", "ps_3_0")))
+				DEBUG_LOG(("PBR IBL: ps_3_0 specular IBL alpha shader compile FAILED\n"));
+			else
+				DEBUG_LOG(("PBR IBL: ps_3_0 specular IBL alpha shader compiled OK\n"));
+			} else {
+				DEBUG_LOG(("PBR IBL: specular IBL not available (env_prefiltered.dds or env_brdf_lut.dds missing)\n"));
+			}
+		}
+		// Register for unit shader types
+		W3DShaders[W3DShaderManager::ST_PBR_UNIT_OPAQUE] = this;
 	W3DShadersPassCount[W3DShaderManager::ST_PBR_UNIT_OPAQUE] = 1;
 	W3DShaders[W3DShaderManager::ST_PBR_UNIT_ALPHA] = this;
 	W3DShadersPassCount[W3DShaderManager::ST_PBR_UNIT_ALPHA] = 1;
@@ -2630,25 +2933,50 @@ Int W3DPBRShader::set(Int pass)
 	// Select shader variant based on alpha mode and PBR texture availability
 	TextureClass *pbrTex = W3DShaderManager::getShaderTexture(2);
 	bool hasPBRTex = (pbrTex && pbrTex->Peek_D3D_Texture());
+	bool hasIBL = (m_envIrradianceMap != NULL);
+	bool hasSpecIBL = (hasIBL && m_envPrefilteredMap && m_brdfLUT && m_dwPBRPixelShader_30_IBLSpec && m_dwPBRAlphaPixelShader_30_IBLSpec);
+	// Use ps_3_0 shaders when compiled successfully
+	// (D3DCAPS8 doesn't report ps_3_0, so we detect via shader compilation result)
+	bool usePS30 = (m_dwPBRPixelShader_30 != NULL);
 	IDirect3DPixelShader9* pShader = NULL;
 
 	if (curShader == W3DShaderManager::ST_PBR_UNIT_ALPHA) {
-		if (hasPBRTex && m_dwPBRAlphaPixelShader)
-			pShader = m_dwPBRAlphaPixelShader;
-		else if (!hasPBRTex && m_dwPBRAlphaPixelShaderNT)
-			pShader = m_dwPBRAlphaPixelShaderNT;
-		else if (m_dwPBRAlphaPixelShader)
-			pShader = m_dwPBRAlphaPixelShader;
+		if (usePS30) {
+			if (hasSpecIBL && hasPBRTex)
+				pShader = m_dwPBRAlphaPixelShader_30_IBLSpec;
+			else if (hasIBL && hasPBRTex && m_dwPBRAlphaPixelShader_30_IBL)
+				pShader = m_dwPBRAlphaPixelShader_30_IBL;
+			else if (hasPBRTex && m_dwPBRAlphaPixelShader_30)
+				pShader = m_dwPBRAlphaPixelShader_30;
+		}
+		if (!pShader) {
+			if (hasPBRTex && m_dwPBRAlphaPixelShader)
+				pShader = m_dwPBRAlphaPixelShader;
+			else if (!hasPBRTex && m_dwPBRAlphaPixelShaderNT)
+				pShader = m_dwPBRAlphaPixelShaderNT;
+			else if (m_dwPBRAlphaPixelShader)
+				pShader = m_dwPBRAlphaPixelShader;
+		}
 	}
 
-	// Fallback: use opaque variant
+	// Fallback: use opaque variant (ps_3_0 first if available)
 	if (!pShader) {
-		if (hasPBRTex && m_dwPBRPixelShader)
-			pShader = m_dwPBRPixelShader;
-		else if (!hasPBRTex && m_dwPBRPixelShaderNT)
-			pShader = m_dwPBRPixelShaderNT;
-		else if (m_dwPBRPixelShader)
-			pShader = m_dwPBRPixelShader;
+		if (usePS30) {
+			if (hasSpecIBL && hasPBRTex)
+				pShader = m_dwPBRPixelShader_30_IBLSpec;
+			else if (hasIBL && hasPBRTex && m_dwPBRPixelShader_30_IBL)
+				pShader = m_dwPBRPixelShader_30_IBL;
+			else if (hasPBRTex && m_dwPBRPixelShader_30)
+				pShader = m_dwPBRPixelShader_30;
+		}
+		if (!pShader) {
+			if (hasPBRTex && m_dwPBRPixelShader)
+				pShader = m_dwPBRPixelShader;
+			else if (!hasPBRTex && m_dwPBRPixelShaderNT)
+				pShader = m_dwPBRPixelShaderNT;
+			else if (m_dwPBRPixelShader)
+				pShader = m_dwPBRPixelShader;
+		}
 	}
 
 	DX8Wrapper::Apply_Render_State_Changes();
@@ -2689,6 +3017,23 @@ Int W3DPBRShader::set(Int pass)
 		DX8Wrapper::Set_DX8_Render_State(D3DRS_DESTBLEND, D3DBLEND_ZERO);
 	}
 
+	// Set up texture stage 3 (CubeMap) for IBL environment lighting
+	if (hasIBL && m_envIrradianceMap) {
+		DX8Wrapper::_Get_D3D_Device8()->SetTexture(3, m_envIrradianceMap->Peek_D3D_CubeTexture());
+	}
+	// Set up texture stage 4 (pre-filtered CubeMap) for specular IBL
+	if (hasSpecIBL && m_envPrefilteredMap) {
+		DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, m_envPrefilteredMap->Peek_D3D_CubeTexture());
+	}
+	// Set up texture stage 5 (BRDF LUT) for specular IBL
+	if (hasSpecIBL && m_brdfLUT && m_brdfLUT->Peek_D3D_Texture()) {
+		DX8Wrapper::_Get_D3D_Device8()->SetTexture(5, m_brdfLUT->Peek_D3D_Texture());
+	}
+	// c11 = PBR debug visualization mode (0=off, always set to avoid stale register)
+	{
+		float dbg[4] = { (float)TheGlobalData->m_pbrDebugMode, 0.0f, 0.0f, 0.0f };
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
+	}
 	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(pShader);
 	return TRUE;
 }
@@ -2699,6 +3044,9 @@ void W3DPBRShader::reset(void)
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(3, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(5, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(NULL);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
@@ -2713,6 +3061,15 @@ Int W3DPBRShader::shutdown(void)
 	if (m_dwPBRAlphaPixelShader) { m_dwPBRAlphaPixelShader->Release(); m_dwPBRAlphaPixelShader = NULL; }
 	if (m_dwPBRPixelShaderNT) { m_dwPBRPixelShaderNT->Release(); m_dwPBRPixelShaderNT = NULL; }
 	if (m_dwPBRAlphaPixelShaderNT) { m_dwPBRAlphaPixelShaderNT->Release(); m_dwPBRAlphaPixelShaderNT = NULL; }
+	if (m_dwPBRPixelShader_30) { m_dwPBRPixelShader_30->Release(); m_dwPBRPixelShader_30 = NULL; }
+	if (m_dwPBRAlphaPixelShader_30) { m_dwPBRAlphaPixelShader_30->Release(); m_dwPBRAlphaPixelShader_30 = NULL; }
+	if (m_dwPBRPixelShader_30_IBL) { m_dwPBRPixelShader_30_IBL->Release(); m_dwPBRPixelShader_30_IBL = NULL; }
+	if (m_dwPBRAlphaPixelShader_30_IBL) { m_dwPBRAlphaPixelShader_30_IBL->Release(); m_dwPBRAlphaPixelShader_30_IBL = NULL; }
+	if (m_dwPBRPixelShader_30_IBLSpec) { m_dwPBRPixelShader_30_IBLSpec->Release(); m_dwPBRPixelShader_30_IBLSpec = NULL; }
+	if (m_dwPBRAlphaPixelShader_30_IBLSpec) { m_dwPBRAlphaPixelShader_30_IBLSpec->Release(); m_dwPBRAlphaPixelShader_30_IBLSpec = NULL; }
+	if (m_envIrradianceMap) { REF_PTR_RELEASE(m_envIrradianceMap); }
+	if (m_envPrefilteredMap) { REF_PTR_RELEASE(m_envPrefilteredMap); }
+	if (m_brdfLUT) { REF_PTR_RELEASE(m_brdfLUT); }
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;
 	g_pbrUnitOpaqueNTShader = NULL;
@@ -3798,6 +4155,8 @@ ChipsetType W3DShaderManager::getChipset( void )
 				chip=DC_GENERIC_PIXEL_SHADER_1_4;
 			if (maxTextures >= 8 && pixelShaderVersion >= 2.0f)
 				chip=DC_GENERIC_PIXEL_SHADER_2_0;
+			if (pixelShaderVersion >= 3.0f)
+				chip=DC_GENERIC_PIXEL_SHADER_3_0;
 		}
 	}	//D3D8 interface and device exist. 
 	
