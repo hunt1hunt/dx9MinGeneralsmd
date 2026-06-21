@@ -71,6 +71,9 @@ extern bool g_pbrUnitShaderEnabled;
 // C-linkage PBR texture query from W3DShaderManager (cross-library)
 extern "C" bool PBR_HasTexture(const char *albedoName);
 
+// C-linkage IBL texture binding from W3DShaderManager (cross-library)
+extern "C" void PBR_BindIBLTextures(void);
+
 /*
 ** Global Instance of the DX8MeshRender
 */
@@ -1795,8 +1798,15 @@ void DX8TextureCategoryClass::Render(void)
 					pbrShader = hasPBRTex ? g_pbrUnitOpaqueShader : g_pbrUnitOpaqueNTShader;
 					if (!pbrShader) pbrShader = hasPBRTex ? g_pbrUnitAlphaShader : g_pbrUnitAlphaNTShader;
 				}
+				// When _pbr.dds exists alongside legacy PBR params, disable constant
+				// override (c3.x=0) so roughness/metalness/ao come from the texture.
+				if (hasPBRTex) {
+					float pbrParams[4] = { 0.0f, pbrModel->Get_Legacy_Roughness(), 1.0f, pbrModel->Get_Legacy_Metalness() };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
+				}
 				if (pbrShader) {
 					DX8Wrapper::Set_Pixel_Shader(pbrShader);
+					PBR_BindIBLTextures();  // Bind IBL CubeMap textures for environment reflections
 				}
 			}
 		}

@@ -1566,6 +1566,11 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShader_30_IBLSpec;///<unit PBR alpha + specular IBL (ps_3_0)
 	CubeTextureClass*	m_envPrefilteredMap;	    ///<pre-filtered CubeMap for specular IBL (s4, or NULL)
 	TextureClass*		m_brdfLUT;		    ///<BRDF integration LUT 2D texture (s5, or NULL)
+	// NT IBL variants (no PBR texture, with CubeMap IBL)
+	IDirect3DPixelShader9*	m_dwPBRPixelShaderNT_IBL;	   ///<NT opaque + diffuse IBL (ps_2_0)
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShaderNT_IBL; ///<NT alpha + diffuse IBL (ps_2_0)
+	IDirect3DPixelShader9*	m_dwPBRPixelShaderNT_30_IBLSpec;	   ///<NT opaque + full IBL (ps_3_0)
+	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShaderNT_30_IBLSpec; ///<NT alpha + full IBL (ps_3_0)
 	virtual Int set(Int pass);		///<setup shader for specified rendering pass
 	virtual void reset(void);		///<restore W3D state after PBR
 	virtual Int init(void);			///<compile HLSL and create shaders
@@ -2457,6 +2462,12 @@ Int W3DPBRShader::init( void )
 	m_envPrefilteredMap = NULL;
 	m_brdfLUT = NULL;
 
+	// NT IBL variants
+	m_dwPBRPixelShaderNT_IBL = NULL;
+	m_dwPBRAlphaPixelShaderNT_IBL = NULL;
+	m_dwPBRPixelShaderNT_30_IBLSpec = NULL;
+	m_dwPBRAlphaPixelShaderNT_30_IBLSpec = NULL;
+
 	// Phase 4: 4-light GGX shader with PBR texture support
 	// Register layout:
 	//   s0 = albedo/diffuse, s2 = PBR (R=rough,G=metal,B=AO)
@@ -2631,19 +2642,19 @@ Int W3DPBRShader::init( void )
 		// ps_3_0 base shader: loop-based GGX (Stage 5.2)
 		{
 			const char* src30 =
-			"sampler s0 : register(s0)\n"
-			"sampler s2 : register(s2)\n"
-			"float3 c0 : register(c0)\n"
-			"float3 c1 : register(c1)\n"
-			"float3 c2 : register(c2)\n"
-			"float4 c3 : register(c3)\n"
-			"float3 c4 : register(c4)\n"
-			"float3 c5 : register(c5)\n"
-			"float3 c6 : register(c6)\n"
-			"float3 c7 : register(c7)\n"
-			"float3 c8 : register(c8)\n"
-			"float3 c9 : register(c9)\n"
-			"float3 c10 : register(c10)\n"
+			"sampler s0 : register(s0);\n"
+			"sampler s2 : register(s2);\n"
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float3 c2 : register(c2);\n"
+			"float4 c3 : register(c3);\n"
+			"float3 c4 : register(c4);\n"
+			"float3 c5 : register(c5);\n"
+			"float3 c6 : register(c6);\n"
+			"float3 c7 : register(c7);\n"
+			"float3 c8 : register(c8);\n"
+			"float3 c9 : register(c9);\n"
+			"float3 c10 : register(c10);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -2711,21 +2722,21 @@ Int W3DPBRShader::init( void )
 
 			if (m_envIrradianceMap) {
 				const char* src30IBL =
-			"sampler s0 : register(s0)\n"
-			"sampler s2 : register(s2)\n"
-			"samplerCUBE s3 : register(s3)\n"
-			"float3 c0 : register(c0)\n"
-			"float3 c1 : register(c1)\n"
-			"float3 c2 : register(c2)\n"
-			"float4 c3 : register(c3)\n"
-			"float3 c4 : register(c4)\n"
-			"float3 c5 : register(c5)\n"
-			"float3 c6 : register(c6)\n"
-			"float3 c7 : register(c7)\n"
-			"float3 c8 : register(c8)\n"
-			"float3 c9 : register(c9)\n"
-			"float3 c10 : register(c10)\n"
-			"float4 c11 : register(c11)\n"
+			"sampler s0 : register(s0);\n"
+			"sampler s2 : register(s2);\n"
+			"samplerCUBE s3 : register(s3);\n"
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float3 c2 : register(c2);\n"
+			"float4 c3 : register(c3);\n"
+			"float3 c4 : register(c4);\n"
+			"float3 c5 : register(c5);\n"
+			"float3 c6 : register(c6);\n"
+			"float3 c7 : register(c7);\n"
+			"float3 c8 : register(c8);\n"
+			"float3 c9 : register(c9);\n"
+			"float3 c10 : register(c10);\n"
+			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -2768,7 +2779,7 @@ Int W3DPBRShader::init( void )
 			"        result += ((diffuseColor * (1.0 - F) * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * lightCol[i] * NdotL;\n"
 			"    }\n"
 			"    // Diffuse IBL\n"
-			"    float3 irradiance = texCUBE(s3, N);\n"
+			"    float3 irradiance = texCUBE(s3, N).rgb;\n"
 			"    float3 envDiffuse = diffuseColor * irradiance * ao;\n"
 			"    // Debug visualization (c11.x = debug mode 0-7)\n"
 			"    float dbg = c11.x;\n"
@@ -2815,23 +2826,23 @@ Int W3DPBRShader::init( void )
 				DEBUG_LOG(("PBR IBL: compiling specular IBL ps_3_0 shader variants\n"));
 
 				const char* src30SpecIBL =
-			"sampler s0 : register(s0)\n"
-			"sampler s2 : register(s2)\n"
-			"samplerCUBE s3 : register(s3)\n"
-			"samplerCUBE s4 : register(s4)\n"
-			"sampler s5 : register(s5)\n"
-			"float3 c0 : register(c0)\n"
-			"float3 c1 : register(c1)\n"
-			"float3 c2 : register(c2)\n"
-			"float4 c3 : register(c3)\n"
-			"float3 c4 : register(c4)\n"
-			"float3 c5 : register(c5)\n"
-			"float3 c6 : register(c6)\n"
-			"float3 c7 : register(c7)\n"
-			"float3 c8 : register(c8)\n"
-			"float3 c9 : register(c9)\n"
-			"float3 c10 : register(c10)\n"
-			"float4 c11 : register(c11)\n"
+			"sampler s0 : register(s0);\n"
+			"sampler s2 : register(s2);\n"
+			"samplerCUBE s3 : register(s3);\n"
+			"samplerCUBE s4 : register(s4);\n"
+			"sampler s5 : register(s5);\n"
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float3 c2 : register(c2);\n"
+			"float4 c3 : register(c3);\n"
+			"float3 c4 : register(c4);\n"
+			"float3 c5 : register(c5);\n"
+			"float3 c6 : register(c6);\n"
+			"float3 c7 : register(c7);\n"
+			"float3 c8 : register(c8);\n"
+			"float3 c9 : register(c9);\n"
+			"float3 c10 : register(c10);\n"
+			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -2874,14 +2885,14 @@ Int W3DPBRShader::init( void )
 			"        result += ((diffuseColor * (1.0 - F) * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * lightCol[i] * NdotL;\n"
 			"    }\n"
 			"    // Diffuse IBL\n"
-			"    float3 irradiance = texCUBE(s3, N);\n"
+			"    float3 irradiance = texCUBE(s3, N).rgb;\n"
 			"    float kD = (1.0 - metalness);\n"
 			"    float3 envDiffuse = diffuseColor * irradiance * ao * kD;\n"
 			"    // Specular IBL (Split-Sum approximation)\n"
 			"    float3 reflectDir = reflect(-V, N);\n"
 			"    float lod = roughness * 4.0;\n"
-			"    float3 prefiltered = texCUBElod(s4, float4(reflectDir, lod));\n"
-			"    float2 envBRDF = tex2D(s5, float2(NdotV, roughness));\n"
+			"    float3 prefiltered = texCUBElod(s4, float4(reflectDir, lod)).rgb;\n"
+			"    float2 envBRDF = tex2D(s5, float2(NdotV, roughness)).rg;\n"
 			"    float3 envSpecular = prefiltered * (F0 * envBRDF.x + envBRDF.y);\n"
 			"    // Debug visualization (c11.x = debug mode 0-7)\n"
 			"    float dbg = c11.x;\n"
@@ -2926,6 +2937,7 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -2977,7 +2989,17 @@ Int W3DPBRShader::init( void )
 			"    specular = D * G * (F0 + (1.0 - F0) * f5);\n"
 			"    result += ((diffuseColor * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * c9.xyz * NdotL;\n"
 			"    // Diffuse IBL from CubeMap\n"
-			"    float3 irradiance = texCUBE(s3, N);\n"
+			"    float3 irradiance = texCUBE(s3, N).rgb;\n"
+			"    result += diffuseColor * irradiance * ao;\n"
+			"    // Debug visualization (c11.x = debug mode 0-7)\n"
+			"    float dbg = c11.x;\n"
+			"    if (dbg > 0.5 && dbg < 1.5) return float4(metalness.xxx, albedo.a);\n"
+			"    if (dbg > 1.5 && dbg < 2.5) return float4(roughness.xxx, albedo.a);\n"
+			"    if (dbg > 2.5 && dbg < 3.5) return float4(ao.xxx, albedo.a);\n"
+			"    if (dbg > 3.5 && dbg < 4.5) return float4(N * 0.5 + 0.5, albedo.a);\n"
+			"    if (dbg > 4.5 && dbg < 5.5) return float4(irradiance, albedo.a);\n"
+			"    if (dbg > 5.5 && dbg < 6.5) return float4(float3(0,0,0), albedo.a);\n"
+			"    if (dbg > 6.5) return float4(result, albedo.a);\n"
 			"    result += diffuseColor * irradiance * ao;\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
@@ -2997,22 +3019,22 @@ Int W3DPBRShader::init( void )
 		// (only compiled when env_prefiltered.dds and env_brdf_lut.dds loaded)
 		if (m_envPrefilteredMap && m_brdfLUT) {
 			const char* srcNT_30_IBLSpec =
-			"sampler s0 : register(s0)\n"
-			"samplerCUBE s3 : register(s3)\n"
-			"samplerCUBE s4 : register(s4)\n"
-			"sampler s5 : register(s5)\n"
-			"float3 c0 : register(c0)\n"
-			"float3 c1 : register(c1)\n"
-			"float3 c2 : register(c2)\n"
-			"float4 c3 : register(c3)\n"
-			"float3 c4 : register(c4)\n"
-			"float3 c5 : register(c5)\n"
-			"float3 c6 : register(c6)\n"
-			"float3 c7 : register(c7)\n"
-			"float3 c8 : register(c8)\n"
-			"float3 c9 : register(c9)\n"
-			"float3 c10 : register(c10)\n"
-			"float4 c11 : register(c11)\n"
+			"sampler s0 : register(s0);\n"
+			"samplerCUBE s3 : register(s3);\n"
+			"samplerCUBE s4 : register(s4);\n"
+			"sampler s5 : register(s5);\n"
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float3 c2 : register(c2);\n"
+			"float4 c3 : register(c3);\n"
+			"float3 c4 : register(c4);\n"
+			"float3 c5 : register(c5);\n"
+			"float3 c6 : register(c6);\n"
+			"float3 c7 : register(c7);\n"
+			"float3 c8 : register(c8);\n"
+			"float3 c9 : register(c9);\n"
+			"float3 c10 : register(c10);\n"
+			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -3054,14 +3076,14 @@ Int W3DPBRShader::init( void )
 			"        result += ((diffuseColor * (1.0 - F) * invPI + specular) / max(4.0 * NdotV * NdotL, 0.001)) * lightCol[i] * NdotL;\n"
 			"    }\n"
 			"    // Diffuse IBL\n"
-			"    float3 irradiance = texCUBE(s3, N);\n"
+			"    float3 irradiance = texCUBE(s3, N).rgb;\n"
 			"    float kD = (1.0 - metalness);\n"
 			"    float3 envDiffuse = diffuseColor * irradiance * ao * kD;\n"
 			"    // Specular IBL (Split-Sum approximation)\n"
 			"    float3 reflectDir = reflect(-V, N);\n"
 			"    float lod = roughness * 4.0;\n"
-			"    float3 prefiltered = texCUBElod(s4, float4(reflectDir, lod));\n"
-			"    float2 envBRDF = tex2D(s5, float2(NdotV, roughness));\n"
+			"    float3 prefiltered = texCUBElod(s4, float4(reflectDir, lod)).rgb;\n"
+			"    float2 envBRDF = tex2D(s5, float2(NdotV, roughness)).rg;\n"
 			"    float3 envSpecular = prefiltered * (F0 * envBRDF.x + envBRDF.y);\n"
 			"    // Debug visualization (c11.x = debug mode 0-7)\n"
 			"    float dbg = c11.x;\n"
@@ -3092,17 +3114,36 @@ Int W3DPBRShader::init( void )
 	W3DShaders[W3DShaderManager::ST_PBR_UNIT_ALPHA] = this;
 	W3DShadersPassCount[W3DShaderManager::ST_PBR_UNIT_ALPHA] = 1;
 
-	// Export shader handles for dx8renderer.cpp (cross-library)
-	g_pbrUnitOpaqueShader = m_dwPBRPixelShader;
-	g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader;
-	// Prefer IBL variants for NT shaders when CubeMap available
-	if (m_envIrradianceMap && m_dwPBRPixelShaderNT_30_IBLSpec) {
-		g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT_30_IBLSpec;
-		g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT_30_IBLSpec;
-	} else if (m_envIrradianceMap && m_dwPBRPixelShaderNT_IBL) {
-		g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT_IBL;
-		g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT_IBL;
+	// Export shader handles for dx8renderer.cpp (cross-library).
+	// Prefer specular IBL > diffuse IBL > ps_3_0 loop > ps_2_0 fallback.
+	// This ensures both PBR-texture and NT (no PBR tex) paths get IBL.
+	if (m_envIrradianceMap) {
+		// PBR texture path (reads s2)
+		if (m_envPrefilteredMap && m_brdfLUT && m_dwPBRPixelShader_30_IBLSpec) {
+			g_pbrUnitOpaqueShader = m_dwPBRPixelShader_30_IBLSpec;
+			g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader_30_IBLSpec;
+		} else if (m_dwPBRPixelShader_30_IBL) {
+			g_pbrUnitOpaqueShader = m_dwPBRPixelShader_30_IBL;
+			g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader_30_IBL;
+		} else {
+			g_pbrUnitOpaqueShader = m_dwPBRPixelShader;
+			g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader;
+		}
+		// NT path (no s2)
+		if (m_envPrefilteredMap && m_brdfLUT && m_dwPBRPixelShaderNT_30_IBLSpec) {
+			g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT_30_IBLSpec;
+			g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT_30_IBLSpec;
+		} else if (m_dwPBRPixelShaderNT_IBL) {
+			g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT_IBL;
+			g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT_IBL;
+		} else {
+			g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT;
+			g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT;
+		}
 	} else {
+		// No CubeMap available — fall back to shaders without IBL
+		g_pbrUnitOpaqueShader = m_dwPBRPixelShader_30 ? m_dwPBRPixelShader_30 : m_dwPBRPixelShader;
+		g_pbrUnitAlphaShader = m_dwPBRAlphaPixelShader_30 ? m_dwPBRAlphaPixelShader_30 : m_dwPBRAlphaPixelShader;
 		g_pbrUnitOpaqueNTShader = m_dwPBRPixelShaderNT;
 		g_pbrUnitAlphaNTShader = m_dwPBRAlphaPixelShaderNT;
 	}
@@ -4154,6 +4195,30 @@ Bool W3DShaderManager::hasPBRTexture(const char *albedoName)
 extern "C" bool PBR_HasTexture(const char *albedoName)
 {
 	return (W3DShaderManager::hasPBRTexture(albedoName) != 0);
+}
+
+// C-linkage IBL texture binding for cross-library access from dx8renderer.cpp
+// Called after selecting a PBR unit shader to bind CubeMap environment textures
+// to stages 3 (irradiance), 4 (prefiltered), 5 (BRDF LUT).
+extern "C" void PBR_BindIBLTextures(void)
+{
+	if (!w3dPBRShader.m_envIrradianceMap && !w3dPBRShader.m_envPrefilteredMap)
+		return;
+	IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
+	if (!pDev) return;
+
+	// Stage 3: diffuse irradiance CubeMap (s3 in shader)
+	if (w3dPBRShader.m_envIrradianceMap) {
+		pDev->SetTexture(3, w3dPBRShader.m_envIrradianceMap->Peek_D3D_CubeTexture());
+	}
+	// Stage 4: specular pre-filtered CubeMap (s4 in shader)
+	if (w3dPBRShader.m_envPrefilteredMap) {
+		pDev->SetTexture(4, w3dPBRShader.m_envPrefilteredMap->Peek_D3D_CubeTexture());
+	}
+	// Stage 5: BRDF integration LUT (s5 in shader)
+	if (w3dPBRShader.m_brdfLUT && w3dPBRShader.m_brdfLUT->Peek_D3D_Texture()) {
+		pDev->SetTexture(5, w3dPBRShader.m_brdfLUT->Peek_D3D_Texture());
+	}
 }
 
 void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness, float metalness)
