@@ -2067,19 +2067,6 @@ static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppSh
 	return hr;
 }
 
-///Try ps_2_a (256 arithmetic slots) first for full 4-light GGX on most DX9 GPUs,
-///fall back to ps_2_0 (64 slots) on legacy hardware (e.g. GeForce FX 5200).
-static HRESULT compilePBRShaderFlexible(const char* source, IDirect3DPixelShader9** ppShader, const char* tag)
-{
-	HRESULT hr = compilePBRShader(source, ppShader, tag, "ps_2_a");
-	if (SUCCEEDED(hr)) {
-		DEBUG_LOG(("PBR: %s compiled with ps_2_a (256 arithmetic slots)\n", tag));
-		return hr;
-	}
-	DEBUG_LOG(("PBR: %s ps_2_a failed, trying ps_2_0\n", tag));
-	return compilePBRShader(source, ppShader, tag, "ps_2_0");
-}
-
 Int TerrainShaderPBR::init( void )
 {
 	D3DCAPS8 caps;
@@ -2560,13 +2547,13 @@ Int W3DPBRShader::init( void )
 			"    result += diffuseColor * c10.xyz * ao;\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
-		if (FAILED(compilePBRShaderFlexible(src, &m_dwPBRPixelShader, "pbr_unit")))
+		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "pbr_unit")))
 			DEBUG_LOG(("PBR: W3DPBRShader init FAILED - no PBR shader available\n"));
 		else
 			DEBUG_LOG(("PBR: W3DPBRShader init OK\n"));
 
 		// Alpha variant: same HLSL, separate handle for alpha-blended meshes
-		if (FAILED(compilePBRShaderFlexible(src, &m_dwPBRAlphaPixelShader, "pbr_unit_alpha")))
+		if (FAILED(compilePBRShader(src, &m_dwPBRAlphaPixelShader, "pbr_unit_alpha")))
 			DEBUG_LOG(("PBR: alpha shader compile FAILED\n"));
 		else
 			DEBUG_LOG(("PBR: alpha shader compile OK\n"));
@@ -2640,13 +2627,13 @@ Int W3DPBRShader::init( void )
 			"    result += diffuseColor * c10.xyz * ao;\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
-		if (FAILED(compilePBRShaderFlexible(srcNT, &m_dwPBRPixelShaderNT, "pbr_unit_nt")))
+		if (FAILED(compilePBRShader(srcNT, &m_dwPBRPixelShaderNT, "pbr_unit_nt")))
 			DEBUG_LOG(("PBR: NT shader compile FAILED\n"));
 		else
 			DEBUG_LOG(("PBR: NT shader compile OK\n"));
 
 		// Alpha NT variant: same NT HLSL, separate handle
-		if (FAILED(compilePBRShaderFlexible(srcNT, &m_dwPBRAlphaPixelShaderNT, "pbr_unit_alphant")))
+		if (FAILED(compilePBRShader(srcNT, &m_dwPBRAlphaPixelShaderNT, "pbr_unit_alphant")))
 			DEBUG_LOG(("PBR: alpha NT shader compile FAILED\n"));
 		else
 			DEBUG_LOG(("PBR: alpha NT shader compile OK\n"));
@@ -3016,13 +3003,13 @@ Int W3DPBRShader::init( void )
 			"    result += diffuseColor * irradiance * ao;\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
-			if (FAILED(compilePBRShaderFlexible(srcNT_IBL, &m_dwPBRPixelShaderNT_IBL, "pbr_unit_nt_ibl")))
+			if (FAILED(compilePBRShader(srcNT_IBL, &m_dwPBRPixelShaderNT_IBL, "pbr_unit_nt_ibl")))
 				DEBUG_LOG(("PBR IBL: NT diffuse IBL opaque shader compile FAILED\n"));
 			else
 				DEBUG_LOG(("PBR IBL: NT diffuse IBL opaque shader compiled OK\n"));
 
 			// Alpha NT IBL variant
-			if (FAILED(compilePBRShaderFlexible(srcNT_IBL, &m_dwPBRAlphaPixelShaderNT_IBL, "pbr_unit_alpha_nt_ibl")))
+			if (FAILED(compilePBRShader(srcNT_IBL, &m_dwPBRAlphaPixelShaderNT_IBL, "pbr_unit_alpha_nt_ibl")))
 				DEBUG_LOG(("PBR IBL: NT diffuse IBL alpha shader compile FAILED\n"));
 			else
 				DEBUG_LOG(("PBR IBL: NT diffuse IBL alpha shader compiled OK\n"));
