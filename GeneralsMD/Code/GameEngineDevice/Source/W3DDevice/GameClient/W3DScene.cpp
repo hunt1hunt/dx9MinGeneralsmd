@@ -789,6 +789,12 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 
 		// Phase 4b: Set PBR pixel shader per-frame constants for unit/building rendering
 		if (TheGlobalData && TheGlobalData->m_useLegacyPBR) {
+			static Bool pbrSceneDiag = FALSE;
+			if (!pbrSceneDiag) {
+				FILE *f = fopen("E:\\terrain_diag.log", "a");
+				if (f) { fprintf(f, "[%d] SCENE_PBR_CONST: m_useLegacyPBR=1\n", timeGetTime()); fclose(f); }
+				pbrSceneDiag = TRUE;
+			}
 			IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
 			if (pDev) {
 				// c0 = sun direction (negated light position, normalized to unit length)
@@ -833,11 +839,11 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 						pDev->SetPixelShaderConstantF(reg + 1, colF, 1);
 					}
 				}
-				// Zero out any unused additional light slots
+				// Fill unused light slots with sun direction to avoid normalize(0) NaN
+				float zero[4] = { 0, 0, 0, 0 };
 				for (Int j = maxAddLights; j < 4; j++) {
 					Int reg = 4 + (j - 1) * 2;
-					float zero[4] = { 0, 0, 0, 0 };
-					pDev->SetPixelShaderConstantF(reg, zero, 1);
+					pDev->SetPixelShaderConstantF(reg, sunDir, 1);
 					pDev->SetPixelShaderConstantF(reg + 1, zero, 1);
 				}
 

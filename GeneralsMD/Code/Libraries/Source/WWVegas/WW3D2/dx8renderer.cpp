@@ -61,18 +61,24 @@
 #include "stripoptimizer.h"
 #include "meshgeometry.h"
 
+// PBR diagnostic logging (used only in debug builds or temporary diagnostics)
+#include <stdio.h>
+#include <mmsystem.h>
+
 // PBR shader externs (set by W3DShaderManager)
 extern IDirect3DPixelShader9 *g_pbrUnitOpaqueShader;
 extern IDirect3DPixelShader9 *g_pbrUnitAlphaShader;
 extern IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader;
 extern IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader;
 extern bool g_pbrUnitShaderEnabled;
+extern int g_pbrDebugMode;
 
 // C-linkage PBR texture query from W3DShaderManager (cross-library)
 extern "C" bool PBR_HasTexture(const char *albedoName);
 
 // C-linkage IBL texture binding from W3DShaderManager (cross-library)
 extern "C" void PBR_BindIBLTextures(void);
+extern "C" void PBR_ClearIBLTextures(void);
 
 /*
 ** Global Instance of the DX8MeshRender
@@ -1709,7 +1715,10 @@ void DX8TextureCategoryClass::Render(void)
 			DX8Wrapper::Set_Texture(i,Peek_Texture(i));
 		}
 
-	#ifdef WWDEBUG
+		// Clear PBR IBL texture stages (3/4/5) not covered by MAX_TEX_STAGES=2
+		PBR_ClearIBLTextures();
+
+#ifdef WWDEBUG
 	}
 	#endif
 
@@ -1807,6 +1816,30 @@ void DX8TextureCategoryClass::Render(void)
 				if (pbrShader) {
 					DX8Wrapper::Set_Pixel_Shader(pbrShader);
 					PBR_BindIBLTextures();  // Bind IBL CubeMap textures for environment reflections
+					// Set debug visualization mode (c11.x = PBRDebugMode from INI)
+					float dbg[4] = { (float)g_pbrDebugMode, 0.0f, 0.0f, 0.0f };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
+					// DIAG: log first 3 PBR draw calls
+					{
+						static int diagCount = 0;
+						if (diagCount < 3) {
+							diagCount++;
+							float c0[4], c1[4];
+							IDirect3DDevice8 *d = DX8Wrapper::_Get_D3D_Device8();
+							char buf[256];
+							if (d) {
+								d->GetPixelShaderConstantF(0, c0, 1);
+								d->GetPixelShaderConstantF(1, c1, 1);
+								sprintf(buf, "[%u] PBR_DRAW#%d: s=%p nt=%d hasPBR=%d dbg=%d c0=(%.3f,%.3f,%.3f) c1=(%.3f,%.3f,%.3f)\n",
+									timeGetTime(), diagCount, pbrShader, !hasPBRTex, hasPBRTex, g_pbrDebugMode,
+									c0[0], c0[1], c0[2], c1[0], c1[1], c1[2]);
+							} else {
+								sprintf(buf, "[%u] PBR_DRAW#%d: DEV=NULL\n", timeGetTime(), diagCount);
+							}
+							FILE *f = fopen("E:\\terrain_diag.log", "a");
+							if (f) { fputs(buf, f); fclose(f); }
+						}
+					}
 				}
 			}
 		}
@@ -2005,6 +2038,10 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 		if (prevPBRShader) {
 			DX8Wrapper::Set_Pixel_Shader(prevPBRShader);
 		}
+		// Phase 5.7: Clear PBR IBL texture stages to prevent CubeMap leaking
+		// to subsequent non-PBR rendering (water, terrain). These are not
+		// covered by MAX_TEX_STAGES=2 in MeshMatDescClass.
+		PBR_ClearIBLTextures();
 
 		/*
 		** Move to the next render task.  Note that the delete should be fast because prt's are pooled

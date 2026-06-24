@@ -1859,9 +1859,13 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, Real waterHeight, Textu
 	m_pDev->SetStreamSource(0, NULL, 0, 0);
 	m_pDev->SetTexture(0, NULL);
 	m_pDev->SetTexture(1, NULL);
+		m_pDev->SetTexture(2, NULL);
+		m_pDev->SetTexture(3, NULL);
+		m_pDev->SetTexture(4, NULL);
+		m_pDev->SetTexture(5, NULL);
 	DX8Wrapper::Invalidate_Cached_Render_States();
 
-	// Restore snow visibility
+	// Restore snow visibility (Phase 5.7 cleanup)
 	if (TheSnowManager && snowWasVisible)
 	{
 		((SnowManager *)TheSnowManager)->setVisible(TRUE);
@@ -2528,6 +2532,9 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	m_pDev->SetTexture( 0, NULL);	//release reference to bump texture
 	m_pDev->SetTexture( 1, NULL);	//release reference to reflection texture
 	m_pDev->SetTexture( 2, NULL);	//release reference to reflection texture
+	m_pDev->SetTexture( 3, NULL);	// Phase 5.7: Clear PBR IBL CubeMap if leaked
+	m_pDev->SetTexture( 4, NULL);	// Phase 5.7: Clear prefiltered CubeMap if leaked
+	m_pDev->SetTexture( 5, NULL);	// Phase 5.7: Clear BRDF LUT if leaked
 
 	m_pDev->SetTextureStageState( 0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	m_pDev->SetTextureStageState( 0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
@@ -4019,6 +4026,8 @@ void WaterRenderObjClass::drawTrapezoidWater(Vector3 points[4])
 		{	//shroud was applied in stage3 of main pass so just need to restore state here.
 			W3DShaderManager::resetShader(W3DShaderManager::ST_SHROUD_TEXTURE);
 			DX8Wrapper::_Get_D3D_Device8()->SetTexture(3,NULL);	//free possible reference to shroud texture
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(4,NULL);	// Phase 5.7
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(5,NULL);	// Phase 5.7
 			DX8Wrapper::_Get_D3D_Device8()->SetRenderState(D3DRS_ZFUNC, D3DCMP_EQUAL);
 		}
 		else
