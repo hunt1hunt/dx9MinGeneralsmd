@@ -2046,7 +2046,7 @@ static void TerrainDiagI(const char *msg, int val)
 
 ///Helper to compile a ps_2_0 shader from source string.
 static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppShader, const char* tag,
-	const char* profile = "ps_2_0")
+	const char* profile = "ps_2_a")
 {
 	ID3DXBuffer* compiled = NULL;
 	ID3DXBuffer* errors = NULL;
@@ -3263,6 +3263,23 @@ Int W3DPBRShader::init( void )
 	g_pbrUnitShaderEnabled = (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 	g_pbrDebugMode = TheGlobalData ? TheGlobalData->m_pbrDebugMode : 0;
 
+	// DIAG: log IBL initialization status
+	{
+		FILE *f = fopen("E:\terrain_diag.log", "a");
+		if (f) {
+			fprintf(f, "[%%u] PBR_IBL_INIT: irradiance=%%s prefiltered=%%s brdfLUT=%%s hasIBL=%%d hasSpecIBL=%%d enabled=%%d
+",
+				timeGetTime(),
+				m_envIrradianceMap && m_envIrradianceMap->Is_Initialized() ? "OK" : "MISS",
+				m_envPrefilteredMap && m_envPrefilteredMap->Is_Initialized() ? "OK" : "MISS",
+				m_brdfLUT && m_brdfLUT->Is_Initialized() ? "OK" : "MISS",
+				(int)(m_envIrradianceMap != NULL && m_envIrradianceMap->Is_Initialized() && m_envIrradianceMap->Peek_D3D_CubeTexture() != NULL),
+				(int)(m_envIrradianceMap != NULL && m_envIrradianceMap->Is_Initialized() && m_envIrradianceMap->Peek_D3D_CubeTexture() != NULL && m_envPrefilteredMap && m_envPrefilteredMap->Is_Initialized() && m_envPrefilteredMap->Peek_D3D_CubeTexture() != NULL && m_brdfLUT && m_brdfLUT->Is_Initialized() && m_brdfLUT->Peek_D3D_Texture() != NULL && m_dwPBRPixelShader_30_IBLSpec && m_dwPBRAlphaPixelShader_30_IBLSpec),
+				(int)g_pbrUnitShaderEnabled);
+			fclose(f);
+		}
+	}
+
 	return (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 }
 
@@ -3409,6 +3426,12 @@ Int W3DPBRShader::set(Int pass)
 	{
 		float dbg[4] = { (float)TheGlobalData->m_pbrDebugMode, 0.0f, 0.0f, 0.0f };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
+	}
+	// Guard: if no shader was successfully compiled (e.g. after device reset failure),
+	// return FALSE so the renderer skips this draw call instead of passing NULL to SetPixelShader.
+	if (pShader == NULL) {
+		DEBUG_LOG(("PBR: set() called but no shader available (device reset recovery pending)\n"));
+		return FALSE;
 	}
 	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(pShader);
 	return TRUE;
@@ -4103,6 +4126,17 @@ void W3DShaderManager::init(void)
 		//Some of our effects require an offscreen render target, so try creating it here.
 		HRESULT hr=DX8Wrapper::_Get_D3D_Device8()->GetRenderTarget(0, &m_oldRenderSurface);
 
+		// Guard: GetRenderTarget may fail after device reset if driver is not yet ready.
+		// The original code dereferences m_oldRenderSurface without verifying the HRESULT,
+		// causing NULL-pointer crash on Alt-Tab recovery.
+		if (FAILED(hr) || m_oldRenderSurface == NULL) {
+			DEBUG_LOG(("CPE_SHADERINIT: GetRenderTarget failed after device reset (hr=0x%08X)\n", (UINT)hr));
+			m_oldRenderSurface = NULL;
+			m_renderTexture = NULL;
+			m_newRenderSurface = NULL;
+			m_oldDepthSurface = NULL;
+			goto skipRenderTarget;
+		}
 		m_oldRenderSurface->GetDesc(&desc);
 
 		hr=DX8Wrapper::_Get_D3D_Device8()->CreateTexture(desc.Width,desc.Height,1,D3DUSAGE_RENDERTARGET,desc.Format,D3DPOOL_DEFAULT,&m_renderTexture,NULL);
@@ -4132,6 +4166,8 @@ void W3DShaderManager::init(void)
 			}
 		}
 	}
+
+skipRenderTarget:
 
 	W3DShaderInterface **shaders;
 
@@ -4345,8 +4381,6 @@ extern "C" bool PBR_HasTexture(const char *albedoName)
 // to stages 3 (irradiance), 4 (prefiltered), 5 (BRDF LUT).
 extern "C" void PBR_BindIBLTextures(void)
 {
-	if (DX8Wrapper::Is_Device_Lost())
-		return;
 	if (!w3dPBRShader.m_envIrradianceMap && !w3dPBRShader.m_envPrefilteredMap)
 		return;
 	IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
@@ -4370,7 +4404,6 @@ extern "C" void PBR_BindIBLTextures(void)
 
 extern "C" void PBR_ClearIBLTextures(void)
 {
-	if (DX8Wrapper::Is_Device_Lost()) return;
 	IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
 	if (!pDev) return;
 	pDev->SetTexture(3, NULL);

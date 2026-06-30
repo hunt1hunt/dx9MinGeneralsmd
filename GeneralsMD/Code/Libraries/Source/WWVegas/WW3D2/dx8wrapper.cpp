@@ -86,6 +86,14 @@ const int DEFAULT_TEXTURE_BIT_DEPTH = 16;
 
 bool DX8Wrapper_IsWindowed = true;
 
+// PBR shader globals (defined in W3DShaderManager.cpp, used by dx8renderer.cpp)
+// Re-declared here so Reset_Device can invalidate them after D3D device reset.
+extern IDirect3DPixelShader9 *g_pbrUnitOpaqueShader;
+extern IDirect3DPixelShader9 *g_pbrUnitAlphaShader;
+extern IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader;
+extern IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader;
+extern bool g_pbrUnitShaderEnabled;
+
 // FPU_PRESERVE
 int DX8Wrapper_PreserveFPU = 0;
 
@@ -644,6 +652,12 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 // 圄1�7 Invalidate_Cached_Render_States() 函数体内添加＄1�7  
 ShaderClass::Invalidate();
 
+	// Invalidate PBR shader handles - D3D9 destroys all shader objects on Reset().
+	g_pbrUnitShaderEnabled = false;
+	g_pbrUnitOpaqueShader = NULL;
+	g_pbrUnitAlphaShader = NULL;
+	g_pbrUnitOpaqueNTShader = NULL;
+	g_pbrUnitAlphaNTShader = NULL;
 
 		Set_Default_Global_Render_States();
 		WWDEBUG_SAY(("Device reset completed\n"));
