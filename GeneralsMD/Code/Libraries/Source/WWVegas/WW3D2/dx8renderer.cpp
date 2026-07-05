@@ -79,6 +79,11 @@ extern "C" bool PBR_HasTexture(const char *albedoName);
 // C-linkage IBL texture binding from W3DShaderManager (cross-library)
 extern "C" void PBR_BindIBLTextures(void);
 extern "C" void PBR_ClearIBLTextures(void);
+extern "C" void PBR_BindVS(void);
+extern "C" bool PBR_IsMeshExcluded(const char *meshName);
+
+static int s_diagFVF = 0;
+static int s_diagNorm = 0;
 
 /*
 ** Global Instance of the DX8MeshRender
@@ -752,6 +757,24 @@ unsigned DX8FVFCategoryContainer::Define_FVF(MeshModelClass* mmc,bool enable_lig
 	}
 
 	fvf|=D3DFVF_NORMAL;	// Realtime-lit
+
+	// Phase 3: PBR meshes need TEX3 so normals can be encoded in TEXCOORD2.
+	if (mmc && mmc->Has_Legacy_PBR()) {
+		int uvCount = mmc->Get_UV_Array_Count();
+		if (uvCount < 3) {
+			fvf &= ~D3DFVF_TEXCOUNT_MASK;
+			fvf |= D3DFVF_TEX3 | D3DFVF_DIFFUSE | D3DFVF_TEXCOORDSIZE2(0) | D3DFVF_TEXCOORDSIZE2(1) | D3DFVF_TEXCOORDSIZE3(2);
+		}
+		if (!s_diagFVF) {
+			s_diagFVF = 1;
+			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			if (f) {
+				fprintf(f, "[%d] PBR_FVF_SEL: texCount=%d -> FVF=0x%X\n", timeGetTime(), mmc->Get_UV_Array_Count(), fvf);
+				fclose(f);
+			}
+		}
+	}
+
 	return fvf;
 }
 
@@ -1121,6 +1144,30 @@ void DX8RigidFVFCategoryContainer::Add_Mesh(MeshModelClass* mmc_)
 				*(Vector2*)(vb+fi.Get_Tex_Offset(j))=uvs[i];
 				vb+=fi.Get_FVF_Size();
 			}		
+		}
+	}
+
+	// Phase 3: For PBR meshes with TEX3, encode normals into TEXCOORD2 (slot j=2).
+	if ((FVF & D3DFVF_TEX3) && mmc_ && mmc_->Has_Legacy_PBR()) {
+		unsigned char *vbn = (unsigned char*) l.Get_Vertex_Array();
+		const Vector3 *norms = split_table.Get_Vertex_Normal_Array();
+		if (norms) {
+			unsigned normOffs = fi.Get_Tex_Offset(2);
+			for (i = 0; i < split_table.Get_Vertex_Count(); i++) {
+				*(Vector3*)(vbn + normOffs) = norms[i];
+				vbn += fi.Get_FVF_Size();
+			}
+			if (!s_diagNorm) {
+				s_diagNorm = 1;
+				FILE *f = fopen("E:\\terrain_diag.log", "a");
+				if (f) {
+					int vc = split_table.Get_Vertex_Count();
+					fprintf(f, "[%d] PBR_NORMAL_ENCODE: vertCount=%d norm[0]=(%.3f,%.3f,%.3f)\n",
+						timeGetTime(), vc,
+						norms[0].X, norms[0].Y, norms[0].Z);
+					fclose(f);
+				}
+			}
 		}
 	}
 
@@ -1779,7 +1826,7 @@ void DX8TextureCategoryClass::Render(void)
 					float pbrParams[4] = { 1.0f, meshModel->Get_Legacy_Roughness(), 1.0f, meshModel->Get_Legacy_Metalness() };
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
 				} else {
-					float pbrParams[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+					float pbrParams[4] = { 0.0f, 0.4f, 1.0f, 0.15f };
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
 				}
 			}
@@ -1817,27 +1864,85 @@ void DX8TextureCategoryClass::Render(void)
 					DX8Wrapper::Set_Pixel_Shader(pbrShader);
 					PBR_BindIBLTextures();  // Bind IBL CubeMap textures for environment reflections
 					// Set debug visualization mode (c11.x = PBRDebugMode from INI)
-					float dbg[4] = { (float)g_pbrDebugMode, 0.0f, 0.0f, 0.0f };
+					float dbg[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // debug mode off
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
-					// DIAG: log first 3 PBR draw calls
+					// DIAG: unified PBR diagnostics — first 3 PBR draws
 					{
-						static int diagCount = 0;
-						if (diagCount < 3) {
-							diagCount++;
-							float c0[4], c1[4];
-							IDirect3DDevice8 *d = DX8Wrapper::_Get_D3D_Device8();
-							char buf[256];
-							if (d) {
-								d->GetPixelShaderConstantF(0, c0, 1);
-								d->GetPixelShaderConstantF(1, c1, 1);
-								sprintf(buf, "[%u] PBR_DRAW#%d: s=%p nt=%d hasPBR=%d dbg=%d c0=(%.3f,%.3f,%.3f) c1=(%.3f,%.3f,%.3f)\n",
-									timeGetTime(), diagCount, pbrShader, !hasPBRTex, hasPBRTex, g_pbrDebugMode,
-									c0[0], c0[1], c0[2], c1[0], c1[1], c1[2]);
-							} else {
-								sprintf(buf, "[%u] PBR_DRAW#%d: DEV=NULL\n", timeGetTime(), diagCount);
+						static int pbrDiagCount = 0;
+						if (pbrDiagCount < 3) {
+							pbrDiagCount++;
+							IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
+							if (pDev) {
+								float c0[4], c1[4], c2[4], c10[4], c11[4];
+								pDev->GetPixelShaderConstantF(0, c0, 1);
+								pDev->GetPixelShaderConstantF(1, c1, 1);
+								pDev->GetPixelShaderConstantF(2, c2, 1);
+								pDev->GetPixelShaderConstantF(10, c10, 1);
+								pDev->GetPixelShaderConstantF(11, c11, 1);
+								DWORD rsLighting = 0;
+								pDev->GetRenderState(D3DRS_LIGHTING, &rsLighting);
+								FILE *f = fopen("E:\\terrain_diag.log", "a");
+								if (f) {
+									// Phase 1: existing diagnostics
+									fprintf(f, "[%u] PBR_UNIT_DIAG #%d: shader=%p nt=%d hasTex=%d dbg=%.0f rsLIGHTING=%lu\n",
+										timeGetTime(), pbrDiagCount, (void*)pbrShader, !hasPBRTex, hasPBRTex, c11[0], rsLighting);
+									fprintf(f, "  c0(sunDir)=(%.3f,%.3f,%.3f) c1(sunColor)=(%.3f,%.3f,%.3f)\n",
+										c0[0],c0[1],c0[2],c1[0],c1[1],c1[2]);
+									fprintf(f, "  c2(camPos)=(%.1f,%.1f,%.1f) c10(ambient)=(%.3f,%.3f,%.3f)\n",
+										c2[0],c2[1],c2[2],c10[0],c10[1],c10[2]);
+									// Phase 2: simplified PS selection + COLOR0
+									{
+										const char *variant = "UNKNOWN";
+										if (pbrShader == g_pbrUnitOpaqueShader) variant = "OPAQUE";
+										else if (pbrShader == g_pbrUnitAlphaShader) variant = "ALPHA";
+										else if (pbrShader == g_pbrUnitOpaqueNTShader) variant = "NT_OPAQUE";
+										else if (pbrShader == g_pbrUnitAlphaNTShader) variant = "NT_ALPHA";
+										fprintf(f, "[%u] PBR_PHASE2_PS: variant=%s\n", timeGetTime(), variant);
+									}
+									{
+										VertexMaterialClass *vmat = const_cast<VertexMaterialClass*>(Peek_Material());
+										if (vmat) {
+											Vector3 diffCol, ambCol, emisCol;
+											vmat->Get_Diffuse(&diffCol);
+											vmat->Get_Ambient(&ambCol);
+											vmat->Get_Emissive(&emisCol);
+											fprintf(f, "[%u] PBR_COLOR0: diffuse=(%.3f,%.3f,%.3f) ambient=(%.3f,%.3f,%.3f) emissive=(%.3f,%.3f,%.3f)\n",
+												timeGetTime(),
+												diffCol.X,diffCol.Y,diffCol.Z,
+												ambCol.X,ambCol.Y,ambCol.Z,
+												emisCol.X,emisCol.Y,emisCol.Z);
+										} else {
+											fprintf(f, "[%u] PBR_COLOR0: material=NULL\n", timeGetTime());
+										}
+									}
+									// Phase 2: NdotL approximation from c0 direction
+									{
+										float ndotl = c0[2];
+										if (ndotl < -1.0f) ndotl = -1.0f; if (ndotl > 1.0f) ndotl = 1.0f;
+										fprintf(f, "[%u] PBR_NDOTL_APPROX: L=(%.3f,%.3f,%.3f) NdotL=%.3f\n",
+											timeGetTime(), c0[0],c0[1],c0[2], ndotl);
+									}
+									// Phase 3: normal map availability on TEXCOORD2
+									{
+										fprintf(f, "[%u] PBR_NORMAL_ENCODE: tex2=N/A(disabled-crash) tex3=N/A\n",
+											timeGetTime());
+									}
+									// Phase 3: c11 debug mode status
+									fprintf(f, "[%u] PBR_NORMAL_TEX2: c11(dbgMode)=%.0f\n", timeGetTime(), c11[0]);
+									// Phase 4: IBL texture binding status — skip Peek_Texture to avoid dangling ptr crash
+									{
+										fprintf(f, "[%u] PBR_IBL_SAMPLE: diag_disabled(prevents crash)\n",
+											timeGetTime());
+									}
+									// Phase 4: BRDF output summary
+									{
+										float approxDiffuse = (hasPBRTex ? 0.8f : 1.0f) * (c0[2] > 0.0f ? c0[2] : 0.0f) * c1[0];
+										fprintf(f, "[%u] PBR_UNIT_COMPLETE: hasTex=%d approxDiffuse=%.3f\n",
+											timeGetTime(), (int)hasPBRTex, approxDiffuse);
+									}
+									fclose(f);
+								}
 							}
-							FILE *f = fopen("E:\\terrain_diag.log", "a");
-							if (f) { fputs(buf, f); fclose(f); }
 						}
 					}
 				}
@@ -1958,8 +2063,20 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 			SNAPSHOT_SAY(("Set_World_Transform\n"));
 			DX8Wrapper::Set_Transform(D3DTS_WORLD,*world_transform);
 		}
+		// Bind PBR vertex shader AFTER world matrix is cached in render_state.
+		// PBR_BindVS reads render_state.world directly (not D3D device).
+		// Only bind VS for actual PBR meshes (not rocks/trees/buildings/water).
+		// Water surfaces are excluded: WaterRenderObjClass::Render() sets
+		// g_pbrInsideWaterRender=true, causing PBR_BindVS() to early-return.
+		// Specific mesh names (e.g. BloomBoxC) are excluded via PBR_IsMeshExcluded()
+		// - add new names to the s_pbrExcludedMeshes list in W3DShaderManager.cpp.
+		if (mesh->Peek_Model() && mesh->Peek_Model()->Has_Legacy_PBR() && g_pbrUnitShaderEnabled) {
+			if (!PBR_IsMeshExcluded(mesh->Get_Name())) {
+				PBR_BindVS();
+			}
+		}
 
-		
+
 //--------------------------------------------------------------------
 		if (mesh->Get_ObjectScale() != 1.0f)
 			DX8Wrapper::Set_DX8_Render_State(D3DRS_NORMALIZENORMALS, TRUE);
@@ -2034,14 +2151,65 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 
         } // (gth) non-tabbed to aviod per-force merge problems...
 
-		// Phase 4c: Restore previous pixel shader after PBR render
-		if (prevPBRShader) {
-			DX8Wrapper::Set_Pixel_Shader(prevPBRShader);
+		// Phase 4c: Restore previous pixel shader after PBR render.
+		// Always restore even if prevPBRShader==NULL — PBR sets
+		// its own PS which would leak to subsequent non-PBR meshes.
+		DX8Wrapper::Set_Pixel_Shader(prevPBRShader);
+		// Restore fixed-function pipeline after PBR_BindVS set vertex shader
+		DX8Wrapper::Set_Vertex_Shader(NULL);
+		// Zero VS constants c0-c10 that PBR_BindVS left behind
+		{
+			float z4[4] = {0,0,0,0};
+			// Use wrapper's Set_Vertex_Shader_Constant so the cache also
+			// tracks the zeroes — PBR_BindVS writes directly to D3D so
+			// the wrapper cache would otherwise be stale.
+			DX8Wrapper::Set_Vertex_Shader_Constant(0, z4, 4);
+			DX8Wrapper::Set_Vertex_Shader_Constant(4, z4, 4);
+			DX8Wrapper::Set_Vertex_Shader_Constant(8, z4, 3);
 		}
 		// Phase 5.7: Clear PBR IBL texture stages to prevent CubeMap leaking
 		// to subsequent non-PBR rendering (water, terrain). These are not
 		// covered by MAX_TEX_STAGES=2 in MeshMatDescClass.
 		PBR_ClearIBLTextures();
+
+		// DIAG: snapshot D3D state after PBR restore, first 5 meshes
+		{
+			static int stateDiag = 0;
+			if (stateDiag < 5) {
+				stateDiag++;
+				IDirect3DDevice8 *sdev = DX8Wrapper::_Get_D3D_Device8();
+				IDirect3DVertexShader9 *curVS = NULL;
+				IDirect3DPixelShader9 *curPS = NULL;
+				float c0[4], c4[4], c8[4];
+				sdev->GetVertexShader(&curVS);
+				sdev->GetPixelShader(&curPS);
+				sdev->GetVertexShaderConstantF(0, c0, 1);
+				sdev->GetVertexShaderConstantF(4, c4, 1);
+				sdev->GetVertexShaderConstantF(8, c8, 1);
+				IDirect3DBaseTexture9 *tx3 = NULL, *tx4 = NULL, *tx5 = NULL;
+				sdev->GetTexture(3, &tx3);
+				sdev->GetTexture(4, &tx4);
+				sdev->GetTexture(5, &tx5);
+				FILE *df = fopen("E:\\terrain_diag.log", "a");
+				if (df) {
+					fprintf(df, "[%u] PSTATE_#%d: VS=%p PS=%p"
+						" c0=(%.1f,%.1f,%.1f,%.1f) c4=(%.1f,%.1f,%.1f,%.1f) c8=(%.3f,%.3f,%.3f,%.3f)"
+						" tx3=%p tx4=%p tx5=%p\n",
+						timeGetTime(), stateDiag,
+						(void*)curVS, (void*)curPS,
+						c0[0],c0[1],c0[2],c0[3],
+						c4[0],c4[1],c4[2],c4[3],
+						c8[0],c8[1],c8[2],c8[3],
+						(void*)tx3, (void*)tx4, (void*)tx5);
+					fclose(df);
+				}
+				if (tx3) tx3->Release();
+				if (tx4) tx4->Release();
+				if (tx5) tx5->Release();
+				if (curVS) curVS->Release();
+				if (curPS) curPS->Release();
+			}
+		}
 
 		/*
 		** Move to the next render task.  Note that the delete should be fast because prt's are pooled

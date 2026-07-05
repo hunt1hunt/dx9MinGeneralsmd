@@ -56,6 +56,8 @@
 #include "dx8wrapper.h"
 #include "assetmgr.h"
 #include "Lib/BaseType.h"
+#include <stdlib.h>
+#include <string.h>
 #include "Common/File.h"
 #include "Common/FileSystem.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
@@ -131,6 +133,7 @@ IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader = NULL;  // no PBR texture varian
 IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader = NULL;    // alpha + no PBR texture
 Bool g_pbrUnitShaderEnabled = FALSE;
 Int g_pbrDebugMode = 0;
+IDirect3DVertexShader9 *g_pbrUnitVS = NULL;
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
 /*===========================================================================================*/
@@ -1578,6 +1581,7 @@ public:
 	// NT ps_3_0 diffuse IBL shaders (ps_3_0 loop GGX + texCUBE irradiance)
 	IDirect3DPixelShader9*	m_dwPBRPixelShaderNT_30_IBL;	   ///<NT opaque ps_3_0 + diffuse IBL
 	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShaderNT_30_IBL; ///<NT alpha ps_3_0 + diffuse IBL
+	IDirect3DVertexShader9*	m_vsPBRUnit;	///<pass-through vertex shader for PBR unit (vs_1_1)
 	virtual Int set(Int pass);		///<setup shader for specified rendering pass
 	virtual void reset(void);		///<restore W3D state after PBR
 	virtual Int init(void);			///<compile HLSL and create shaders
@@ -2480,6 +2484,7 @@ Int W3DPBRShader::init( void )
 	m_dwPBRAlphaPixelShaderNT_30 = NULL;
 	m_dwPBRPixelShaderNT_30_IBL = NULL;
 	m_dwPBRAlphaPixelShaderNT_30_IBL = NULL;
+	m_vsPBRUnit = NULL;
 
 	// Phase 4: 4-light GGX shader with PBR texture support
 	// Register layout:
@@ -2511,6 +2516,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float4 pbrMap = tex2D(s2, tex0);\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
@@ -2576,6 +2582,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
 			"    float NdotV = saturate(dot(N, V));\n"
@@ -2640,6 +2647,7 @@ Int W3DPBRShader::init( void )
 		"    float4 diffuse : COLOR0) : COLOR\n"
 		"{\n"
 		"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 		"    float3 N = normalize(worldNormal);\n"
 		"    float3 V = normalize(c2.xyz - worldPos);\n"
 		"    float NdotV = saturate(dot(N, V));\n"
@@ -2652,10 +2660,11 @@ Int W3DPBRShader::init( void )
 		"    float a2 = a * a;\n"
 		"    float k = a * 0.5;\n"
 		"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
-		"    float invPI = 0.31831;\n"
+		"    float invPI = 1.0;\n" // TMP: bumped from 1/pi (0.31831) to compensate for missing environmental lighting
 		"    float3 result = float3(0,0,0);\n"
 		"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
-		"    float3 lightCol[4] = { c1.xyz, c5.xyz, c7.xyz, c9.xyz };\n"
+		// TMP: sun light 30x to compensate for missing environmental lighting
+		"    float3 lightCol[4] = { c1.xyz * 30.0, c5.xyz, c7.xyz, c9.xyz };\n"
 		"    [loop] for (int i = 0; i < 4; i++) {\n"
 		"        if (dot(lightDir[i], lightDir[i]) < 0.0001) continue;\n"
 		"        float3 L = normalize(lightDir[i]);\n"
@@ -2675,6 +2684,9 @@ Int W3DPBRShader::init( void )
 		"        result += (diffuseColor * (1.0 - F) * invPI * lightCol[i] * NdotL + specular * lightCol[i] / max(4.0 * NdotV, 0.001));\n"
 		"    }\n"
 		"    result += diffuseColor * c10.xyz * ao;\n"
+	//	"    result += diffuseColor * 5.0;\n"
+		//调整环境光倍率叠加10.0倍
+	//	"    result += diffuseColor * 10.0;\n"
 		"    return float4(result, albedo.a);\n"
 		"}\n";
 		if (FAILED(compilePBRShader(srcNT30, &m_dwPBRPixelShaderNT_30, "pbr_unit_nt_ps30", "ps_3_0")))
@@ -2712,6 +2724,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float4 pbrMap = tex2D(s2, tex0);\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
@@ -2805,6 +2818,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float4 pbrMap = tex2D(s2, tex0);\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
@@ -2912,6 +2926,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float4 pbrMap = tex2D(s2, tex0);\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
@@ -3008,6 +3023,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
 			"    float NdotV = saturate(dot(N, V));\n"
@@ -3076,6 +3092,7 @@ Int W3DPBRShader::init( void )
 				"    float4 diffuse : COLOR0) : COLOR\n"
 				"{\n"
 				"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 				"    float3 N = normalize(worldNormal);\n"
 				"    float3 V = normalize(c2.xyz - worldPos);\n"
 				"    float NdotV = saturate(dot(N, V));\n"
@@ -3088,10 +3105,11 @@ Int W3DPBRShader::init( void )
 				"    float a2 = a * a;\n"
 				"    float k = a * 0.5;\n"
 				"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
-				"    float invPI = 0.31831;\n"
+				"    float invPI = 1.0;\n" // TMP: bumped from 1/pi (0.31831) to compensate for missing environmental lighting
 				"    float3 result = float3(0,0,0);\n"
 				"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
-				"    float3 lightCol[4] = { c1.xyz, c5.xyz, c7.xyz, c9.xyz };\n"
+				// TMP: sun 30x to compensate for missing environmental lighting
+				"    float3 lightCol[4] = { c1.xyz * 30.0, c5.xyz, c7.xyz, c9.xyz };\n"
 				"    [loop] for (int i = 0; i < 4; i++) {\n"
 				"        if (dot(lightDir[i], lightDir[i]) < 0.0001) continue;\n"
 				"        float3 L = normalize(lightDir[i]);\n"
@@ -3113,6 +3131,10 @@ Int W3DPBRShader::init( void )
 				"    // Diffuse IBL from CubeMap\n"
 				"    float3 irradiance = texCUBE(s3, N).rgb;\n"
 				"    result += diffuseColor * irradiance * ao * (1.0 - metalness);\n"
+				"    result += diffuseColor * c10.xyz * ao;\n"
+			//	"    result += diffuseColor * 5.0;\n"
+				//调整环境光叠加倍率10倍
+			//	"    result += diffuseColor * 10.0;\n"
 				"    return float4(result, albedo.a);\n"
 				"}\n";
 				if (FAILED(compilePBRShader(srcNT_30_IBL, &m_dwPBRPixelShaderNT_30_IBL, "pbr_unit_nt_ps30_ibl", "ps_3_0")))
@@ -3152,6 +3174,7 @@ Int W3DPBRShader::init( void )
 			"    float4 diffuse : COLOR0) : COLOR\n"
 			"{\n"
 			"    float4 albedo = tex2D(s0, tex0);\n"
+			"    albedo.rgb *= diffuse.rgb;\n"
 			"    float3 N = normalize(worldNormal);\n"
 			"    float3 V = normalize(c2.xyz - worldPos);\n"
 			"    float NdotV = saturate(dot(N, V));\n"
@@ -3165,10 +3188,11 @@ Int W3DPBRShader::init( void )
 			"    float a2 = a * a;\n"
 			"    float k = a * 0.5;\n"
 			"    float G_V = NdotV / (NdotV * (1.0 - k) + k);\n"
-			"    float invPI = 0.31831;\n"
+			"    float invPI = 1.0;\n" // TMP: bumped from 1/pi (0.31831) to compensate for missing environmental lighting
 			"    float3 result = float3(0,0,0);\n"
 			"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
-			"    float3 lightCol[4] = { c1.xyz, c5.xyz, c7.xyz, c9.xyz };\n"
+			// TMP: sun 30x to compensate for missing environmental lighting
+			"    float3 lightCol[4] = { c1.xyz * 30.0, c5.xyz, c7.xyz, c9.xyz };\n"
 			"    [loop] for (int i = 0; i < 4; i++) {\n"
 			"        if (dot(lightDir[i], lightDir[i]) < 0.0001) continue;\n"
 			"        float3 L = normalize(lightDir[i]);\n"
@@ -3207,6 +3231,10 @@ Int W3DPBRShader::init( void )
 			"    if (dbg > 5.5 && dbg < 6.5) return float4(envSpecular, albedo.a);\n"
 			"    if (dbg > 6.5) return float4(result, albedo.a);\n"
 			"    result += envDiffuse + envSpecular;\n"
+			"    result += diffuseColor * c10.xyz * ao;\n"
+		//	"    result += diffuseColor * 5.0;\n"
+			//调整环境光倍率叠再加10倍
+		//	"    result += diffuseColor * 10.0;\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 			if (FAILED(compilePBRShader(srcNT_30_IBLSpec, &m_dwPBRPixelShaderNT_30_IBLSpec, "pbr_unit_nt_ps30_specibl", "ps_3_0")))
@@ -3263,12 +3291,54 @@ Int W3DPBRShader::init( void )
 	g_pbrUnitShaderEnabled = (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 	g_pbrDebugMode = TheGlobalData ? TheGlobalData->m_pbrDebugMode : 0;
 
+	// Compile pass-through vertex shader (vs_1_1) for PBR unit rendering.
+	// D3D9On12 requires D3DXAssembleShader for assembly source text --
+	// it generates proper DCL instructions (dcl_position etc.) that the
+	// D3D9On12 device-creation validator accepts.  D3DXCompileShader
+	// is for HLSL source only and will fail on assembly text.
+	// (See W3DWater.cpp for the same pattern.)
+	if (!m_vsPBRUnit) {
+		// FVF->VS register: v0=POS, v3=NORMAL, v7=TEXCOORD0
+		const char vs_code[] =
+			"vs.1.1\n"
+			"m4x4 oPos, v0, c0\n"
+			"mov oT0, v7\n"
+			"mov oD0, v5\n"
+			"m4x4 oT1, v0, c4\n"
+			"m3x3 oT4, v3, c8\n";
+		ID3DXBuffer *vsCompiled = NULL;
+		ID3DXBuffer *vsErrors = NULL;
+		HRESULT vsHR = D3DXAssembleShader(vs_code, (UINT)strlen(vs_code),
+			NULL, NULL, 0, &vsCompiled, &vsErrors);
+		if (FAILED(vsHR) || !vsCompiled) {
+			if (vsErrors) { vsErrors->Release(); }
+		} else {
+			{
+			IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+			if (dev) {
+				vsHR = dev->CreateVertexShader(
+					(const DWORD*)vsCompiled->GetBufferPointer(), &m_vsPBRUnit);
+			}
+			vsCompiled->Release();
+		}
+			if (FAILED(vsHR)) m_vsPBRUnit = NULL;
+		}
+	}
+	g_pbrUnitVS = m_vsPBRUnit;
+	// DIAG: log VS state from DLL side
+	{
+		static int once = 0;
+		if (!once) { once = 1;
+			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			if (f) { fprintf(f, "[%u] PBR_VS_DLL: m_vsPBRUnit=%p g_pbrUnitVS=%p\n", timeGetTime(), (void*)m_vsPBRUnit, (void*)g_pbrUnitVS); fclose(f); }
+		}
+	}
+
 	// DIAG: log IBL initialization status
 	{
-		FILE *f = fopen("E:\terrain_diag.log", "a");
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
 		if (f) {
-			fprintf(f, "[%%u] PBR_IBL_INIT: irradiance=%%s prefiltered=%%s brdfLUT=%%s hasIBL=%%d hasSpecIBL=%%d enabled=%%d
-",
+			fprintf(f, "[%u] PBR_IBL_INIT: irradiance=%s prefiltered=%s brdfLUT=%s hasIBL=%d hasSpecIBL=%d enabled=%d\n",
 				timeGetTime(),
 				m_envIrradianceMap && m_envIrradianceMap->Is_Initialized() ? "OK" : "MISS",
 				m_envPrefilteredMap && m_envPrefilteredMap->Is_Initialized() ? "OK" : "MISS",
@@ -3424,7 +3494,7 @@ Int W3DPBRShader::set(Int pass)
 	}
 	// c11 = PBR debug visualization mode (0=off, always set to avoid stale register)
 	{
-		float dbg[4] = { (float)TheGlobalData->m_pbrDebugMode, 0.0f, 0.0f, 0.0f };
+		float dbg[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // debug mode off
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
 	}
 	// Guard: if no shader was successfully compiled (e.g. after device reset failure),
@@ -3477,11 +3547,13 @@ Int W3DPBRShader::shutdown(void)
 	if (m_envIrradianceMap) { REF_PTR_RELEASE(m_envIrradianceMap); }
 	if (m_envPrefilteredMap) { REF_PTR_RELEASE(m_envPrefilteredMap); }
 	if (m_brdfLUT) { REF_PTR_RELEASE(m_brdfLUT); }
+	if (m_vsPBRUnit) { m_vsPBRUnit->Release(); m_vsPBRUnit = NULL; }
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;
 	g_pbrUnitOpaqueNTShader = NULL;
 	g_pbrUnitAlphaNTShader = NULL;
 	g_pbrUnitShaderEnabled = FALSE;
+	g_pbrUnitVS = NULL;
 	return TRUE;
 }
 
@@ -4409,6 +4481,120 @@ extern "C" void PBR_ClearIBLTextures(void)
 	pDev->SetTexture(3, NULL);
 	pDev->SetTexture(4, NULL);
 	pDev->SetTexture(5, NULL);
+}
+
+// Set TRUE by WaterRenderObjClass::Render() to skip PBR VS binding during water rendering.
+bool g_pbrInsideWaterRender = false;
+
+// ---- PBR exclusion list for specific mesh names ----
+// Meshes registered here will skip PBR_BindVS() entirely.
+// Add new entries to the initializer list; call PBR_RegisterExcludedMesh()
+// at runtime for dynamic additions.
+#define PBR_MAX_EXCLUDED_MESHES 32
+static const char *s_pbrExcludedMeshes[PBR_MAX_EXCLUDED_MESHES] = {
+	"0qsnwateryy1.w3d",	// post-processing bloom/blur object -- uses its own shaders
+	"BloomBox_R.w3d",
+};
+static int s_pbrExcludedMeshCount = 2;
+
+extern "C" void PBR_RegisterExcludedMesh(const char *meshName)
+{
+	if (!meshName || s_pbrExcludedMeshCount >= PBR_MAX_EXCLUDED_MESHES) return;
+	// strdup-allocated entries (indices >= 2) are owned by this array.
+	// Entries 0-1 are string literals from the static initializer and
+	// must NOT be freed.
+	s_pbrExcludedMeshes[s_pbrExcludedMeshCount++] = _strdup(meshName);
+}
+
+extern "C" bool PBR_IsMeshExcluded(const char *meshName)
+{
+	if (!meshName) return false;
+	for (int i = 0; i < s_pbrExcludedMeshCount; i++) {
+		if (strcmp(meshName, s_pbrExcludedMeshes[i]) == 0) return true;
+	}
+	return false;
+}
+
+// C-linkage: bind PBR vertex shader + VS constants from dx8renderer.cpp.
+// Called AFTER world matrix is cached in DX8Wrapper::render_state.world,
+// so we read render_state directly (NOT D3D device via _Get_DX8_Transform).
+extern "C" void PBR_BindVS(void)
+{
+	if (!w3dPBRShader.m_vsPBRUnit) return;
+	if (g_pbrInsideWaterRender) return;	// skip during water rendering
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+	// Read cached world/view via public Get_Transform (reads render_state,
+	// not D3D device — render_state was just updated by Set_Transform above).
+	// Get_Transform returns WW convention (Transpose of D3D), so undo that.
+	Matrix4x4 worldMtx, viewMtx, projMtx;
+	DX8Wrapper::Get_Transform(D3DTS_WORLD, worldMtx);
+	worldMtx = worldMtx.Transpose(); // WW→D3D convention (same as _Get_DX8_Transform)
+	DX8Wrapper::Get_Transform(D3DTS_VIEW, viewMtx);
+	viewMtx  = viewMtx.Transpose();
+	DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projMtx);
+	Matrix4x4 wvpMtx = worldMtx * viewMtx * projMtx;
+	D3DXMATRIX wvpT, worldT;
+	D3DXMatrixTranspose(&wvpT, (const D3DXMATRIX*)&wvpMtx);
+	D3DXMatrixTranspose(&worldT, (const D3DXMATRIX*)&worldMtx);
+	// Use wrapper's Set_Vertex_Shader_Constant so the cache tracks these
+	// writes — the restore path in dx8renderer.cpp zeroes via the wrapper too.
+	DX8Wrapper::Set_Vertex_Shader_Constant(0, (const float*)&wvpT, 4);
+	DX8Wrapper::Set_Vertex_Shader_Constant(4, (const float*)&worldT, 4);
+	{
+		const D3DXMATRIX *pWorld = (const D3DXMATRIX*)&worldMtx; // D3D convention (same as _Get_DX8_Transform) — correct rows for m3x3
+		float normalMtx[12];
+		for (int r = 0; r < 3; r++) {
+			normalMtx[r*4 + 0] = pWorld->m[r][0];
+			normalMtx[r*4 + 1] = pWorld->m[r][1];
+			normalMtx[r*4 + 2] = pWorld->m[r][2];
+			normalMtx[r*4 + 3] = 0.0f;
+		}
+		DX8Wrapper::Set_Vertex_Shader_Constant(8, normalMtx, 3);
+	}
+	DX8Wrapper::Set_Vertex_Shader(w3dPBRShader.m_vsPBRUnit);
+	// DIAG: read back all VS constants to verify they are correct
+	{ static int once = 0; if (!once) { once = 1;
+		float rd_c0[4], rd_c1[4], rd_c2[4], rd_c8[4], rd_c10[4];
+		IDirect3DVertexShader9 *rd_vs = NULL;
+		IDirect3DPixelShader9 *rd_ps = NULL;
+		dev->GetVertexShader(&rd_vs);
+		dev->GetPixelShader(&rd_ps);
+		dev->GetVertexShaderConstantF(0, rd_c0, 1);
+		dev->GetPixelShaderConstantF(1, rd_c1, 1);
+		dev->GetPixelShaderConstantF(2, rd_c2, 1);
+		dev->GetVertexShaderConstantF(8, rd_c8, 1);
+		dev->GetPixelShaderConstantF(10, rd_c10, 1);
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) {
+			fprintf(f, "[%u] PBR_VS_CONSTS:"
+				" VS=%p PS=%p\n"
+				"  c0_wvp=(%.1f,%.1f,%.1f,%.1f)\n"
+				"  c1_sunCol=(%.3f,%.3f,%.3f)\n"
+				"  c2_cam=(%.1f,%.1f,%.1f)\n"
+				"  c8_nrm=(%.4f,%.4f,%.4f,%.4f)\n"
+				"  c10_amb=(%.3f,%.3f,%.3f)\n",
+				timeGetTime(),
+				(void*)rd_vs, (void*)rd_ps,
+				rd_c0[0],rd_c0[1],rd_c0[2],rd_c0[3],
+				rd_c1[0],rd_c1[1],rd_c1[2],
+				rd_c2[0],rd_c2[1],rd_c2[2],
+				rd_c8[0],rd_c8[1],rd_c8[2],rd_c8[3],
+				rd_c10[0],rd_c10[1],rd_c10[2]);
+			fclose(f);
+		}
+		if (rd_vs) rd_vs->Release();
+		if (rd_ps) rd_ps->Release();
+	}}
+	{ static int once = 0; if (!once) { once = 1;
+		IDirect3DVertexShader9 *curVS = NULL;
+		dev->GetVertexShader(&curVS);
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] PBR_VS_BOUND: m_vsPBRUnit=%p devVS=%p eq=%d\n",
+			timeGetTime(), (void*)w3dPBRShader.m_vsPBRUnit, (void*)curVS,
+			(int)(w3dPBRShader.m_vsPBRUnit == curVS)); fclose(f); }
+		if (curVS) curVS->Release();
+	}}
 }
 
 void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness, float metalness)

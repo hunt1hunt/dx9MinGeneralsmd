@@ -88,6 +88,10 @@ static void WaterDiagF(const char *msg, float val)
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DPoly.h"
+
+// PBR water-rendering guard — set TRUE during water rendering so PBR_BindVS()
+// can skip VS binding for water surfaces (which have their own shader pipeline).
+extern bool g_pbrInsideWaterRender;
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
 
@@ -1915,6 +1919,11 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 		return;
 	}
 
+	// Signal PBR_BindVS() to skip during water rendering (water has its own shader pipeline).
+	// This MUST be set AFTER the early-return paths above, so the flag is only set
+	// when actual water rendering will occur. The flag is cleared at the end of Render().
+	g_pbrInsideWaterRender = true;
+
 	// [DIAG] CP1: Log water type at Render entry
 	WaterDiagI("CP1_RENDER: m_waterType", (int)m_waterType);
 	if (m_waterType != WATER_TYPE_2_PVSHADER) WaterDiag("CP1_RENDER: WARNING - not TYPE_2, drawSea will NOT be called!");
@@ -2113,6 +2122,9 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 
 //	renderWaterMesh();
 //	renderWaterWave();
+
+	// Clear water-rendering guard after all water drawing is done
+	g_pbrInsideWaterRender = false;
 }
 
 //-------------------------------------------------------------------------------------------------

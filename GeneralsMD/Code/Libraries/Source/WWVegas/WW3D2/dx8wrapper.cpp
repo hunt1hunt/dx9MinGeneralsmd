@@ -93,6 +93,7 @@ extern IDirect3DPixelShader9 *g_pbrUnitAlphaShader;
 extern IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader;
 extern IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader;
 extern bool g_pbrUnitShaderEnabled;
+extern IDirect3DVertexShader9 *g_pbrUnitVS;
 
 // FPU_PRESERVE
 int DX8Wrapper_PreserveFPU = 0;
@@ -658,6 +659,7 @@ ShaderClass::Invalidate();
 	g_pbrUnitAlphaShader = NULL;
 	g_pbrUnitOpaqueNTShader = NULL;
 	g_pbrUnitAlphaNTShader = NULL;
+	g_pbrUnitVS = NULL;
 
 		Set_Default_Global_Render_States();
 		WWDEBUG_SAY(("Device reset completed\n"));

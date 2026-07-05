@@ -788,11 +788,13 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		rinfo.light_environment = &lightEnv;
 
 		// Phase 4b: Set PBR pixel shader per-frame constants for unit/building rendering
-		if (TheGlobalData && TheGlobalData->m_useLegacyPBR) {
+		// Always set constants when PBR is active — do NOT gate on m_useLegacyPBR
+		// because c2(camPos)/c10(ambient) are needed by all NT ps_3_0 shaders.
+		if (TheGlobalData) {
 			static Bool pbrSceneDiag = FALSE;
 			if (!pbrSceneDiag) {
 				FILE *f = fopen("E:\\terrain_diag.log", "a");
-				if (f) { fprintf(f, "[%d] SCENE_PBR_CONST: m_useLegacyPBR=1\n", timeGetTime()); fclose(f); }
+				if (f) { fprintf(f, "[%d] SCENE_PBR_CONST: always-set (m_useLegacyPBR=%d)\n", timeGetTime(), (int)TheGlobalData->m_useLegacyPBR); fclose(f); }
 				pbrSceneDiag = TRUE;
 			}
 			IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();

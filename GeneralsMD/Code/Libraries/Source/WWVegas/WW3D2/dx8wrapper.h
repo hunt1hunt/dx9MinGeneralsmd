@@ -514,6 +514,7 @@ public:
 	static void Set_Vertex_Shader(IDirect3DVertexShader9* vertex_shader);
 	static void Set_Pixel_Shader(IDirect3DPixelShader9* pixel_shader);
 	static IDirect3DPixelShader9* Get_Pixel_Shader() { return Pixel_Shader; }
+	static IDirect3DVertexShader9* Get_Vertex_Shader() { return Vertex_Shader; }
 	static void Set_FVF(DWORD fvf);
 
 	static void Set_Vertex_Shader_Constant(int reg, const void* data, int count);
