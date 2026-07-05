@@ -1,0 +1,27 @@
+# Claude local project config
+.claude/
+
+# PBR development artifacts — plans, reviews, diagnostics
+.backup/
+
+# Plan & design documents
+*_PLAN.md
+*_PLAN_*.md
+NT_PBR_PIPELINE_7STAGES.md
+PBR_PARAM_INVENTORY.md
+PBR_PHASE34_PLAN.md
+PBR_UNIT_PHASED_PLAN.md
+
+# Review & status reports
+REVIEW_*.md
+STATUS_*.md
+
+# Diagnostic & fix scripts
+_*.py
+方案A_*.py
+
+# Other design/analysis artifacts
+mempalace.yaml
+nt-pbr-vs-crossdll-fix.txt
+PBR_Shader_*.md
+方案A_*.md
