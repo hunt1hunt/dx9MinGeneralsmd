@@ -1820,9 +1820,11 @@ void DX8TextureCategoryClass::Render(void)
 		}
 
 					// Phase 3.5: Set legacy PBR shader constants
+			// Excluded meshes (via PBR_IsMeshExcluded) skip PBR constants and
+			// fall through to the else branch (default {0,0.4,1,0.15}).
 			{
 				MeshModelClass *meshModel = mesh->Peek_Model();
-				if (meshModel && meshModel->Has_Legacy_PBR()) {
+				if (meshModel && meshModel->Has_Legacy_PBR() && !PBR_IsMeshExcluded(mesh->Get_Name())) {
 					float pbrParams[4] = { 1.0f, meshModel->Get_Legacy_Roughness(), 1.0f, meshModel->Get_Legacy_Metalness() };
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
 				} else {
@@ -1832,10 +1834,12 @@ void DX8TextureCategoryClass::Render(void)
 			}
 
 		// Phase 4c: Select PBR pixel shader variant per-mesh
+		// Excluded meshes (via PBR_IsMeshExcluded) skip PBR entirely and
+		// continue rendering with the current fixed-function pixel shader.
 		IDirect3DPixelShader9 *prevPBRShader = DX8Wrapper::Get_Pixel_Shader();
 		if (g_pbrUnitShaderEnabled) {
 			MeshModelClass *pbrModel = mesh->Peek_Model();
-			if (pbrModel && pbrModel->Has_Legacy_PBR()) {
+			if (pbrModel && pbrModel->Has_Legacy_PBR() && !PBR_IsMeshExcluded(mesh->Get_Name())) {
 				bool pbrSorting = (!!mesh->Peek_Model()->Get_Flag(MeshGeometryClass::SORT)) && WW3D::Is_Sorting_Enabled();
 
 				// Check if a _pbr.dds was loaded for this mesh's albedo texture

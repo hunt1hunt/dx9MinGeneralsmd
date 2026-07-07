@@ -4492,17 +4492,21 @@ bool g_pbrInsideWaterRender = false;
 // at runtime for dynamic additions.
 #define PBR_MAX_EXCLUDED_MESHES 32
 static const char *s_pbrExcludedMeshes[PBR_MAX_EXCLUDED_MESHES] = {
-	"0qsnwateryy1.w3d",	// post-processing bloom/blur object -- uses its own shaders
-	"BloomBox_R.w3d",
+	"0qsnwateryy1",		// water mirror surface -- terrain visual decal
+	"bloombox_r",		// bloom/blur post-processing quad
+	"bloombox_rx",		// bloom/blur variant
+	"qingwaddskybox",	// skybox flat model -- terrain visual
+	"qsnboxmorning",	// skybox flat model -- terrain visual
 };
-static int s_pbrExcludedMeshCount = 2;
+static int s_pbrExcludedMeshCount = 5;
 
 extern "C" void PBR_RegisterExcludedMesh(const char *meshName)
 {
 	if (!meshName || s_pbrExcludedMeshCount >= PBR_MAX_EXCLUDED_MESHES) return;
-	// strdup-allocated entries (indices >= 2) are owned by this array.
-	// Entries 0-1 are string literals from the static initializer and
-	// must NOT be freed.
+	// strdup-allocated entries (indices >= s_pbrExcludedMeshCount at the
+	// time of call) are owned by this array. Entries from the static
+	// initializer (indices 0-4 currently) are string literals and must
+	// NOT be freed.
 	s_pbrExcludedMeshes[s_pbrExcludedMeshCount++] = _strdup(meshName);
 }
 
@@ -4510,7 +4514,7 @@ extern "C" bool PBR_IsMeshExcluded(const char *meshName)
 {
 	if (!meshName) return false;
 	for (int i = 0; i < s_pbrExcludedMeshCount; i++) {
-		if (strcmp(meshName, s_pbrExcludedMeshes[i]) == 0) return true;
+		if (_stricmp(meshName, s_pbrExcludedMeshes[i]) == 0) return true;
 	}
 	return false;
 }

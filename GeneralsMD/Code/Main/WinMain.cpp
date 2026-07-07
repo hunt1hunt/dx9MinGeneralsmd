@@ -451,8 +451,17 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 				// cannot be legitimate -- ignore it to prevent the engine from entering
 				// an inactive state that breaks mouse click handling on the main menu.
 				//
-				if (!(bool)wParam && GetForegroundWindow() == ApplicationHWnd) {
-					return 0;
+				if (!(bool)wParam) {
+					if (GetForegroundWindow() == ApplicationHWnd) return 0;
+					// Also guard against deactivation by Windows Shell components
+					// (XamlExplorerHostIslandWindow, CabinetWClass/desktop, etc.)
+					// that steal focus during startup.
+					wchar_t _cls[64] = {0};
+					HWND _fg = GetForegroundWindow();
+					if (_fg && GetClassNameW(_fg, _cls, 64)) {
+						if (wcsstr(_cls, L"Xaml") != NULL || wcsstr(_cls, L"Cabinet") != NULL)
+							return 0;
+					}
 				}
 
 //				DWORD threadId=GetCurrentThreadId();
@@ -474,16 +483,17 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 //					Reset_D3D_Device(isWinMainActive);
 					if (isWinMainActive)
 					{	//restore mouse cursor to our custom version.
-						if (TheWin32Mouse)
+						if (TheWin32Mouse) {
+							TheWin32Mouse->lostFocus(FALSE);
 							TheWin32Mouse->setCursor(TheWin32Mouse->getMouseCursor());
+						}
 					}
 				}
 				return 0;
 			}
 			//-------------------------------------------------------------------------
 			case WM_ACTIVATE:
-			{
-				Int active = LOWORD( wParam );
+			{	Int active = LOWORD( wParam );
 
 				//
 				// when window is becoming deactivated we must release mouse cursor
@@ -492,10 +502,22 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 				//
 				if( active == WA_INACTIVE )
 				{
-
-					ClipCursor( NULL );
-					if (TheAudio)
-						TheAudio->loseFocus();
+					// Skip ClipCursor(NULL) when deactivated by Windows Shell
+					// components (XamlExplorerHostIslandWindow, CabinetWClass/desktop)
+					// that briefly steal focus during startup.
+					Bool _skipClip = FALSE;
+					{	wchar_t _cls[64] = {0};
+						HWND _fg = GetForegroundWindow();
+						if (_fg && GetClassNameW(_fg, _cls, 64)) {
+							if (wcsstr(_cls, L"Xaml") != NULL || wcsstr(_cls, L"Cabinet") != NULL)
+								_skipClip = TRUE;
+						}
+					}
+					if (!_skipClip) {
+						ClipCursor( NULL );
+						if (TheAudio)
+							TheAudio->loseFocus();
+					}
 				}  // end if
 				else
 				{
