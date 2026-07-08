@@ -813,9 +813,9 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 
 				// c1 = sun diffuse color x30, c10 = ambient x50 (NT PBR boost)
 				float sunColor[4] = {
-					TheGlobalData->m_terrainDiffuse[0].red * 30.0f,
-					TheGlobalData->m_terrainDiffuse[0].green * 30.0f,
-					TheGlobalData->m_terrainDiffuse[0].blue * 30.0f,
+					TheGlobalData->m_terrainDiffuse[0].red * 1.0f,//30f,
+					TheGlobalData->m_terrainDiffuse[0].green * 1.0f,
+					TheGlobalData->m_terrainDiffuse[0].blue * 1.0f,
 					0.0f};
 				pDev->SetPixelShaderConstantF(1, sunColor, 1);
 
@@ -851,7 +851,7 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 
 				// c10 = scene ambient x50 (NT PBR boost)
 				Vector3 ambient = Get_Ambient_Light();
-				float ambientF[4] = { ambient.X * 50.0f, ambient.Y * 50.0f, ambient.Z * 50.0f, 0.0f };
+				float ambientF[4] = { ambient.X * 1.0f, ambient.Y * 1.0f, ambient.Z * 1.0f, 0.0f };
 				pDev->SetPixelShaderConstantF(10, ambientF, 1);
 			}
 		}

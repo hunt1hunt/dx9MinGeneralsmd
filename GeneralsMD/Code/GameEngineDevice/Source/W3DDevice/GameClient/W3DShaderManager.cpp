@@ -2664,7 +2664,7 @@ Int W3DPBRShader::init( void )
 		"    float3 result = float3(0,0,0);\n"
 		"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
 		// TMP: sun light 30x to compensate for missing environmental lighting
-		"    float3 lightCol[4] = { c1.xyz * 30.0, c5.xyz, c7.xyz, c9.xyz };\n"
+		"    float3 lightCol[4] = { c1.xyz * 1.0, c5.xyz, c7.xyz, c9.xyz };\n"
 		"    [loop] for (int i = 0; i < 4; i++) {\n"
 		"        if (dot(lightDir[i], lightDir[i]) < 0.0001) continue;\n"
 		"        float3 L = normalize(lightDir[i]);\n"
@@ -3109,7 +3109,7 @@ Int W3DPBRShader::init( void )
 				"    float3 result = float3(0,0,0);\n"
 				"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
 				// TMP: sun 30x to compensate for missing environmental lighting
-				"    float3 lightCol[4] = { c1.xyz * 30.0, c5.xyz, c7.xyz, c9.xyz };\n"
+				"    float3 lightCol[4] = { c1.xyz * 1.0, c5.xyz, c7.xyz, c9.xyz };\n"
 				"    [loop] for (int i = 0; i < 4; i++) {\n"
 				"        if (dot(lightDir[i], lightDir[i]) < 0.0001) continue;\n"
 				"        float3 L = normalize(lightDir[i]);\n"
@@ -3192,7 +3192,7 @@ Int W3DPBRShader::init( void )
 			"    float3 result = float3(0,0,0);\n"
 			"    float3 lightDir[4] = { c0.xyz, c4.xyz, c6.xyz, c8.xyz };\n"
 			// TMP: sun 30x to compensate for missing environmental lighting
-			"    float3 lightCol[4] = { c1.xyz * 30.0, c5.xyz, c7.xyz, c9.xyz };\n"
+			"    float3 lightCol[4] = { c1.xyz * 1.0, c5.xyz, c7.xyz, c9.xyz };\n"
 			"    [loop] for (int i = 0; i < 4; i++) {\n"
 			"        if (dot(lightDir[i], lightDir[i]) < 0.0001) continue;\n"
 			"        float3 L = normalize(lightDir[i]);\n"
