@@ -49,6 +49,8 @@
 #include "Common/CDManager.h"
 #include "Common/GlobalData.h"
 #include "Common/PerfTimer.h"
+// C-linkage: PBR per-model override store (exported from W3DShaderManager)
+extern "C" void PBR_SetLegacyParam(const char *name, float roughness, float metalness);
 #include "Common/RandomValue.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/ModuleFactory.h"
@@ -504,7 +506,33 @@ void GameEngine::init( int argc, char *argv[] )
 		initSubsystem(TheRadar,"TheRadar", createRadar(), NULL);
 		initSubsystem(TheVictoryConditions,"TheVictoryConditions", createVictoryConditions(), NULL);
 
-
+		// Load PBROverride.ini (per-model PBR roughness/metalness overrides)
+		// Load PBROverride.ini — read+parse via TheLocalFileSystem, bypass .big archives.
+		if (TheLocalFileSystem) {
+			File *f = TheLocalFileSystem->openFile("Data\\INI\\PBROverride.ini", File::READ);
+			if (f) {
+				char *data = f->readEntireAndClose();
+				if (data) {
+					char *line = data;
+					while (*line) {
+						char *next = strchr(line, '\n');
+						if (next) *next++ = '\0'; else next = line + strlen(line);
+						char *s = line;
+						while (*s == ' ' || *s == '\t') s++;
+						if (*s && *s != ';' && *s != '/') {
+							char name[256]; float rough, metal;
+							if (sscanf(s, " %255[^=] = %f , %f", name, &rough, &metal) >= 3) {
+								char *e = name + strlen(name) - 1;
+								while (e > name && (*e == ' ' || *e == '\t')) *e-- = '\0';
+								PBR_SetLegacyParam(name, rough, metal);
+							}
+						}
+						line = next;
+					}
+					delete[] data;
+				}
+			}
+		}
 
 	#ifdef DUMP_PERF_STATS///////////////////////////////////////////////////////////////////////////
 	GetPrecisionTimer(&endTime64);//////////////////////////////////////////////////////////////////

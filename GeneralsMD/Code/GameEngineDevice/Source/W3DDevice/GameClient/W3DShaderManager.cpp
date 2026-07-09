@@ -1582,6 +1582,8 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRPixelShaderNT_30_IBL;	   ///<NT opaque ps_3_0 + diffuse IBL
 	IDirect3DPixelShader9*	m_dwPBRAlphaPixelShaderNT_30_IBL; ///<NT alpha ps_3_0 + diffuse IBL
 	IDirect3DVertexShader9*	m_vsPBRUnit;	///<pass-through vertex shader for PBR unit (vs_1_1)
+	IDirect3DPixelShader9*	m_dwSunGlowShader;	///<sun glow overlay (RA3-style)
+	Bool				m_sunGlowEnabled;	///<true after successful compile
 	virtual Int set(Int pass);		///<setup shader for specified rendering pass
 	virtual void reset(void);		///<restore W3D state after PBR
 	virtual Int init(void);			///<compile HLSL and create shaders
@@ -2485,6 +2487,8 @@ Int W3DPBRShader::init( void )
 	m_dwPBRPixelShaderNT_30_IBL = NULL;
 	m_dwPBRAlphaPixelShaderNT_30_IBL = NULL;
 	m_vsPBRUnit = NULL;
+	m_dwSunGlowShader = NULL;
+	m_sunGlowEnabled = FALSE;
 
 	// Phase 4: 4-light GGX shader with PBR texture support
 	// Register layout:
@@ -3350,6 +3354,33 @@ Int W3DPBRShader::init( void )
 		}
 	}
 
+	// ---- Sun Glow overlay shader (RA3-style) ----
+	{
+		const char src[] =
+			"ps.2.0\n"
+			"def c7, 0.5, 2.0, 1.0, -1.0\n"
+			"def c8, 32.0, 128.0, 0.3, 0.5\n"
+			"mad r0.xy, v0, c7.x, c7.x\n"
+			"mad r0.xy, r0, c7.y, c7.w\n"
+			"dp3 r0.z, r0, r0\n"
+			"rsq r0.z, r0.z\n"
+			"mul r0.xyz, r0, r0.z\n"
+			"dp3 r1.x, r0, c0\n"
+			"max r1.x, r1.x, c7.z\n"
+			"pow r2.x, r1.x, c8.x\n"
+			"add r1.x, r1.x, c8.z\n"
+			"max r1.x, r1.x, c8.w\n"
+			"pow r3.x, r1.x, c8.y\n"
+			"mad r2.x, r3.x, c8.w, r2.x\n"
+			"mul r0.xyz, r2.x, c1\n"
+			"mov r0.w, r2.x\n"
+			"mov oC0, r0\n";
+		if (FAILED(compilePBRShader(src, &m_dwSunGlowShader, "sun_glow")))
+			m_dwSunGlowShader = NULL;
+		m_sunGlowEnabled = (m_dwSunGlowShader != NULL) ? TRUE : FALSE;
+		DEBUG_LOG(("Sun Glow shader: %s\n", m_sunGlowEnabled ? "COMPILED OK" : "FAILED"));
+	}
+
 	return (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 }
 
@@ -3494,7 +3525,8 @@ Int W3DPBRShader::set(Int pass)
 	}
 	// c11 = PBR debug visualization mode (0=off, always set to avoid stale register)
 	{
-		float dbg[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // debug mode off
+	//	float dbg[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // debug mode off
+	float dbg[4] = { (float)TheGlobalData->m_pbrDebugMode, 0.0f, 0.0f, 0.0f };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
 	}
 	// Guard: if no shader was successfully compiled (e.g. after device reset failure),
@@ -3548,6 +3580,8 @@ Int W3DPBRShader::shutdown(void)
 	if (m_envPrefilteredMap) { REF_PTR_RELEASE(m_envPrefilteredMap); }
 	if (m_brdfLUT) { REF_PTR_RELEASE(m_brdfLUT); }
 	if (m_vsPBRUnit) { m_vsPBRUnit->Release(); m_vsPBRUnit = NULL; }
+	if (m_dwSunGlowShader) { m_dwSunGlowShader->Release(); m_dwSunGlowShader = NULL; }
+	m_sunGlowEnabled = FALSE;
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;
 	g_pbrUnitOpaqueNTShader = NULL;
@@ -4519,6 +4553,60 @@ extern "C" bool PBR_IsMeshExcluded(const char *meshName)
 	return false;
 }
 
+// C-linkage: get per-model PBR params from PBROverride.ini (INI-driven override).
+// Called from dx8renderer.cpp Phase 3.5. Returns true if an override was found.
+extern "C" void PBR_SetLegacyParam(const char *name, float roughness, float metalness)
+{
+	W3DShaderManager::setLegacyPBRParams(name, roughness, metalness);
+}
+
+extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, W3DShaderManager::LegacyPBRParams *outParams)
+{
+	return W3DShaderManager::getLegacyPBRParams(meshName, outParams);
+}
+
+// C-linkage: sun glow shader access for W3DScene.cpp
+extern "C" bool PBR_IsSunGlowEnabled(void)
+{
+	return w3dPBRShader.m_sunGlowEnabled;
+}
+extern "C" void PBR_RenderSunGlow(void)
+{
+	if (!w3dPBRShader.m_sunGlowEnabled || !w3dPBRShader.m_dwSunGlowShader) return;
+
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+
+	DWORD zE, zW, aB, sB, dB;
+	dev->GetRenderState(D3DRS_ZENABLE, &zE);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &zW);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &aB);
+	dev->GetRenderState(D3DRS_SRCBLEND, &sB);
+	dev->GetRenderState(D3DRS_DESTBLEND, &dB);
+
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+
+	struct TV { float x,y,z,w; DWORD c; float u,v; };
+	TV v[4] = {
+		{-1,-1,0,1,0xFFFFFFFF,0,0}, {1,-1,0,1,0xFFFFFFFF,0,0},
+		{-1,1,0,1,0xFFFFFFFF,0,0}, {1,1,0,1,0xFFFFFFFF,0,0},
+	};
+	dev->SetFVF(D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX1);
+	dev->SetPixelShader(w3dPBRShader.m_dwSunGlowShader);
+	dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(TV));
+
+	dev->SetPixelShader(NULL);
+	dev->SetRenderState(D3DRS_ZENABLE, zE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, zW);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, aB);
+	dev->SetRenderState(D3DRS_SRCBLEND, sB);
+	dev->SetRenderState(D3DRS_DESTBLEND, dB);
+}
+
 // C-linkage: bind PBR vertex shader + VS constants from dx8renderer.cpp.
 // Called AFTER world matrix is cached in DX8Wrapper::render_state.world,
 // so we read render_state directly (NOT D3D device via _Get_DX8_Transform).
@@ -4617,14 +4705,48 @@ void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness,
 
 Bool W3DShaderManager::getLegacyPBRParams(const char *meshName, LegacyPBRParams *outParams)
 {
-	if (!m_legacyPBRParamsMap || !outParams) return false;
-	AsciiString key(meshName);
-	LegacyPBRParamsMap::iterator it = m_legacyPBRParamsMap->find(key);
-	if (it != m_legacyPBRParamsMap->end()) {
-		*outParams = it->second;
-		return true;
+	if (!m_legacyPBRParamsMap || !outParams || !meshName) {
+		// DIAG: log when no map or no mesh (first call only)
+		{ static int d = 0; if (d < 1) { d++; FILE *f = fopen("E:\\pbr_diag.log", "a");
+			if (f) { fprintf(f, "[PBR_OVERRIDE] getLegacyPBRParams called but map=%p out=%p name=%s\n",
+				(void*)m_legacyPBRParamsMap, (void*)outParams, meshName ? meshName : "NULL"); fclose(f); }
+		}}
+		return false;
 	}
-	return false;
+	// DIAG: log map size on first call
+	{ static int d2 = 0; if (d2 < 1) { d2++; FILE *f = fopen("E:\\pbr_diag.log", "a");
+		if (f) { fprintf(f, "[PBR_OVERRIDE] LegacyPBRParamsMap has %d entries\n", (int)m_legacyPBRParamsMap->size()); fclose(f); }
+	}}
+
+	// Prefix match: PBROverride.ini keys are container names (e.g. "AVHUMMER")
+	// which must match the start of meshName (e.g. "AVHUMMER.Body01").
+	// We return the BEST (longest) match.
+	int bestLen = 0;
+	Bool found = false;
+
+	for (LegacyPBRParamsMap::iterator it = m_legacyPBRParamsMap->begin();
+		 it != m_legacyPBRParamsMap->end(); ++it)
+	{
+		const char *key = it->first.str();
+		int keyLen = strlen(key);
+		if (keyLen <= bestLen) continue;	// already have a longer match
+
+		if (_strnicmp(meshName, key, keyLen) == 0) {
+			char next = meshName[keyLen];
+			if (next == '.' || next == '\0') {
+				bestLen = keyLen;
+				*outParams = it->second;
+				found = true;
+				// DIAG: log first 20 PBROverride matches
+				{ static int diagPBR = 0; if (diagPBR < 20) { diagPBR++;
+					FILE *f = fopen("E:\\pbr_diag.log", "a");
+					if (f) { fprintf(f, "[PBR_OVERRIDE] match: mesh=\"%s\" key=\"%s\" rough=%.2f metal=%.2f\n",
+						meshName, key, outParams->roughness, outParams->metalness); fclose(f); }
+				}}
+			}
+		}
+	}
+	return found;
 }
 
 Bool W3DShaderManager::isLegacyPBREnabled(void)

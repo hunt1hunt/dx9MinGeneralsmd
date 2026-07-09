@@ -64,6 +64,10 @@
 #include "WW3D2/DX8Caps.h"
 #include "WW3D2/colorspace.h"
 
+// C-linkage sun glow shader from W3DShaderManager (cross-library)
+extern "C" bool PBR_IsSunGlowEnabled(void);
+extern "C" void PBR_RenderSunGlow(void);
+
 #ifdef _INTERNAL
 // for occasional debugging...
 //#pragma optimize("", off)
@@ -813,7 +817,7 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 
 				// c1 = sun diffuse color x30, c10 = ambient x50 (NT PBR boost)
 				float sunColor[4] = {
-					TheGlobalData->m_terrainDiffuse[0].red * 1.0f,//30f,
+					TheGlobalData->m_terrainDiffuse[0].red * 1.0f,
 					TheGlobalData->m_terrainDiffuse[0].green * 1.0f,
 					TheGlobalData->m_terrainDiffuse[0].blue * 1.0f,
 					0.0f};
@@ -1136,6 +1140,8 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 			ShaderClass::Invalidate();
 		}
 	}
+	// Sun Glow overlay (RA3-style, after all scene objects)
+	PBR_RenderSunGlow();
 }
 
 //=============================================================================

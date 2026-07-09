@@ -144,10 +144,25 @@ static const BlockParse theTypeTable[] =
 	{	"ReallyLowMHz",				parseReallyLowMHz },
 	{	"ScriptAction",				ScriptEngine::parseScriptAction },
 	{	"ScriptCondition",		ScriptEngine::parseScriptCondition },
-	
+	{ "PBROverride",				INI::parsePBROverride },
+
 	{ NULL,									NULL },		// keep this last!
 };
 
+// C-linkage: forward declared in W3DShaderManager.cpp (cross-library call)
+extern "C" void PBR_SetLegacyParam(const char* name, float roughness, float metalness);
+
+// PBROverride: parse "ContainerPrefix = roughness, metalness"
+// Roughness: 0=glossy, 1=rough. Metalness: 0=non-metal, 1=full metal.
+void INI::parsePBROverride( INI* ini )
+{
+	const char* name = ini->getNextToken();
+	Real roughness = (Real)atof(ini->getNextToken());
+	ini->getNextToken(); // skip comma
+	Real metalness = (Real)atof(ini->getNextToken());
+
+	PBR_SetLegacyParam(name, (float)roughness, (float)metalness);
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS //////////////////////////////////////////////////////////////////////////////

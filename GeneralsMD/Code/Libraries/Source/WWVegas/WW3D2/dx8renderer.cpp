@@ -82,6 +82,11 @@ extern "C" void PBR_ClearIBLTextures(void);
 extern "C" void PBR_BindVS(void);
 extern "C" bool PBR_IsMeshExcluded(const char *meshName);
 
+// C-linkage PBR per-model override from PBROverride.ini (W3DShaderManager).
+// Returns roughness/metalness if an INI entry matches this mesh name prefix.
+struct LegacyPBRParams { float roughness; float metalness; float pad[2]; };
+extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, LegacyPBRParams *outParams);
+
 static int s_diagFVF = 0;
 static int s_diagNorm = 0;
 
@@ -1820,11 +1825,14 @@ void DX8TextureCategoryClass::Render(void)
 		}
 
 					// Phase 3.5: Set legacy PBR shader constants
-			// Excluded meshes (via PBR_IsMeshExcluded) skip PBR constants and
-			// fall through to the else branch (default {0,0.4,1,0.15}).
+			// Priority: 1) PBROverride.ini, 2) Has_Legacy_PBR(), 3) default.
 			{
 				MeshModelClass *meshModel = mesh->Peek_Model();
-				if (meshModel && meshModel->Has_Legacy_PBR() && !PBR_IsMeshExcluded(mesh->Get_Name())) {
+				LegacyPBRParams override;
+				if (PBR_GetLegacyPBRParams(mesh->Get_Name(), &override)) {
+					float pbrParams[4] = { 1.0f, override.roughness, 1.0f, override.metalness };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
+				} else if (meshModel && meshModel->Has_Legacy_PBR() && !PBR_IsMeshExcluded(mesh->Get_Name())) {
 					float pbrParams[4] = { 1.0f, meshModel->Get_Legacy_Roughness(), 1.0f, meshModel->Get_Legacy_Metalness() };
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
 				} else {
@@ -1868,7 +1876,8 @@ void DX8TextureCategoryClass::Render(void)
 					DX8Wrapper::Set_Pixel_Shader(pbrShader);
 					PBR_BindIBLTextures();  // Bind IBL CubeMap textures for environment reflections
 					// Set debug visualization mode (c11.x = PBRDebugMode from INI)
-					float dbg[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // debug mode off
+					//float dbg[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // debug mode off
+					float dbg[4] = { (float)g_pbrDebugMode, 0.0f, 0.0f, 0.0f };
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
 					// DIAG: unified PBR diagnostics — first 3 PBR draws
 					{

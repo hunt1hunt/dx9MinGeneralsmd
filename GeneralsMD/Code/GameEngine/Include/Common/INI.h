@@ -242,6 +242,7 @@ public:
 	static void parseCredits( INI* ini );
 	static void parseWindowTransitions( INI* ini );
 	static void parseChallengeModeDefinition( INI* ini );
+	static void parsePBROverride( INI* ini );
 
 	inline AsciiString getFilename( void ) const { return m_filename; }
 	inline INILoadType getLoadType( void ) const { return m_loadType; }
