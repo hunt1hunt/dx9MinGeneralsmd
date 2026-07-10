@@ -3354,31 +3354,30 @@ Int W3DPBRShader::init( void )
 		}
 	}
 
-	// ---- Sun Glow overlay shader (RA3-style) ----
+	// ---- Sun Glow overlay shader (RA3-style) - HLSL version ----
+	// Assembly ps.2.0 compiled OK but CreatePixelShader rejected on D3D9On12
+	// with error 0x8876086C. HLSL path works (same as all other PBR shaders).
 	{
-		const char src[] =
-			"ps.2.0\n"
-			"def c7, 0.5, 2.0, 1.0, -1.0\n"
-			"def c8, 32.0, 128.0, 0.3, 0.5\n"
-			"mad r0.xy, v0, c7.x, c7.x\n"
-			"mad r0.xy, r0, c7.y, c7.w\n"
-			"dp3 r0.z, r0, r0\n"
-			"rsq r0.z, r0.z\n"
-			"mul r0.xyz, r0, r0.z\n"
-			"dp3 r1.x, r0, c0\n"
-			"max r1.x, r1.x, c7.z\n"
-			"pow r2.x, r1.x, c8.x\n"
-			"add r1.x, r1.x, c8.z\n"
-			"max r1.x, r1.x, c8.w\n"
-			"pow r3.x, r1.x, c8.y\n"
-			"mad r2.x, r3.x, c8.w, r2.x\n"
-			"mul r0.xyz, r2.x, c1\n"
-			"mov r0.w, r2.x\n"
-			"mov oC0, r0\n";
+		const char* src =
+			"float3 c0 : register(c0);\n"
+			"float3 c1 : register(c1);\n"
+			"float4 main(float2 uv : TEXCOORD0) : COLOR\n"
+			"{\n"
+			"    float d = dot(uv, uv);\n"
+			"    float3 r0 = float3(uv * rsqrt(d), 1.0 / d);\n"
+			"    float NdotL = dot(r0, c0);\n"
+			"    NdotL = max(NdotL, 1.0);\n"
+			"    float intensity = pow(NdotL, 32.0)\n"
+			"        + pow(max(NdotL + 0.3, 0.5), 128.0) * 0.5;\n"
+			"    return float4(c1 * intensity, intensity);\n"
+			"}\n";
 		if (FAILED(compilePBRShader(src, &m_dwSunGlowShader, "sun_glow")))
 			m_dwSunGlowShader = NULL;
 		m_sunGlowEnabled = (m_dwSunGlowShader != NULL) ? TRUE : FALSE;
-		DEBUG_LOG(("Sun Glow shader: %s\n", m_sunGlowEnabled ? "COMPILED OK" : "FAILED"));
+		DEBUG_LOG(("Sun Glow shader: %s  handle=0x%08X\n",
+			m_sunGlowEnabled ? "COMPILED OK" : "FAILED",
+			(UINT)(UINT_PTR)m_dwSunGlowShader));
+		TerrainDiagI("sun_glow_compiled", (int)m_sunGlowEnabled);
 	}
 
 	return (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
@@ -3580,7 +3579,11 @@ Int W3DPBRShader::shutdown(void)
 	if (m_envPrefilteredMap) { REF_PTR_RELEASE(m_envPrefilteredMap); }
 	if (m_brdfLUT) { REF_PTR_RELEASE(m_brdfLUT); }
 	if (m_vsPBRUnit) { m_vsPBRUnit->Release(); m_vsPBRUnit = NULL; }
-	if (m_dwSunGlowShader) { m_dwSunGlowShader->Release(); m_dwSunGlowShader = NULL; }
+	if (m_dwSunGlowShader) {
+		DEBUG_LOG(("Sun Glow shader: RELEASED\n"));
+		TerrainDiag("sun_glow_released");
+		m_dwSunGlowShader->Release(); m_dwSunGlowShader = NULL;
+	}
 	m_sunGlowEnabled = FALSE;
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;
@@ -4572,10 +4575,29 @@ extern "C" bool PBR_IsSunGlowEnabled(void)
 }
 extern "C" void PBR_RenderSunGlow(void)
 {
-	if (!w3dPBRShader.m_sunGlowEnabled || !w3dPBRShader.m_dwSunGlowShader) return;
+	static Bool s_firstRender = TRUE;
+	if (!w3dPBRShader.m_sunGlowEnabled || !w3dPBRShader.m_dwSunGlowShader) {
+		if (s_firstRender) {
+			DEBUG_LOG(("Sun Glow: skipped (disabled)\n"));
+			TerrainDiag("sun_glow_skip_disabled");
+		}
+		return;
+	}
 
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
-	if (!dev) return;
+	if (!dev) {
+		if (s_firstRender) {
+			DEBUG_LOG(("Sun Glow: skipped (no device)\n"));
+			TerrainDiag("sun_glow_skip_nodevice");
+		}
+		return;
+	}
+
+	if (s_firstRender) {
+		s_firstRender = FALSE;
+		DEBUG_LOG(("Sun Glow: FIRST RENDER\n"));
+		TerrainDiag("sun_glow_first_render");
+	}
 
 	DWORD zE, zW, aB, sB, dB;
 	dev->GetRenderState(D3DRS_ZENABLE, &zE);
