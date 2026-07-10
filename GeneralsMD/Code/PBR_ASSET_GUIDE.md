@@ -54,7 +54,36 @@ DDS 导出（NVTT/PS 插件） → 游戏纹理
 
 > 3DS Max **2023** 及以上版本有社区 W3D 导出工具。旧版本（Max 2010/2012）的官方 W3D 导出插件在新版 Max 上不可用，请使用社区维护版本。
 
----
+> #### 💡 视口预览：在 Max 2023 中用 DirectX Shader 实时查看 PBR 效果
+>
+> 默认的 Max 材质编辑器无法直接预览 W3D 模型的 PBR 渲染效果。由 NordlichtS 等 W3DHUB 大神基于 HLSL 重写的 shader 解决了此问题：
+>
+> **GitHub 源码：** https://github.com/NordlichtS/W3X-RA3-shaders-for-max2023
+>
+> 该 shader 支持在 Max 2023 视口中实时预览：
+> - 粗糙度（Roughness）/ 金属度（Metalness）变化
+> - **阵营色（Team Color）**——蓝/绿/红等
+> - 法线贴图效果
+> - 环境反射（IBL CubeMap）
+>
+> #### 工作流分工（预览 ≠ 导出）
+>
+> ```
+> ┌─────────────────────────────────────────────────────────────┐
+> │ Max 2023 材质编辑器 → DirectX Shader → 视口预览 PBR 效果   │
+> │     ↓ 设置贴图路径、粗糙度值、金属度值                      │
+> │ W3D 导出插件 → 导出 .W3D 文件（嵌入材质参数）               │
+> │     ↓                                                      │
+> │ SAGE 引擎（游戏运行时）→ 用自己的 PBR shader 渲染           │
+> │    （W3DShaderManager.cpp，与 Max 的 DX Shader 无关）       │
+> └─────────────────────────────────────────────────────────────┘
+> ```
+>
+> **Max 材质编辑器 → 启用 DirectX Shader** 仅用于 **视口预览**，确保导出前效果正确。
+> **游戏运行时** 使用的是引擎自带的 PBR shader（`W3DShaderManager.cpp`），两者无关、不冲突。
+> 导出器有不能读取材质和 shader 参数的缺陷，NordlichtS 的 HLSL shader 已修复此问题。
+>
+> ---
 
 ## 2. PBR 管线概述
 
