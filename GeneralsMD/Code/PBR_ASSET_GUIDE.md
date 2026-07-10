@@ -443,6 +443,95 @@ SPM 越红（反射越强） → 漫反射应该越暗
 → PBR Shader 有自动修正，可忽略此问题
 ```
 
+### 8.5 SPM 贴图与 PBROverride.ini 的配合关系
+
+> ⚠️ **核心问题**：SPM 贴图和 PBROverride.ini 在引擎中有**冲突**，需要理解它们的优先级才能正确配合。
+
+#### 优先级规则
+
+引擎的 PBR 着色器中有一段关键逻辑（所有 ps_2_0/ps_3_0 纹理变体均包含）：
+
+```hlsl
+float useOverride = step(0.5, c3.x);  // c3.x=1.0 → PBROverride 命中
+float roughness = lerp(pbrMap.r,  c3.y, useOverride);
+float metalness = lerp(pbrMap.g,  c3.w, useOverride);
+float ao        = lerp(pbrMap.b,  c3.z, useOverride);
+```
+
+同时渲染器设置 c3 的方式是（`dx8renderer.cpp` 第 1833 行）：
+
+```cpp
+float pbrParams[4] = { 1.0f, override.roughness, 1.0f, override.metalness };
+//                     ↑                    ↑              ↑
+//                     c3.x=1(覆盖)   c3.y=粗糙度   c3.z=1.0   c3.w=金属度
+```
+
+#### 冲突表现
+
+| 场景 | 有 PBROverride 命中（c3.x=1） | 无 PBROverride（c3.x=0） |
+|------|:---------------------------:|:---------------------:|
+| roughness 来源 | ✅ c3.y（**INI 值**） | ✅ SPM.R（**贴图 R 通道**） |
+| metalness 来源 | ✅ c3.w（**INI 值**） | ✅ SPM.G（**贴图 G 通道**） |
+| AO 来源 | ❌ c3.z = **1.0**（无遮蔽！） | ✅ SPM.B（**贴图 B 通道**） |
+
+**结论**：
+- SPM 贴图的 **R/G 通道**在有 PBROverride.ini 条目时**被完全覆盖**，不生效
+- SPM 贴图的 **B 通道（AO）** 也被覆盖为 1.0（等于 AO 白做）
+- PBROverride.ini 设计之初仅面向 NoTexture 模式，未考虑与 SPM 贴图共存
+
+#### 配合策略
+
+##### 方案一：SPM 贴图优先（推荐有完整 PBR 贴图的新模型）
+
+**不给模型写 PBROverride.ini 条目**，由 SPM 贴图全权控制：
+
+```
+SPM.R = 粗糙度  (0.0–1.0)
+SPM.G = 金属度  (0.0–1.0)
+SPM.B = AO      (0.0–1.0)
+```
+
+此时 `c3.x=0` → `lerp` 退化为直接使用贴图值。贴图 R/G/B 三通道全部生效。
+
+##### 方案二：INI 控制常数值（适合无 PBR 贴图的 NoTexture 模型）
+
+写 PBROverride.ini 条目，模型使用 NT 着色器变体（不采样 s2）：
+
+```ini
+AVPaladin = 0.40, 0.45
+```
+
+NT 着色器直接使用 c3 常量：
+```hlsl
+float roughness = max(c3.y, 0.04);
+float metalness = saturate(c3.w);
+float ao = c3.z;  // = 1.0（无遮蔽）
+```
+
+同时模型不需要也不应该绑定 SPM 贴图到 s2 槽位。
+
+##### 方案三：INI + SPM 共存（需引擎代码修改）
+
+当前引擎不支持 INI 与 SPM 混合使用。如需 INI 控制基准 + SPM 保留 AO 和局部变化，需要修改：
+
+**`dx8renderer.cpp`** —— 让 c3.z 传递真实 AO 值（而非硬编码 1.0）：
+```cpp
+// 改为：c3.z 存储 AO。如果 PBROverride.ini 扩展支持 AO 字段则用，否则=1（表示"使用纹理值"）
+// 同时在着色器中判断：c3.z < 1.0 时才覆盖
+```
+
+#### 实际操作检查清单
+
+```
+□ 模型有无 SPM 贴图？
+  有 → □ 检查 PBROverride.ini 中是否有该模型条目
+        □ 如有 → 确认 INI 值是否与 SPM 贴图一致
+                → 如值相同 → 条目冗余，可删除（让贴图控制）
+                → 如值不同 → 条目会覆盖贴图！（要么删条目，要么改贴图匹配 INI）
+        □ 如无 → SPM 贴图完全生效（推荐状态）
+  无 → □ 使用 PBROverride.ini 控制 roughness/metalness（NT 模式）
+```
+
 ---
 
 ## 9. 法线贴图（NRM）制作
