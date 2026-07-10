@@ -18,10 +18,11 @@
 8. [SPM 贴图制作](#8-spm-贴图制作)
 9. [法线贴图（NRM）制作](#9-法线贴图nrm制作)
 10. [纹理压缩与导出](#10-纹理压缩与导出)
-11. [材质参数参考表](#11-材质参数参考表)
-12. [PBROverride.ini 配置](#12-pbroverrideini-配置)
-13. [诊断与调试](#13-诊断与调试)
-14. [常见问题](#14-常见问题)
+11. [纹理命名规范](#11-纹理命名规范)
+12. [材质参数参考表](#12-材质参数参考表)
+13. [PBROverride.ini 配置](#13-pbroverrideini-配置)
+14. [诊断与调试](#14-诊断与调试)
+15. [常见问题](#15-常见问题)
 
 ---
 
@@ -445,92 +446,54 @@ SPM 越红（反射越强） → 漫反射应该越暗
 
 ### 8.5 SPM 贴图与 PBROverride.ini 的配合关系
 
-> ⚠️ **核心问题**：SPM 贴图和 PBROverride.ini 在引擎中有**冲突**，需要理解它们的优先级才能正确配合。
+#### 引擎的真实处理流程
 
-#### 优先级规则
+SPM 贴图和 PBROverride.ini **不是互相冲突的关系**，而是引擎已经设计了明确的优先级处理流程。关键在于 `dx8renderer.cpp` 中的**两阶段流水线**：
 
-引擎的 PBR 着色器中有一段关键逻辑（所有 ps_2_0/ps_3_0 纹理变体均包含）：
+```
+Phase 3.5（第 1827 行）：设 c3 常数值
+  ↓
+  从 PBROverride.ini 读取，c3 = { 1.0, rough, 1.0, metal }
+  （此时 c3.x=1.0 表示"有 INI 覆盖"）
 
-```hlsl
-float useOverride = step(0.5, c3.x);  // c3.x=1.0 → PBROverride 命中
-float roughness = lerp(pbrMap.r,  c3.y, useOverride);
-float metalness = lerp(pbrMap.g,  c3.w, useOverride);
-float ao        = lerp(pbrMap.b,  c3.z, useOverride);
+Phase 4c（第 1848 行）：选择着色器变体
+  ↓
+  检测该模型是否有 _pbr.dds 贴图？
+  ├── 有 → 覆盖 c3 = { 0.0, ..., ..., ... }
+  │        （c3.x=0.0 → 禁用常量覆盖 → 使用 SPM 贴图值）
+  └── 无 → 保留 Phase 3.5 设置的 c3.x=1.0
+           （使用 PBROverride.ini 常数值 → NT 着色器变体）
 ```
 
-同时渲染器设置 c3 的方式是（`dx8renderer.cpp` 第 1833 行）：
+关键代码（`dx8renderer.cpp` 第 1869–1874 行）：
 
 ```cpp
-float pbrParams[4] = { 1.0f, override.roughness, 1.0f, override.metalness };
-//                     ↑                    ↑              ↑
-//                     c3.x=1(覆盖)   c3.y=粗糙度   c3.z=1.0   c3.w=金属度
+// When _pbr.dds exists alongside legacy PBR params, disable constant
+// override (c3.x=0) so roughness/metalness/ao come from the texture.
+if (hasPBRTex) {
+    float pbrParams[4] = { 0.0f, pbrModel->Get_Legacy_Roughness(), 1.0f, pbrModel->Get_Legacy_Metalness() };
+    DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, pbrParams, 1);
+}
 ```
 
-#### 冲突表现
+#### 两种路径互不影响
 
-| 场景 | 有 PBROverride 命中（c3.x=1） | 无 PBROverride（c3.x=0） |
-|------|:---------------------------:|:---------------------:|
-| roughness 来源 | ✅ c3.y（**INI 值**） | ✅ SPM.R（**贴图 R 通道**） |
-| metalness 来源 | ✅ c3.w（**INI 值**） | ✅ SPM.G（**贴图 G 通道**） |
-| AO 来源 | ❌ c3.z = **1.0**（无遮蔽！） | ✅ SPM.B（**贴图 B 通道**） |
+| | 旧模型（无 `_pbr.dds`） | 新模型（有 `_pbr.dds`） |
+|---|---|---|
+| `Has_Legacy_PBR()` | ✅ true | ✅ true |
+| `_pbr.dds` 存在 | ❌ 无 | ✅ 有 |
+| `c3.x` 最终值 | **1.0**（INI/模型值覆盖） | **0.0**（贴图控制） |
+| roughness 来源 | PBROverride.ini / 模型内嵌值 | **SPM.R** |
+| metalness 来源 | PBROverride.ini / 模型内嵌值 | **SPM.G** |
+| AO 来源 | 无（=1.0） | **SPM.B** |
+| 阵营色来源 | 无 | **SPM.B** |
+| 着色器变体 | NT（NoTexture） | 完整 PBR 纹理 |
 
-**结论**：
-- SPM 贴图的 **R/G 通道**在有 PBROverride.ini 条目时**被完全覆盖**，不生效
-- SPM 贴图的 **B 通道（AO）** 也被覆盖为 1.0（等于 AO 白做）
-- PBROverride.ini 设计之初仅面向 NoTexture 模式，未考虑与 SPM 贴图共存
+#### 实际操作
 
-#### 配合策略
-
-##### 方案一：SPM 贴图优先（推荐有完整 PBR 贴图的新模型）
-
-**不给模型写 PBROverride.ini 条目**，由 SPM 贴图全权控制：
-
-```
-SPM.R = 粗糙度  (0.0–1.0)
-SPM.G = 金属度  (0.0–1.0)
-SPM.B = AO      (0.0–1.0)
-```
-
-此时 `c3.x=0` → `lerp` 退化为直接使用贴图值。贴图 R/G/B 三通道全部生效。
-
-##### 方案二：INI 控制常数值（适合无 PBR 贴图的 NoTexture 模型）
-
-写 PBROverride.ini 条目，模型使用 NT 着色器变体（不采样 s2）：
-
-```ini
-AVPaladin = 0.40, 0.45
-```
-
-NT 着色器直接使用 c3 常量：
-```hlsl
-float roughness = max(c3.y, 0.04);
-float metalness = saturate(c3.w);
-float ao = c3.z;  // = 1.0（无遮蔽）
-```
-
-同时模型不需要也不应该绑定 SPM 贴图到 s2 槽位。
-
-##### 方案三：INI + SPM 共存（需引擎代码修改）
-
-当前引擎不支持 INI 与 SPM 混合使用。如需 INI 控制基准 + SPM 保留 AO 和局部变化，需要修改：
-
-**`dx8renderer.cpp`** —— 让 c3.z 传递真实 AO 值（而非硬编码 1.0）：
-```cpp
-// 改为：c3.z 存储 AO。如果 PBROverride.ini 扩展支持 AO 字段则用，否则=1（表示"使用纹理值"）
-// 同时在着色器中判断：c3.z < 1.0 时才覆盖
-```
-
-#### 实际操作检查清单
-
-```
-□ 模型有无 SPM 贴图？
-  有 → □ 检查 PBROverride.ini 中是否有该模型条目
-        □ 如有 → 确认 INI 值是否与 SPM 贴图一致
-                → 如值相同 → 条目冗余，可删除（让贴图控制）
-                → 如值不同 → 条目会覆盖贴图！（要么删条目，要么改贴图匹配 INI）
-        □ 如无 → SPM 贴图完全生效（推荐状态）
-  无 → □ 使用 PBROverride.ini 控制 roughness/metalness（NT 模式）
-```
+1. **新模型**：做好 SPM 贴图，存为 `xxx_pbr.dds`→ 引擎自动识别并使用它，**无视 PBROverride.ini**。不需要删 INI 条目，不需要改引擎代码。
+2. **旧模型**：维持 PBROverride.ini 覆盖，NT 着色器使用常数值。
+3. **一个模型不会同时走两条路径**：有 `_pbr.dds` 就走纹理，没有就走 INI。两者互不干扰。
 
 ---
 
@@ -558,10 +521,14 @@ float ao = c3.z;  // = 1.0（无遮蔽）
 3. 从灰度图生成法线贴图
 ```
 
-### 9.3 法线贴图格式注意事项
+### 9.3 法线贴图命名与格式
 
 ```
-⚠️ 重要：
+⚠️ 法线贴图命名规则：
+   引擎自动检测 <albedo_name>_n.dds 文件
+   例：AVPaladin_ALB.DDS → 自动查找 AVPaladin_ALB_n.dds
+
+⚠️ 格式注意事项：
 
 1. 绿通道反转：
    RA3/Generals 使用的不是标准 DirectX 格式
@@ -587,8 +554,8 @@ float ao = c3.z;  // = 1.0（无遮蔽）
 | 贴图 | 推荐格式 | 备选 | 说明 |
 |------|---------|------|------|
 | 漫反射（Diffuse） | DXT1（BC1） | DXT5（有半透明时） | 170KB @ 512² |
-| SPM | DXT1（BC1） | DXT5 | 无半透明可用 DXT1 |
-| 法线（NRM） | RGBA 5551 | BC5（3Dc） | 对颜色精度要求高 |
+| SPM（`_pbr.dds`） | DXT1（BC1） | DXT5 | R=反射度, G=预留, B=阵营色 |
+| 法线（NRM `_n.dds`） | RGBA 5551 | BC5（3Dc） | 对颜色精度要求高 |
 | AO（独立） | L8 | DXT1 | 单通道灰度图 |
 | 曲率图（中间产物） | — | — | 不导出到游戏 |
 
@@ -619,17 +586,93 @@ float ao = c3.z;  // = 1.0（无遮蔽）
 │    贴图      │ 色彩空间 │
 ├──────────────┼──────────┤
 │ 漫反射       │ sRGB     │
-│ SPM          │ 线性     │
-│ 法线         │ 线性     │
+│ SPM（_pbr）   │ 线性     │
+│ 法线（_n）    │ 线性     │
 │ AO           │ 线性     │
 └──────────────┴──────────┘
 ```
 
 ---
 
-## 11. 材质参数参考表
+## 11. 纹理命名规范
 
-### 11.1 车辆材质（15 阵营）
+### 11.1 引擎自动检测机制
+
+引擎在加载纹理时，根据 **albedo 贴图的文件名**自动查找关联的 PBR 和法线贴图。
+
+具体代码（`W3DAssetManager.cpp` 第 196–201 行）：
+
+```cpp
+// 以 albedo 文件名为基础，追加 _pbr.dds 后缀
+pDot = strrchr(pbrName, '.');
+if (pDot) {
+    *pDot = 0;                       // 去掉原扩展名
+    strcat(pbrName, "_pbr.dds");     // 追加 _pbr.dds
+    if (TheFileSystem->doesFileExist(pbrName)) {
+        registerPBRTexture(filename, pbrName);  // 注册到 PBR 贴图表
+    }
+}
+// 同时探测 _n.dds 法线贴图
+strcat(pbrName, "_n.dds");
+```
+
+### 11.2 命名规则
+
+```
+albedo 文件名决定一切！
+
+例：albedo = "AVPaladin_ALB.DDS"
+    → PBR/SPM 贴图：AVPaladin_ALB_pbr.dds  （自动检测）
+    → 法线贴图：     AVPaladin_ALB_n.dds     （自动检测）
+```
+
+三张贴图的文件名关联关系：
+
+```
+AVPaladin_ALB.DDS              ← 漫反射（albedo，模型材质指定）
+AVPaladin_ALB_pbr.dds          ← SPM（引擎自动查找）
+AVPaladin_ALB_n.dds            ← 法线（引擎自动查找）
+```
+
+### 11.3 推荐命名方案
+
+为便于识别，推荐以下命名约定：
+
+| 贴图 | 命名格式 | 示例 |
+|------|---------|------|
+| Albedo / 漫反射 | `<模型名>_ALB.DDS` | `AVPaladin_ALB.DDS` |
+| SPM（PBR Map） | `<模型名>_ALB_pbr.dds` | `AVPaladin_ALB_pbr.dds` |
+| Normal / 法线 | `<模型名>_ALB_n.dds` | `AVPaladin_ALB_n.dds` |
+
+> ⚠️ 注意：SPM 和法线贴图的文件名必须基于 **albedo 的完整文件名**（含 `_ALB` 部分），简单写 `<模型名>_pbr.dds` 不会自动匹配。
+
+### 11.4 新旧模型文件对照表
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    新模型（有 PBR 贴图）                  │
+├──────────────┬──────────────────────────────────────────┤
+│ W3D 模型文件 │ AVPaladin.W3D                            │
+│ Albedo       │ AVPaladin_ALB.DDS                        │
+│ SPM 贴图     │ AVPaladin_ALB_pbr.dds  （引擎自动检测）   │
+│ 法线贴图     │ AVPaladin_ALB_n.dds    （引擎自动检测）   │
+│ PBR Override │ 不需要（_pbr.dds 存在时自动忽略 INI）     │
+├──────────────┼──────────────────────────────────────────┤
+│                    旧模型（无 PBR 贴图）                  │
+├──────────────┼──────────────────────────────────────────┤
+│ W3D 模型文件 │ AVOldTank.W3D                            │
+│ Albedo       │ AVOldTank_ALB.DDS                        │
+│ SPM 贴图     │ 不存在                                   │
+│ 法线贴图     │ 不存在                                   │
+│ PBR Override │ AVOldTank = 0.40, 0.45                   │
+└──────────────┴──────────────────────────────────────────┘
+```
+
+---
+
+## 12. 材质参数参考表
+
+### 12.1 车辆材质（15 阵营）
 
 | 类别 | SPM R | 等效 Roughness | 等效 Metalness | 示例 |
 |------|:-----:|:--------------:|:--------------:|------|
@@ -649,7 +692,7 @@ float ao = c3.z;  // = 1.0（无遮蔽）
 | 战斗摩托 | 106–128 | 0.60 | 0.15 | 车架漆面 |
 | 炸药卡车 | 106–128 | 0.60 | 0.10 | 轻型 |
 
-### 11.2 飞行器
+### 12.2 飞行器
 
 | 类别 | SPM R | Roughness | Metalness | 说明 |
 |------|:-----:|:---------:|:---------:|------|
@@ -659,7 +702,7 @@ float ao = c3.z;  // = 1.0（无遮蔽）
 | 运输机 | 128–150 | 0.65 | 0.05 | 更低金属感 |
 | 隐形战机 | 85–106 | 0.50 | 0.15 | 吸波涂装 |
 
-### 11.3 舰船
+### 12.3 舰船
 
 | 类别 | SPM R | Roughness | Metalness | 说明 |
 |------|:-----:|:---------:|:---------:|------|
@@ -668,7 +711,7 @@ float ao = c3.z;  // = 1.0（无遮蔽）
 | 航空母舰 | 64–85 | 0.45 | 0.35 | 同战列舰 |
 | 潜艇 | 42–64 | 0.40 | 0.40 | 哑光黑金属 |
 
-### 11.4 SPM R 通道值速查
+### 12.4 SPM R 通道值速查
 
 ```
 SPM R 值     Roughness   Metalness   材质描述
@@ -683,7 +726,7 @@ SPM R 值     Roughness   Metalness   材质描述
 201–255      0.00–0.10   1.00        镜面/玻璃
 ```
 
-### 11.5 常见材质参考
+### 12.5 常见材质参考
 
 | 材质 | SPM R | Roughness | Metalness | 说明 |
 |------|:-----:|:---------:|:---------:|------|
@@ -698,9 +741,9 @@ SPM R 值     Roughness   Metalness   材质描述
 
 ---
 
-## 12. PBROverride.ini 配置
+## 13. PBROverride.ini 配置
 
-### 12.1 文件格式
+### 13.1 文件格式
 
 ```ini
 ; 注释以 ; 或 // 开头
@@ -711,14 +754,14 @@ SPM R 值     Roughness   Metalness   材质描述
   AVHUMMER      = 0.55, 0.25   ; 悍马
 ```
 
-### 12.2 匹配规则
+### 13.2 匹配规则
 
 - **前缀匹配**：`AVPaladin` 匹配 `AVPaladin.Body01`、`AVPaladin.Turret01`
 - **最长匹配优先**：`AVPaladin_D` 优先于 `AVPaladin` 匹配 `AVPaladin_D.Body01`
 - **下一个字符必须是 `.` 或 `\0`**：`AVPaladin` **不**匹配 `AVPaladin_D.Body01`
 - 大小写不敏感（`_strnicmp`）
 
-### 12.3 变体命名
+### 13.3 变体命名
 
 | 容器名 | 含义 | 需要 INI 条目 |
 |--------|------|:------------:|
@@ -729,11 +772,13 @@ SPM R 值     Roughness   Metalness   材质描述
 | `AVPaladin_Laser` | 激光阵营变体 | ✅（可选） |
 | `AVPaladin_SW` | 超级武器阵营变体 | ✅（可选） |
 
+> ⚠️ 以上变体条目**仅对无 `_pbr.dds` 的旧模型有效**。新模型有 `_pbr.dds` 贴图时，INI 直接被 Phase 4c 覆盖为 `c3.x=0`，这些变体条目不会生效。
+
 ---
 
-## 13. 诊断与调试
+## 14. 诊断与调试
 
-### 13.1 调试模式
+### 14.1 调试模式
 
 设置 `GlobalData.m_pbrDebugMode` 可启用逐像素调试：
 
@@ -746,7 +791,7 @@ SPM R 值     Roughness   Metalness   材质描述
 | 4 | 显示 NDotL（法线方向） |
 | 5 | 显示漫反射 IBL |
 
-### 13.2 日志诊断
+### 14.2 日志诊断
 
 游戏运行时会生成 `E:\terrain_diag.log`，记录 PBR 着色器编译状态：
 
@@ -756,7 +801,7 @@ SPM R 值     Roughness   Metalness   材质描述
 [timestamp] sun_glow_compiled = 1     ← 编译成功
 ```
 
-### 13.3 常见问题排查
+### 14.3 常见问题排查
 
 | 现象 | 检查项 |
 |------|--------|
@@ -770,11 +815,11 @@ SPM R 值     Roughness   Metalness   材质描述
 
 ---
 
-## 14. 常见问题
+## 15. 常见问题
 
 ### Q1: 没有 PBR 贴图怎么办？
 
-引擎自动退化到 **NoTexture 模式**，使用模型内嵌的 `Legacy_PBR(roughness, metalness)` 值或 PBROverride.ini 配置值。NoTexture 模式下粗糙度/金属度在模型上均匀。
+引擎自动退化到 **NoTexture 模式**，使用 PBROverride.ini 配置值或模型内嵌的 `Legacy_PBR()` 值。NoTexture 模式下粗糙度/金属度在模型上均匀。
 
 ### Q2: 金属和非金属交界处有白边？
 
@@ -794,7 +839,11 @@ M/R 流程固有问题。缓解方法：
 
 **本指南使用 3DS Max + Simple Map Baker + Photoshop 工作流**，不使用 Substance Painter。详见第 3–6 章。
 
-### Q5: 支持哪些纹理格式？
+### Q5: SPM 贴图命名必须是 `xxx_pbr.dds` 吗？
+
+**是的，必须带后缀 `_pbr.dds`**。引擎根据 **albedo 贴图的完整文件名**（含 `_ALB` 部分）自动拼接 `_pbr.dds` 来查找关联的 PBR 纹理。详见第 11 章。
+
+### Q6: 支持哪些纹理格式？
 
 引擎加载 DDS（DXT1/BC1、DXT3/BC2、DXT5/BC3、BC4/ATI1、BC5/ATI2、BC7）和 TGA（32-bit RGBA）。推荐 DDS。
 
