@@ -3593,6 +3593,15 @@ Int W3DPBRShader::shutdown(void)
 	g_pbrUnitAlphaNTShader = NULL;
 	g_pbrUnitShaderEnabled = FALSE;
 	g_pbrUnitVS = NULL;
+
+	// Free _strdup-allocated exclusion list entries (indices >= static count)
+	for (int i = 5; i < s_pbrExcludedMeshCount; i++) {
+		if (s_pbrExcludedMeshes[i]) {
+			free((void*)s_pbrExcludedMeshes[i]);
+			s_pbrExcludedMeshes[i] = NULL;
+		}
+	}
+	s_pbrExcludedMeshCount = 5;	// reset to static initializer count
 	return TRUE;
 }
 
