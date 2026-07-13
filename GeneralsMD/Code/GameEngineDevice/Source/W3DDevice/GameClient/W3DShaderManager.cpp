@@ -58,6 +58,7 @@
 #include "Lib/BaseType.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "Common/File.h"
 #include "Common/FileSystem.h"
 #include <vector>
