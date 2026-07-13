@@ -60,6 +60,8 @@
 #include <string.h>
 #include "Common/File.h"
 #include "Common/FileSystem.h"
+#include <vector>
+#include <algorithm>
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "W3DDevice/GameClient/HeightMap.h"
@@ -4568,10 +4570,34 @@ extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, W3DShaderManager::L
 	return W3DShaderManager::getLegacyPBRParams(meshName, outParams);
 }
 
+// =============================================================================
+// PBR Override Bucket Optimization (替代全表线性遍历)
+// 按首字母分桶，桶内按 key 长度降序排列，查找时仅扫描一个桶
+// =============================================================================
+struct PBRBucketEntry {
+	AsciiString key;
+	W3DShaderManager::LegacyPBRParams params;
+	int keyLen;
+};
+static std::vector<PBRBucketEntry> s_pbrBuckets[26];
+static bool s_pbrBucketsNeedSort = false;
+
+static void sortPBRBuckets(void) {
+	for (int i = 0; i < 26; i++) {
+		if (s_pbrBuckets[i].size() > 1) {
+			std::sort(s_pbrBuckets[i].begin(), s_pbrBuckets[i].end(),
+				[](const PBRBucketEntry &a, const PBRBucketEntry &b) {
+					return a.keyLen > b.keyLen;
+				});
+		}
+	}
+	s_pbrBucketsNeedSort = false;
+}
+
 // C-linkage: sun glow shader access for W3DScene.cpp
 extern "C" bool PBR_IsSunGlowEnabled(void)
 {
-	// DISABLED: sun glow causes significant performance degradation.
+	// DISABLED: sun glow causes significant performance degradation.屏蔽太阳辉光函数
 	// Code is preserved for future re-enablement.
 	return false;
 }
@@ -4725,6 +4751,18 @@ void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness,
 	params.pad[0] = 0.0f;
 	params.pad[1] = 0.0f;
 	(*m_legacyPBRParamsMap)[key] = params;
+
+	// Also populate char bucket for fast prefix lookup
+	char first = toupper(meshName[0]);
+	if (first >= 'A' && first <= 'Z') {
+		int idx = first - 'A';
+		PBRBucketEntry entry;
+		entry.key = key;
+		entry.params = params;
+		entry.keyLen = key.GetLength();
+		s_pbrBuckets[idx].push_back(entry);
+		s_pbrBucketsNeedSort = true;
+	}
 }
 
 Bool W3DShaderManager::getLegacyPBRParams(const char *meshName, LegacyPBRParams *outParams)
@@ -4743,30 +4781,35 @@ Bool W3DShaderManager::getLegacyPBRParams(const char *meshName, LegacyPBRParams 
 	}}
 
 	// Prefix match: PBROverride.ini keys are container names (e.g. "AVHUMMER")
-	// which must match the start of meshName (e.g. "AVHUMMER.Body01").
-	// We return the BEST (longest) match.
+	// Must match the start of meshName (e.g. "AVHUMMER.Body01").
+	// Return the BEST (longest) match.
+	// OPTIMIZED: use first-char buckets instead of scanning all 8689 entries.
 	int bestLen = 0;
 	Bool found = false;
 
-	for (LegacyPBRParamsMap::iterator it = m_legacyPBRParamsMap->begin();
-		 it != m_legacyPBRParamsMap->end(); ++it)
-	{
-		const char *key = it->first.str();
-		int keyLen = strlen(key);
-		if (keyLen <= bestLen) continue;	// already have a longer match
+	if (s_pbrBucketsNeedSort) sortPBRBuckets();
 
-		if (_strnicmp(meshName, key, keyLen) == 0) {
-			char next = meshName[keyLen];
-			if (next == '.' || next == '\0') {
-				bestLen = keyLen;
-				*outParams = it->second;
-				found = true;
-				// DIAG: log first 20 PBROverride matches
-				{ static int diagPBR = 0; if (diagPBR < 20) { diagPBR++;
-					FILE *f = fopen("E:\\pbr_diag.log", "a");
-					if (f) { fprintf(f, "[PBR_OVERRIDE] match: mesh=\"%s\" key=\"%s\" rough=%.2f metal=%.2f\n",
-						meshName, key, outParams->roughness, outParams->metalness); fclose(f); }
-				}}
+	char first = toupper(meshName[0]);
+	if (first >= 'A' && first <= 'Z') {
+		int idx = first - 'A';
+		const std::vector<PBRBucketEntry> &bucket = s_pbrBuckets[idx];
+		for (size_t i = 0; i < bucket.size(); i++) {
+			const PBRBucketEntry &entry = bucket[i];
+			if (entry.keyLen <= bestLen) continue;	// already have a longer match
+
+			if (_strnicmp(meshName, entry.key.str(), entry.keyLen) == 0) {
+				char next = meshName[entry.keyLen];
+				if (next == '.' || next == '\0') {
+					bestLen = entry.keyLen;
+					*outParams = entry.params;
+					found = true;
+					// DIAG: log first 20 PBROverride matches
+					{ static int diagPBR = 0; if (diagPBR < 20) { diagPBR++;
+						FILE *f = fopen("E:\\pbr_diag.log", "a");
+						if (f) { fprintf(f, "[PBR_OVERRIDE] match: mesh=\"%s\" key=\"%s\" rough=%.2f metal=%.2f\n",
+							meshName, entry.key.str(), outParams->roughness, outParams->metalness); fclose(f); }
+					}}
+				}
 			}
 		}
 	}
