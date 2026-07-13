@@ -62,7 +62,6 @@
 #include "Common/File.h"
 #include "Common/FileSystem.h"
 #include <vector>
-#include <algorithm>
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "W3DDevice/GameClient/HeightMap.h"
@@ -4581,19 +4580,6 @@ struct PBRBucketEntry {
 	int keyLen;
 };
 static std::vector<PBRBucketEntry> s_pbrBuckets[26];
-static bool s_pbrBucketsNeedSort = false;
-
-static void sortPBRBuckets(void) {
-	for (int i = 0; i < 26; i++) {
-		if (s_pbrBuckets[i].size() > 1) {
-			std::sort(s_pbrBuckets[i].begin(), s_pbrBuckets[i].end(),
-				[](const PBRBucketEntry &a, const PBRBucketEntry &b) {
-					return a.keyLen > b.keyLen;
-				});
-		}
-	}
-	s_pbrBucketsNeedSort = false;
-}
 
 // C-linkage: sun glow shader access for W3DScene.cpp
 extern "C" bool PBR_IsSunGlowEnabled(void)
@@ -4754,15 +4740,22 @@ void W3DShaderManager::setLegacyPBRParams(const char *meshName, float roughness,
 	(*m_legacyPBRParamsMap)[key] = params;
 
 	// Also populate char bucket for fast prefix lookup
+	// Insert in key-length-descending order (VC6-compatible, no lambda)
 	char first = toupper(meshName[0]);
 	if (first >= 'A' && first <= 'Z') {
 		int idx = first - 'A';
 		PBRBucketEntry entry;
 		entry.key = key;
 		entry.params = params;
-		entry.keyLen = key.GetLength();
-		s_pbrBuckets[idx].push_back(entry);
-		s_pbrBucketsNeedSort = true;
+		entry.keyLen = strlen(key.str());
+		// Insert sorted: longer keys first so first match is longest
+		size_t insertPos = 0;
+		while (insertPos < s_pbrBuckets[idx].size() &&
+			s_pbrBuckets[idx][insertPos].keyLen > entry.keyLen)
+		{
+			insertPos++;
+		}
+		s_pbrBuckets[idx].insert(s_pbrBuckets[idx].begin() + insertPos, entry);
 	}
 }
 
@@ -4787,8 +4780,6 @@ Bool W3DShaderManager::getLegacyPBRParams(const char *meshName, LegacyPBRParams 
 	// OPTIMIZED: use first-char buckets instead of scanning all 8689 entries.
 	int bestLen = 0;
 	Bool found = false;
-
-	if (s_pbrBucketsNeedSort) sortPBRBuckets();
 
 	char first = toupper(meshName[0]);
 	if (first >= 'A' && first <= 'Z') {
