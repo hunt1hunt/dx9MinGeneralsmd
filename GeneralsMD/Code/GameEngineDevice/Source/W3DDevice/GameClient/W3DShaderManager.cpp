@@ -4571,7 +4571,9 @@ extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, W3DShaderManager::L
 // C-linkage: sun glow shader access for W3DScene.cpp
 extern "C" bool PBR_IsSunGlowEnabled(void)
 {
-	return w3dPBRShader.m_sunGlowEnabled;
+	// DISABLED: sun glow causes significant performance degradation.
+	// Code is preserved for future re-enablement.
+	return false;
 }
 extern "C" void PBR_RenderSunGlow(void)
 {
