@@ -3557,6 +3557,40 @@ void W3DPBRShader::reset(void)
 	DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHABLENDENABLE, FALSE);
 }
 
+// ---- PBR exclusion list for specific mesh names ----
+// Meshes registered here will skip PBR_BindVS() entirely.
+// Add new entries to the initializer list; call PBR_RegisterExcludedMesh()
+// at runtime for dynamic additions.
+#define PBR_MAX_EXCLUDED_MESHES 32
+static const char *s_pbrExcludedMeshes[PBR_MAX_EXCLUDED_MESHES] = {
+	"0qsnwateryy1",		// water mirror surface -- terrain visual decal
+	"bloombox_r",		// bloom/blur post-processing quad
+	"bloombox_rx",		// bloom/blur variant
+	"qingwaddskybox",	// skybox flat model -- terrain visual
+	"qsnboxmorning",	// skybox flat model -- terrain visual
+};
+static int s_pbrExcludedMeshCount = 5;
+
+extern "C" void PBR_RegisterExcludedMesh(const char *meshName)
+{
+	if (!meshName || s_pbrExcludedMeshCount >= PBR_MAX_EXCLUDED_MESHES) return;
+	// strdup-allocated entries (indices >= s_pbrExcludedMeshCount at the
+	// time of call) are owned by this array. Entries from the static
+	// initializer (indices 0-4 currently) are string literals and must
+	// NOT be freed.
+	s_pbrExcludedMeshes[s_pbrExcludedMeshCount++] = _strdup(meshName);
+}
+
+extern "C" bool PBR_IsMeshExcluded(const char *meshName)
+{
+	if (!meshName) return false;
+	for (int i = 0; i < s_pbrExcludedMeshCount; i++) {
+		if (_stricmp(meshName, s_pbrExcludedMeshes[i]) == 0) return true;
+	}
+	return false;
+}
+
+
 Int W3DPBRShader::shutdown(void)
 {
 	if (m_dwPBRPixelShader) { m_dwPBRPixelShader->Release(); m_dwPBRPixelShader = NULL; }
@@ -4533,39 +4567,6 @@ extern "C" void PBR_ClearIBLTextures(void)
 
 // Set TRUE by WaterRenderObjClass::Render() to skip PBR VS binding during water rendering.
 bool g_pbrInsideWaterRender = false;
-
-// ---- PBR exclusion list for specific mesh names ----
-// Meshes registered here will skip PBR_BindVS() entirely.
-// Add new entries to the initializer list; call PBR_RegisterExcludedMesh()
-// at runtime for dynamic additions.
-#define PBR_MAX_EXCLUDED_MESHES 32
-static const char *s_pbrExcludedMeshes[PBR_MAX_EXCLUDED_MESHES] = {
-	"0qsnwateryy1",		// water mirror surface -- terrain visual decal
-	"bloombox_r",		// bloom/blur post-processing quad
-	"bloombox_rx",		// bloom/blur variant
-	"qingwaddskybox",	// skybox flat model -- terrain visual
-	"qsnboxmorning",	// skybox flat model -- terrain visual
-};
-static int s_pbrExcludedMeshCount = 5;
-
-extern "C" void PBR_RegisterExcludedMesh(const char *meshName)
-{
-	if (!meshName || s_pbrExcludedMeshCount >= PBR_MAX_EXCLUDED_MESHES) return;
-	// strdup-allocated entries (indices >= s_pbrExcludedMeshCount at the
-	// time of call) are owned by this array. Entries from the static
-	// initializer (indices 0-4 currently) are string literals and must
-	// NOT be freed.
-	s_pbrExcludedMeshes[s_pbrExcludedMeshCount++] = _strdup(meshName);
-}
-
-extern "C" bool PBR_IsMeshExcluded(const char *meshName)
-{
-	if (!meshName) return false;
-	for (int i = 0; i < s_pbrExcludedMeshCount; i++) {
-		if (_stricmp(meshName, s_pbrExcludedMeshes[i]) == 0) return true;
-	}
-	return false;
-}
 
 // C-linkage: get per-model PBR params from PBROverride.ini (INI-driven override).
 // Called from dx8renderer.cpp Phase 3.5. Returns true if an override was found.
