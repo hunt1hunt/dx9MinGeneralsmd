@@ -74,6 +74,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "MoveHintName",							INI::parseAsciiString,NULL,			offsetof( GlobalData, m_moveHintName ) },
 	{ "UseTrees",									INI::parseBool,				NULL,			offsetof( GlobalData, m_useTrees ) },
 	{ "UseFPSLimit",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useFpsLimit ) },
+	{ "UseDeferredRendering",				INI::parseBool,				NULL,			offsetof( GlobalData, m_useDeferredRendering ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
 	{ "ChipsetType",							INI::parseInt,				NULL,			offsetof( GlobalData, m_chipSetType ) },
@@ -699,6 +700,7 @@ GlobalData::GlobalData()
 	m_terrainLODTargetTimeMS = 0;
 	m_enableDynamicLOD = TRUE;
 	m_enableStaticLOD = TRUE;
+	m_useDeferredRendering = FALSE;
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
 	m_useCloudPlane = FALSE;

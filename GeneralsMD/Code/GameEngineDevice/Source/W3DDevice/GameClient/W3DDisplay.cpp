@@ -78,6 +78,7 @@ static void drawFramerateBar(void);
 #include "W3DDevice/GameClient/W3DVideoBuffer.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DDebugDisplay.h"
+#include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "W3DDevice/GameClient/W3DProjectedShadow.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "WWMath/WWMath.h"
@@ -457,6 +458,14 @@ W3DDisplay::~W3DDisplay()
 	// shutdown
 	Debug_Statistics::Shutdown_Statistics();
 	W3DShaderManager::shutdown();
+
+	// Shutdown the deferred renderer
+	if (g_theW3DDeferredRenderer) {
+		g_theW3DDeferredRenderer->shutdown();
+		delete g_theW3DDeferredRenderer;
+		g_theW3DDeferredRenderer = NULL;
+	}
+
 	m_assetManager->Free_Assets();
 	delete m_assetManager;
 	WW3D::Shutdown();
@@ -822,6 +831,10 @@ void W3DDisplay::init( void )
 		m_nativeDebugDisplay->setFontWidth( 9 );
 	}
 
+
+	// Initialize the deferred renderer singleton
+	g_theW3DDeferredRenderer = NEW W3DDeferredRenderer;
+	g_theW3DDeferredRenderer->init();
 
 	// we're now online
 	m_initialized = true;
@@ -2165,7 +2178,7 @@ void W3DDisplay::setTimeOfDay( TimeOfDay tod )
 			Matrix3D mtx;
 			mtx.Set(Vector3(1,0,0), Vector3(0,1,0), Vector3(ol->lightPos.x, ol->lightPos.y, ol->lightPos.z), Vector3(0,0,0));
 			m_myLight[i]->Set_Transform(mtx);
-			// ´æ´¢ shininess ¹©ºóĞøäÖÈ¾Ê¹ÓÃ£¨¿ÉĞ´Èë LightClass À©Õ¹×Ö¶Î£¬»ò´æÎª W3DDisplay ³ÉÔ±£©  
+			// ï¿½æ´¢ shininess ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¾Ê¹ï¿½Ã£ï¿½ï¿½ï¿½Ğ´ï¿½ï¿½ LightClass ï¿½ï¿½Õ¹ï¿½Ö¶Î£ï¿½ï¿½ï¿½ï¿½Îª W3DDisplay ï¿½ï¿½Ô±ï¿½ï¿½  
             m_sunShininess[i] = ol->shininess;
 		}
 	}

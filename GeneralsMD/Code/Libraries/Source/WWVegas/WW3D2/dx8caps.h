@@ -230,6 +230,7 @@ public:
 	bool Is_Valid_Display_Format(int width, int height, WW3DFormat format);
 
 	int Get_Max_Textures_Per_Pass() const { return MaxTexturesPerPass; }
+	int Get_Num_Simultaneous_RTs() const { return MaxSimultaneousRTs; }
 
 	// -------------------------------------------------------------------------
 	//
@@ -308,6 +309,7 @@ private:
 	int VertexShaderVersion;
 	int PixelShaderVersion;
 	int MaxSimultaneousTextures;
+	int MaxSimultaneousRTs;
 	unsigned DeviceId;
 	unsigned DriverBuildVersion;
 	DriverVersionStatusType DriverVersionStatus;

@@ -658,8 +658,10 @@ void DX8Caps::Compute_Caps(WW3DFormat display_format, const D3DADAPTER_IDENTIFIE
 	Check_Maximum_Texture_Support(Caps);
 
 	MaxTexturesPerPass=Caps.MaxSimultaneousTextures;
+	MaxSimultaneousRTs=Caps.NumSimultaneousRTs;
 
 	DXLOG(("Max textures per pass: %d\r\n",MaxTexturesPerPass));
+	DXLOG(("Max simultaneous render targets: %d\r\n",MaxSimultaneousRTs));
 
 	Vendor_Specific_Hacks(adapter_id);
 	CapsWorkString="";

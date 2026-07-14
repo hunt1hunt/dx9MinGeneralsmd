@@ -120,6 +120,7 @@ public:
 	_TerrainLOD m_terrainLOD;
 	Bool m_enableDynamicLOD;
 	Bool m_enableStaticLOD;
+	Bool m_useDeferredRendering;	///< Enable deferred rendering path (G-Buffer + light pass)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
 	Bool m_clientRetaliationModeEnabled;

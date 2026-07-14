@@ -67,6 +67,7 @@
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
 #include "W3DDevice/GameClient/W3DSmudge.h"
+#include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "GameClient/view.h"
 #include "GameClient/CommandXlat.h"
 #include "GameClient/display.h"
@@ -130,6 +131,10 @@ W3DShaderManager::LegacyPBRParamsMap *W3DShaderManager::m_legacyPBRParamsMap = N
 
 // Phase 4: Extern globals for unit PBR shader handles (accessed from dx8renderer.cpp)
 IDirect3DPixelShader9 *g_pbrUnitOpaqueShader = NULL;
+
+// G-Buffer externs (defined in dx8wrapper.cpp)
+extern bool g_gbufferActive;
+extern IDirect3DPixelShader9 *g_gbufferPS;
 IDirect3DPixelShader9 *g_pbrUnitAlphaShader = NULL;
 IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader = NULL;  // no PBR texture variant
 IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader = NULL;    // alpha + no PBR texture
@@ -3297,6 +3302,49 @@ Int W3DPBRShader::init( void )
 	g_pbrUnitShaderEnabled = (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 	g_pbrDebugMode = TheGlobalData ? TheGlobalData->m_pbrDebugMode : 0;
 
+	// Compile G-Buffer pixel shader (ps_2_0) for deferred rendering.
+	// Writes Albedo+Metallic to RT0, Normal+Roughness to RT1, Emissive+Depth to RT2.
+	if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable()) {
+		if (!g_gbufferPS) {
+			const char gbuffer_ps[] =
+				"struct PS_OUT {\n"
+				"	float4 color0 : COLOR0;\n"
+				"	float4 color1 : COLOR1;\n"
+				"	float4 color2 : COLOR2;\n"
+				"};\n"
+				"sampler Diffuse : register(s0);\n"
+				"PS_OUT main(float2 tex0 : TEXCOORD0) {\n"
+				"	PS_OUT o;\n"
+				"	float4 albedo = tex2D(Diffuse, tex0);\n"
+				"	o.color0 = float4(albedo.rgb, 0);\n"
+				"	o.color1 = float4(0.5, 0.5, 1.0, 1.0);\n"
+				"	o.color2 = float4(0, 0, 0, 0);\n"
+				"	return o;\n"
+				"};\n";
+			ID3DXBuffer *compiled = NULL;
+			ID3DXBuffer *errors = NULL;
+			HRESULT hr = D3DXCompileShader(gbuffer_ps, (UINT)strlen(gbuffer_ps),
+				NULL, NULL, "main", "ps_2_0",
+				0, &compiled, &errors, NULL);
+			if (FAILED(hr) || !compiled) {
+				WWDEBUG_SAY(("W3DShaderManager: G-Buffer PS compile failed.\n"));
+				if (errors) {
+					WWDEBUG_SAY(("  error: %s\n", (const char*)errors->GetBufferPointer()));
+					errors->Release();
+				}
+				g_gbufferPS = NULL;
+			} else {
+				IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+				if (dev) {
+					dev->CreatePixelShader(
+						(const DWORD*)compiled->GetBufferPointer(), &g_gbufferPS);
+				}
+				compiled->Release();
+				WWDEBUG_SAY(("W3DShaderManager: G-Buffer PS compiled (%p).\n", (void*)g_gbufferPS));
+			}
+		}
+	}
+
 	// Compile pass-through vertex shader (vs_1_1) for PBR unit rendering.
 	// D3D9On12 requires D3DXAssembleShader for assembly source text --
 	// it generates proper DCL instructions (dcl_position etc.) that the
@@ -3621,6 +3669,8 @@ Int W3DPBRShader::shutdown(void)
 		m_dwSunGlowShader->Release(); m_dwSunGlowShader = NULL;
 	}
 	m_sunGlowEnabled = FALSE;
+	if (g_gbufferPS) { g_gbufferPS->Release(); g_gbufferPS = NULL; }
+
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;
 	g_pbrUnitOpaqueNTShader = NULL;

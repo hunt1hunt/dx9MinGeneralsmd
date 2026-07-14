@@ -123,6 +123,7 @@ protected:
 	W3DShroudMaterialPassClass	*m_shroudMaterialPass;	///< Custom render pass which applies shrouds to objects
 	W3DMaskMaterialPassClass *m_maskMaterialPass;			///< Custom render pass applied to entire scene used to mask out pixels.
 	MaterialPassClass *m_heatVisionMaterialPass;			///< Custom render passed applied on top of objects with heatvision effect.
+	MaterialPassClass *m_gbufferMaterialPass;				///< Custom render pass for G-Buffer writing (no lighting).
 	MaterialPassClass *m_heatVisionOnlyPass;					///< Custom render pass applied in place of regular pass on objects with heat vision effect.
 	MaterialPassClass *m_frenzyMaterialPass;					///< Custom render pass applied in place of regular pass on objects with FRENZY effect.
 	///Custom rendering passes for each possible player color on the map

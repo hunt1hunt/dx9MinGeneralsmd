@@ -1081,6 +1081,10 @@ SOURCE=.\Source\W3DDevice\GameClient\W3DScene.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\Source\W3DDevice\GameClient\W3DDeferredRenderer.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\Source\W3DDevice\GameClient\W3DShaderManager.cpp
 # End Source File
 # Begin Source File
@@ -1470,6 +1474,10 @@ SOURCE=.\Include\W3DDevice\GameClient\W3DRoadBuffer.h
 # Begin Source File
 
 SOURCE=.\Include\W3DDevice\GameClient\W3DScene.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\W3DDevice\GameClient\W3DDeferredRenderer.h
 # End Source File
 # Begin Source File
 

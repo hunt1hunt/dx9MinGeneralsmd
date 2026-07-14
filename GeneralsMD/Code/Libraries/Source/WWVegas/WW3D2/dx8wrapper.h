@@ -75,8 +75,8 @@
 
 const unsigned MAX_TEXTURE_STAGES=8;
 const unsigned MAX_VERTEX_STREAMS=2;
-const unsigned MAX_VERTEX_SHADER_CONSTANTS=96;
-const unsigned MAX_PIXEL_SHADER_CONSTANTS=8;
+const unsigned MAX_VERTEX_SHADER_CONSTANTS=256;
+const unsigned MAX_PIXEL_SHADER_CONSTANTS=224;
 const unsigned MAX_SHADOW_MAPS=1;
 
 #define prevVer
@@ -118,6 +118,10 @@ class DX8Caps;
 
 extern unsigned number_of_DX8_calls;
 extern bool _DX8SingleThreaded;
+
+// G-Buffer rendering flags (set by W3DDeferredRenderer before/after G-Buffer pass)
+extern bool g_gbufferActive;
+extern IDirect3DPixelShader9 *g_gbufferPS;
 
 void DX8_Assert();
 void Log_DX8_ErrorCode(unsigned res);
@@ -259,6 +263,7 @@ public:
 	static void Shutdown(void);
 
 	static void SetCleanupHook(DX8_CleanupHook *pCleanupHook) {m_pCleanupHook = pCleanupHook;};
+	static DX8_CleanupHook *GetCleanupHook() { return m_pCleanupHook; }
 	/*
 	** Some WW3D sub-systems need to be initialized after the device is created and shutdown
 	** before the device is released.
@@ -484,10 +489,11 @@ public:
 	/*
 	** Render target interface. If render target format is WW3D_FORMAT_UNKNOWN, current display format is used.
 	*/
-	static TextureClass *	Create_Render_Target (int width, int height, WW3DFormat format = WW3D_FORMAT_UNKNOWN);
+	static TextureClass *	Create_Render_Target (int width, int height, WW3DFormat format = WW3D_FORMAT_UNKNOWN, bool allowNonPOT = false);
 
 	static void					Set_Render_Target (IDirect3DSurface8 *render_target, bool use_default_depth_buffer = false);
 	static void					Set_Render_Target (IDirect3DSurface8* render_target, IDirect3DSurface8* dpeth_buffer);
+	static void					Set_Render_Target (int index, IDirect3DSurface8 *render_target);
 
 	static void					Set_Render_Target (IDirect3DSwapChain8 *swap_chain);
 	static bool					Is_Render_To_Texture(void) { return IsRenderToTexture; }
@@ -495,12 +501,13 @@ public:
 	// for depth map support KJM V
 	static void Create_Render_Target
 	(
-		int width, 
-		int height, 
+		int width,
+		int height,
 		WW3DFormat format,
 		WW3DZFormat zformat,
 		TextureClass** target,
-		ZTextureClass** depth_buffer
+		ZTextureClass** depth_buffer,
+		bool allowNonPOT = false
 	);
 	static void					Set_Render_Target_With_Z (TextureClass * texture, ZTextureClass* ztexture=NULL);
 
@@ -709,6 +716,8 @@ protected:
 	static IDirect3DSurface8 *			CurrentDepthBuffer;
 	static IDirect3DSurface8 *			DefaultRenderTarget;
 	static IDirect3DSurface8 *			DefaultDepthBuffer;
+	static IDirect3DSurface8 *			CurrentMRTSurfaces[4];
+	static int							m_activeMRTCount;
 
 	static unsigned							DrawPolygonLowBoundLimit;
 
@@ -740,6 +749,15 @@ WWINLINE void DX8Wrapper::Set_Vertex_Shader(IDirect3DVertexShader9* vertex_shade
 WWINLINE void DX8Wrapper::Set_Pixel_Shader(IDirect3DPixelShader9* pixel_shader)
 {
 	// may be incorrect if shaders are created and destroyed dynamically
+
+	// G-Buffer override: during G-Buffer pass, force the G-Buffer pixel shader
+	// so all objects write Albedo/Normal/Depth to MRT regardless of their own shader.
+	if (g_gbufferActive && g_gbufferPS) {
+		if (pixel_shader != g_gbufferPS) {
+			pixel_shader = g_gbufferPS;
+		}
+	}
+
 	if (Pixel_Shader==pixel_shader) return;
 
 	Pixel_Shader=pixel_shader;

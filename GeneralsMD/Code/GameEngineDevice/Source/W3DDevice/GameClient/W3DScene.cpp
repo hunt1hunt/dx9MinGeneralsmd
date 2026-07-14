@@ -54,6 +54,7 @@
 #include "W3DDevice/GameClient/W3DStatusCircle.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
+#include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "WW3D2/camera.h"
 #include "WW3D2/dx8renderer.h"
 #include "WW3D2/sortingrenderer.h"
@@ -137,6 +138,18 @@ RTS3DScene::RTS3DScene()
 	m_heatVisionOnlyPass->Set_Material(heatVisionMtl);
 	m_heatVisionOnlyPass->Set_Shader(heatVisionShader);
 
+	//
+	//	G-Buffer material pass (writes unlit Albedo/Normal/Emissive to MRT)
+	//
+	m_gbufferMaterialPass = NEW_REF(MaterialPassClass,());
+	VertexMaterialClass *gbufMtl = NEW_REF(VertexMaterialClass,());
+	gbufMtl->Set_Lighting(false);
+	gbufMtl->Set_Ambient(0, 0, 0);
+	gbufMtl->Set_Diffuse(1.0f, 1.0f, 1.0f);
+	gbufMtl->Set_Emissive(0, 0, 0);
+	m_gbufferMaterialPass->Set_Material(gbufMtl);
+	m_gbufferMaterialPass->Set_Shader(ShaderClass::_PresetOpaqueShader);
+	gbufMtl->Release_Ref();
 
 //	VertexMaterialClass *frenzyMtl = NEW_REF(VertexMaterialClass,());
 //	frenzyMtl->Set_Lighting(TRUE);
@@ -218,6 +231,8 @@ RTS3DScene::~RTS3DScene()
 	REF_PTR_RELEASE(m_heatVisionMaterialPass);
 
 	REF_PTR_RELEASE(m_heatVisionOnlyPass);
+
+	REF_PTR_RELEASE(m_gbufferMaterialPass);
 
 	if (m_translucentObjectsBuffer)
 		delete [] m_translucentObjectsBuffer;
@@ -1031,10 +1046,34 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 	{
 		if (m_customPassMode == SCENE_PASS_DEFAULT)
 		{	//Regular rendering pass with no effects
-			updatePlayerColorPasses();///@todo: this probably doesn't need to be done each frame.
-			updateFixedLightEnvironments(rinfo);
-			Customized_Render(rinfo);
-			Flush(rinfo);
+
+			// Deferred G-Buffer pass (when available and UseDeferredRendering=1)
+			if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable())
+			{
+				g_theW3DDeferredRenderer->beginGBufferPass();
+				g_gbufferActive = true;
+				setCustomPassMode(SCENE_PASS_GBUFFER);
+
+				updatePlayerColorPasses();
+				updateFixedLightEnvironments(rinfo);
+				Customized_Render(rinfo);
+				Flush(rinfo);
+
+				g_gbufferActive = false;
+				setCustomPassMode(SCENE_PASS_DEFAULT);
+				g_theW3DDeferredRenderer->endGBufferPass();
+
+				// Phase 3+: deferred lighting passes go here.
+				// For Phase 2, the backbuffer is now black (only G-Buffer RTs have data).
+			}
+			else
+			{
+				// Original forward rendering path
+				updatePlayerColorPasses();
+				updateFixedLightEnvironments(rinfo);
+				Customized_Render(rinfo);
+				Flush(rinfo);
+			}
 		}
 		else
 		if (m_customPassMode == SCENE_PASS_ALPHA_MASK)
@@ -1197,6 +1236,13 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 		if (m_customPassMode == SCENE_PASS_DEFAULT && m_shroudMaterialPass)
 		{
 			rinfo.Push_Material_Pass(m_shroudMaterialPass);
+			robj->Render(rinfo);
+			rinfo.Pop_Material_Pass();
+		}
+		else
+		if (m_customPassMode == SCENE_PASS_GBUFFER && m_gbufferMaterialPass)
+		{
+			rinfo.Push_Material_Pass(m_gbufferMaterialPass);
 			robj->Render(rinfo);
 			rinfo.Pop_Material_Pass();
 		}

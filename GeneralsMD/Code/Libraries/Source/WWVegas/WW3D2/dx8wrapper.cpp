@@ -79,6 +79,11 @@
 #include "dx8texman.h"
 #include "bound.h"
 
+// D3DCAPS2_CANRENDERWITHOUTPOW2 may not be defined in older DX9 SDKs
+#ifndef D3DCAPS2_CANRENDERWITHOUTPOW2
+#define D3DCAPS2_CANRENDERWITHOUTPOW2 0x00000008L
+#endif
+
 const int DEFAULT_RESOLUTION_WIDTH = 640;
 const int DEFAULT_RESOLUTION_HEIGHT = 480;
 const int DEFAULT_BIT_DEPTH = 32;
@@ -153,6 +158,8 @@ IDirect3DSurface8 *			DX8Wrapper::CurrentRenderTarget						= NULL;
 IDirect3DSurface8 *			DX8Wrapper::CurrentDepthBuffer						= NULL;
 IDirect3DSurface8 *			DX8Wrapper::DefaultRenderTarget						= NULL;
 IDirect3DSurface8 *			DX8Wrapper::DefaultDepthBuffer						= NULL;
+IDirect3DSurface8 *			DX8Wrapper::CurrentMRTSurfaces[4]				= { NULL, NULL, NULL, NULL };
+int								DX8Wrapper::m_activeMRTCount							= 0;
 bool								DX8Wrapper::IsRenderToTexture							= false;
 
 unsigned							DX8Wrapper::matrix_changes								= 0;
@@ -183,6 +190,10 @@ D3DADAPTER_IDENTIFIER8		DX8Wrapper::CurrentAdapterIdentifier;
 unsigned long DX8Wrapper::FrameCount = 0;
 
 bool								_DX8SingleThreaded										= false;
+
+// G-Buffer rendering flags (set by W3DDeferredRenderer)
+bool								g_gbufferActive											= false;
+IDirect3DPixelShader9 *	g_gbufferPS												= NULL;
 
 unsigned							number_of_DX8_calls										= 0;
 static unsigned				last_frame_matrix_changes								= 0;
@@ -3219,7 +3230,7 @@ SurfaceClass * DX8Wrapper::_Get_DX8_Back_Buffer(unsigned int num)
 
 
 TextureClass *
-DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
+DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format, bool allowNonPOT)
 {
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
@@ -3239,23 +3250,42 @@ DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 	}
 
 	//
-	//	Note: We're going to force the width and height to be powers of two and equal
+	//	Check if we can use non-power-of-two render target (G-Buffer needs arbitrary sizes)
 	//
 	const D3DCAPS8& dx8caps=Get_Current_Caps()->Get_DX8_Caps();
-	float poweroftwosize = width;
-	if (height > 0 && height < width) {
-		poweroftwosize = height;
-	}
-	poweroftwosize = ::Find_POT (poweroftwosize);
+	bool canUseNonPOT = allowNonPOT && (dx8caps.Caps2 & D3DCAPS2_CANRENDERWITHOUTPOW2) != 0;
 
-	if (poweroftwosize>dx8caps.MaxTextureWidth) {
-		poweroftwosize=dx8caps.MaxTextureWidth;
-	}
-	if (poweroftwosize>dx8caps.MaxTextureHeight) {
-		poweroftwosize=dx8caps.MaxTextureHeight;
-	}
+	if (!canUseNonPOT) {
+		//
+		//	Force the width and height to be powers of two and equal (legacy behavior)
+		//
+		float poweroftwosize = width;
+		if (height > 0 && height < width) {
+			poweroftwosize = height;
+		}
+		poweroftwosize = ::Find_POT(poweroftwosize);
 
-	width = height = poweroftwosize;
+		if (poweroftwosize > dx8caps.MaxTextureWidth) {
+			poweroftwosize = dx8caps.MaxTextureWidth;
+		}
+		if (poweroftwosize > dx8caps.MaxTextureHeight) {
+			poweroftwosize = dx8caps.MaxTextureHeight;
+		}
+
+		width = height = poweroftwosize;
+	} else {
+		//
+		//	Clamp to device limits only (preserve aspect ratio)
+		//
+		if (width > (int)dx8caps.MaxTextureWidth) {
+			height = height * dx8caps.MaxTextureWidth / width;
+			width = dx8caps.MaxTextureWidth;
+		}
+		if (height > (int)dx8caps.MaxTextureHeight) {
+			width = width * dx8caps.MaxTextureHeight / height;
+			height = dx8caps.MaxTextureHeight;
+		}
+	}
 
 	//
 	//	Attempt to create the render target
@@ -3264,7 +3294,7 @@ DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 
 	// 3dfx drivers are lying in the CheckDeviceFormat call and claiming
 	// that they support render targets!
-	if (tex->Peek_D3D_Base_Texture() == NULL) 
+	if (tex->Peek_D3D_Base_Texture() == NULL)
 	{
 		WWDEBUG_SAY(("DX8Wrapper - Render target creation failed!\r\n"));
 		REF_PTR_RELEASE(tex);
@@ -3280,12 +3310,13 @@ DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 */
 void DX8Wrapper::Create_Render_Target
 (
-	int width, 
-	int height, 
+	int width,
+	int height,
 	WW3DFormat format,
 	WW3DZFormat zformat,
 	TextureClass** target,
-	ZTextureClass** depth_buffer
+	ZTextureClass** depth_buffer,
+	bool allowNonPOT
 )
 {
 	DX8_THREAD_ASSERT();
@@ -3293,44 +3324,58 @@ void DX8Wrapper::Create_Render_Target
 	number_of_DX8_calls++;
 
 	// Use the current display format if format isn't specified
-	if (format==WW3D_FORMAT_UNKNOWN) 
+	if (format==WW3D_FORMAT_UNKNOWN)
 	{
 		*target=NULL;
 		*depth_buffer=NULL;
 		return;
-/*		D3DDISPLAYMODE mode;
+	/*		D3DDISPLAYMODE mode;
 		DX8CALL(GetDisplayMode(0, &mode));
 		format=D3DFormat_To_WW3DFormat(mode.Format);*/
 	}
 
 	// If render target format isn't supported return NULL
 	if (!Get_Current_Caps()->Support_Render_To_Texture_Format(format) ||
-		 !Get_Current_Caps()->Support_Depth_Stencil_Format(zformat)) 
+		 !Get_Current_Caps()->Support_Depth_Stencil_Format(zformat))
 	{
-		WWDEBUG_SAY(("DX8Wrapper - Render target with depth format is not supported\r\n"));
-		return;
+									WWDEBUG_SAY(("DX8Wrapper - Render target with depth format is not supported\r\n"));return;
 	}
 
-	//	Note: We're going to force the width and height to be powers of two and equal
 	const D3DCAPS8& dx8caps=Get_Current_Caps()->Get_DX8_Caps();
-	float poweroftwosize = width;
-	if (height > 0 && height < width) 
-	{
-		poweroftwosize = height;
-	}
-	poweroftwosize = ::Find_POT (poweroftwosize);
+	bool canUseNonPOT = allowNonPOT && (dx8caps.Caps2 & D3DCAPS2_CANRENDERWITHOUTPOW2) != 0;
 
-	if (poweroftwosize>dx8caps.MaxTextureWidth) 
-	{
-		poweroftwosize=dx8caps.MaxTextureWidth;
-	}
+	if (!canUseNonPOT) {
+		// Force the width and height to be powers of two and equal (legacy behavior)
+		float poweroftwosize = width;
+		if (height > 0 && height < width)
+		{
+			poweroftwosize = height;
+		}
+		poweroftwosize = ::Find_POT(poweroftwosize);
 
-	if (poweroftwosize>dx8caps.MaxTextureHeight) 
-	{
-		poweroftwosize=dx8caps.MaxTextureHeight;
-	}
+		if (poweroftwosize > dx8caps.MaxTextureWidth)
+		{
+			poweroftwosize = dx8caps.MaxTextureWidth;
+		}
 
-	width = height = poweroftwosize;
+		if (poweroftwosize > dx8caps.MaxTextureHeight)
+		{
+			poweroftwosize = dx8caps.MaxTextureHeight;
+		}
+
+		width = height = poweroftwosize;
+	}
+	else {
+		// Clamp to device limits only (preserve aspect ratio)
+		if (width > (int)dx8caps.MaxTextureWidth) {
+			height = height * dx8caps.MaxTextureWidth / width;
+			width = dx8caps.MaxTextureWidth;
+		}
+		if (height > (int)dx8caps.MaxTextureHeight) {
+			width = width * dx8caps.MaxTextureHeight / height;
+			height = dx8caps.MaxTextureHeight;
+		}
+	}
 
 	//	Attempt to create the render target
 	TextureClass* tex=NEW_REF(TextureClass,(width,height,format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT,true));
@@ -3358,6 +3403,57 @@ void DX8Wrapper::Create_Render_Target
 		)
 	);
 }
+
+/*!
+ * Set render target at specified MRT index
+ * New overload for MRT support. Index 0 delegates to the existing single-RT path.
+ * Indices 1-3 call IDirect3DDevice9::SetRenderTarget directly.
+ */
+void DX8Wrapper::Set_Render_Target(int index, IDirect3DSurface8 *render_target)
+{
+	DX8_THREAD_ASSERT();
+	DX8_Assert();
+	WWASSERT(index >= 0 && index < 4);
+
+	if (index == 0) {
+		// Delegate to existing single-RT path (handles DefaultRT save/restore)
+		Set_Render_Target(render_target, true);
+		return;
+	}
+
+	// MRT index (1, 2, or 3)
+	if (render_target != NULL) {
+		// Set this MRT slot
+		DX8CALL(SetRenderTarget(index, render_target));
+
+		// Track the surface
+		if (CurrentMRTSurfaces[index] != NULL) {
+			CurrentMRTSurfaces[index]->Release();
+		}
+		CurrentMRTSurfaces[index] = render_target;
+		CurrentMRTSurfaces[index]->AddRef();
+
+		// Update active count
+		if (index >= m_activeMRTCount) {
+			m_activeMRTCount = index + 1;
+		}
+	} else {
+		// Clear this MRT slot
+		DX8CALL(SetRenderTarget(index, NULL));
+
+		if (CurrentMRTSurfaces[index] != NULL) {
+			CurrentMRTSurfaces[index]->Release();
+			CurrentMRTSurfaces[index] = NULL;
+		}
+
+		// Recalculate active count from the top
+		while (m_activeMRTCount > 0 &&
+			   CurrentMRTSurfaces[m_activeMRTCount - 1] == NULL) {
+			m_activeMRTCount--;
+		}
+	}
+}
+
 
 /*!
  * Set render target
@@ -3446,6 +3542,17 @@ DX8Wrapper::Set_Render_Target(IDirect3DSurface8 *render_target, bool use_default
 		if (DefaultRenderTarget != NULL) 
 		{
 			DX8CALL(SetRenderTarget (0, DefaultRenderTarget));
+
+			// Clear any MRT slots when restoring to default
+			for (int mrtIdx = 1; mrtIdx < 4; mrtIdx++) {
+				if (CurrentMRTSurfaces[mrtIdx] != NULL) {
+					DX8CALL(SetRenderTarget(mrtIdx, NULL));
+					CurrentMRTSurfaces[mrtIdx]->Release();
+					CurrentMRTSurfaces[mrtIdx] = NULL;
+				}
+			}
+			m_activeMRTCount = 0;
+
 			DX8CALL(SetDepthStencilSurface(DefaultDepthBuffer));
 			DefaultRenderTarget->Release ();
 			DefaultRenderTarget = NULL;
@@ -3578,6 +3685,17 @@ void DX8Wrapper::Set_Render_Target
 		if (DefaultRenderTarget != NULL) 
 		{
 			DX8CALL(SetRenderTarget (0, DefaultRenderTarget));
+
+			// Clear any MRT slots when restoring to default
+			for (int mrtIdx = 1; mrtIdx < 4; mrtIdx++) {
+				if (CurrentMRTSurfaces[mrtIdx] != NULL) {
+					DX8CALL(SetRenderTarget(mrtIdx, NULL));
+					CurrentMRTSurfaces[mrtIdx]->Release();
+					CurrentMRTSurfaces[mrtIdx] = NULL;
+				}
+			}
+			m_activeMRTCount = 0;
+
 			DX8CALL(SetDepthStencilSurface(DefaultDepthBuffer));
 			DefaultRenderTarget->Release ();
 			DefaultRenderTarget = NULL;

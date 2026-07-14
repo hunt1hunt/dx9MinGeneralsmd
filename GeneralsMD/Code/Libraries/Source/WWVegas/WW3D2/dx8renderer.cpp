@@ -87,6 +87,10 @@ extern "C" bool PBR_IsMeshExcluded(const char *meshName);
 struct LegacyPBRParams { float roughness; float metalness; float pad[2]; };
 extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, LegacyPBRParams *outParams);
 
+// G-Buffer shader externs (set by W3DDeferredRenderer / W3DShaderManager)
+extern bool g_gbufferActive;
+extern IDirect3DPixelShader9 *g_gbufferPS;
+
 static int s_diagFVF = 0;
 static int s_diagNorm = 0;
 
