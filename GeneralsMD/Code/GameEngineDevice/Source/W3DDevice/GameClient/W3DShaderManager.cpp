@@ -135,6 +135,7 @@ IDirect3DPixelShader9 *g_pbrUnitOpaqueShader = NULL;
 // G-Buffer externs (defined in dx8wrapper.cpp)
 extern bool g_gbufferActive;
 extern IDirect3DPixelShader9 *g_gbufferPS;
+extern IDirect3DVertexShader9 *g_gbufferVS;
 IDirect3DPixelShader9 *g_pbrUnitAlphaShader = NULL;
 IDirect3DPixelShader9 *g_pbrUnitOpaqueNTShader = NULL;  // no PBR texture variant
 IDirect3DPixelShader9 *g_pbrUnitAlphaNTShader = NULL;    // alpha + no PBR texture
@@ -3302,24 +3303,63 @@ Int W3DPBRShader::init( void )
 	g_pbrUnitShaderEnabled = (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 	g_pbrDebugMode = TheGlobalData ? TheGlobalData->m_pbrDebugMode : 0;
 
-	// Compile G-Buffer pixel shader (ps_2_0) for deferred rendering.
-	// Writes Albedo+Metallic to RT0, Normal+Roughness to RT1, Emissive+Depth to RT2.
+	// Compile G-Buffer vertex shader (vs_1_1) and pixel shader (ps_2_0).
+	// VS outputs: oT0=texcoord, oT1=worldPos, oT4=worldNormal, oT2=clipDepth (z,w)
+	// PS outputs: RT0=Albedo+Metallic, RT1=Normal+Roughness, RT2=Emissive+Depth
 	if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable()) {
+		if (!g_gbufferVS) {
+			const char gbuffer_vs[] =
+				"vs.1.1\n"
+				"dcl_position v0\n"
+				"dcl_normal v3\n"
+				"dcl_texcoord0 v7\n"
+				"m4x4 oPos, v0, c0\n"
+				"mov oT0, v7\n"
+				"m4x4 oT1, v0, c4\n"
+				"m3x3 oT4, v3, c8\n"
+				"dp4 oT2.x, v0, c2\n"
+				"dp4 oT2.y, v0, c3\n";
+			ID3DXBuffer *vsCompiled = NULL;
+			ID3DXBuffer *vsErrors = NULL;
+			HRESULT vsHR = D3DXAssembleShader(gbuffer_vs, (UINT)strlen(gbuffer_vs),
+				NULL, NULL, 0, &vsCompiled, &vsErrors);
+			if (FAILED(vsHR) || !vsCompiled) {
+				WWDEBUG_SAY(("W3DShaderManager: G-Buffer VS compile failed.\n"));
+				if (vsErrors) { vsErrors->Release(); }
+				g_gbufferVS = NULL;
+			} else {
+				IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+				if (dev) {
+					vsHR = dev->CreateVertexShader(
+						(const DWORD*)vsCompiled->GetBufferPointer(), &g_gbufferVS);
+				}
+				vsCompiled->Release();
+				WWDEBUG_SAY(("W3DShaderManager: G-Buffer VS compiled.\n"));
+			}
+		}
 		if (!g_gbufferPS) {
 			const char gbuffer_ps[] =
+				"struct PS_IN {\n"
+				"\tfloat2 tex0 : TEXCOORD0;\n"
+				"\tfloat3 worldPos : TEXCOORD1;\n"
+				"\tfloat2 clipDepth : TEXCOORD2;\n"
+				"\tfloat3 worldNormal : TEXCOORD4;\n"
+				"};\n"
 				"struct PS_OUT {\n"
-				"	float4 color0 : COLOR0;\n"
-				"	float4 color1 : COLOR1;\n"
-				"	float4 color2 : COLOR2;\n"
+				"\tfloat4 color0 : COLOR0;\n"
+				"\tfloat4 color1 : COLOR1;\n"
+				"\tfloat4 color2 : COLOR2;\n"
 				"};\n"
 				"sampler Diffuse : register(s0);\n"
-				"PS_OUT main(float2 tex0 : TEXCOORD0) {\n"
-				"	PS_OUT o;\n"
-				"	float4 albedo = tex2D(Diffuse, tex0);\n"
-				"	o.color0 = float4(albedo.rgb, 0);\n"
-				"	o.color1 = float4(0.5, 0.5, 1.0, 1.0);\n"
-				"	o.color2 = float4(0, 0, 0, 0);\n"
-				"	return o;\n"
+				"PS_OUT main(PS_IN input) {\n"
+				"\tPS_OUT o;\n"
+				"\tfloat4 albedo = tex2D(Diffuse, input.tex0);\n"
+				"\tfloat3 n = normalize(input.worldNormal);\n"
+				"\tfloat depth = input.clipDepth.x / input.clipDepth.y;\n"
+				"\to.color0 = float4(albedo.rgb, 0);\n"
+				"\to.color1 = float4(n * 0.5 + 0.5, 1.0);\n"
+				"\to.color2 = float4(0, 0, 0, depth);\n"
+				"\treturn o;\n"
 				"};\n";
 			ID3DXBuffer *compiled = NULL;
 			ID3DXBuffer *errors = NULL;
@@ -3336,7 +3376,7 @@ Int W3DPBRShader::init( void )
 			} else {
 				IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 				if (dev) {
-					dev->CreatePixelShader(
+					hr = dev->CreatePixelShader(
 						(const DWORD*)compiled->GetBufferPointer(), &g_gbufferPS);
 				}
 				compiled->Release();
@@ -3344,7 +3384,6 @@ Int W3DPBRShader::init( void )
 			}
 		}
 	}
-
 	// Compile pass-through vertex shader (vs_1_1) for PBR unit rendering.
 	// D3D9On12 requires D3DXAssembleShader for assembly source text --
 	// it generates proper DCL instructions (dcl_position etc.) that the
@@ -3669,7 +3708,8 @@ Int W3DPBRShader::shutdown(void)
 		m_dwSunGlowShader->Release(); m_dwSunGlowShader = NULL;
 	}
 	m_sunGlowEnabled = FALSE;
-	if (g_gbufferPS) { g_gbufferPS->Release(); g_gbufferPS = NULL; }
+	if (g_gbufferVS) { g_gbufferVS->Release(); g_gbufferVS = NULL; }
+		if (g_gbufferPS) { g_gbufferPS->Release(); g_gbufferPS = NULL; }
 
 	g_pbrUnitOpaqueShader = NULL;
 	g_pbrUnitAlphaShader = NULL;

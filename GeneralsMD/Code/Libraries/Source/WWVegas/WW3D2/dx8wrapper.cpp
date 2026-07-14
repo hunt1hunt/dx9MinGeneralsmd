@@ -194,6 +194,7 @@ bool								_DX8SingleThreaded										= false;
 // G-Buffer rendering flags (set by W3DDeferredRenderer)
 bool								g_gbufferActive											= false;
 IDirect3DPixelShader9 *	g_gbufferPS												= NULL;
+IDirect3DVertexShader9 *	g_gbufferVS												= NULL;
 
 unsigned							number_of_DX8_calls										= 0;
 static unsigned				last_frame_matrix_changes								= 0;

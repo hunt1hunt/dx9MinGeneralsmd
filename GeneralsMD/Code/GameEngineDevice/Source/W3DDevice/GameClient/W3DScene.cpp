@@ -1063,8 +1063,51 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				setCustomPassMode(SCENE_PASS_DEFAULT);
 				g_theW3DDeferredRenderer->endGBufferPass();
 
-				// Phase 3+: deferred lighting passes go here.
-				// For Phase 2, the backbuffer is now black (only G-Buffer RTs have data).
+				// Sunlight PBR deferred lighting pass
+				{
+					// Get sun light parameters from the first global light
+					Vector3 sunDir(0, 0, -1);
+					Vector3 sunColor(1, 1, 1);
+					Vector3 ambient(0.1f, 0.1f, 0.15f);
+					if (m_globalLight[0]) {
+						sunDir = m_globalLight[0]->Get_Position();
+						m_globalLight[0]->Get_Diffuse(&sunColor);
+						m_globalLight[0]->Get_Ambient(&ambient);
+						float intens = m_globalLight[0]->Get_Intensity();
+						sunColor.X *= intens;
+						sunColor.Y *= intens;
+						sunColor.Z *= intens;
+					}
+					Vector3 camPos = rinfo.Camera.Get_Position();
+
+					// Compute inverse view-projection matrix
+					Matrix4x4 viewMatrix;
+					Matrix4x4 projMatrix;
+					Matrix4x4 viewProj;
+					Matrix4x4 invViewProj;
+
+					Matrix3D view3D = rinfo.Camera.Get_View_Matrix();
+					viewMatrix = Matrix4x4(view3D);
+					projMatrix = rinfo.Camera.Get_Projection_Matrix();
+
+					// View * Projection (in D3D/row-major convention)
+					Matrix4x4 viewT = viewMatrix.Transpose();
+					Matrix4x4 projT = projMatrix.Transpose();
+					viewProj = viewT * projT;
+
+					// Invert
+					// Use D3DXMatrixInverse (Matrix4x4::Inverse is broken)
+					{
+						D3DXMATRIX d3dViewProj = (D3DXMATRIX&)viewProj;
+						D3DXMATRIX d3dInv;
+						float det;
+						D3DXMatrixInverse(&d3dInv, &det, &d3dViewProj);
+						invViewProj = (Matrix4x4&)d3dInv;
+					}
+
+					g_theW3DDeferredRenderer->sunLightPass(
+						sunDir, sunColor, ambient, camPos, invViewProj);
+				}
 			}
 			else
 			{

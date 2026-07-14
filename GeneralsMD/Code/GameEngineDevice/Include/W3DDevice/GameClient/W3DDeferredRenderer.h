@@ -90,6 +90,15 @@ public:
 	/// Re-create all D3D resources after device reset.
 	virtual void ReAcquireResources();
 
+	/// Run the sunlight deferred lighting pass (full-screen quad).
+	void sunLightPass(
+		const Vector3 &sunDir,
+		const Vector3 &sunColor,
+		const Vector3 &ambient,
+		const Vector3 &cameraPos,
+		const Matrix4x4 &invViewProj
+	);
+
 private:
 
 	/// Create (or re-create) the G-Buffer render target textures.
@@ -112,6 +121,24 @@ private:
 
 	/// Previous cleanup hook in the chain (we must not break the chain).
 	DX8_CleanupHook *m_prevCleanupHook;
+
+	// ---- Sunlight pass resources ----
+
+	/// Create the full-screen quad vertex buffer and index buffer.
+	bool createFullScreenQuad();
+
+	/// Release the full-screen quad buffers.
+	void releaseFullScreenQuad();
+
+	/// Compile the sunlight PBR pixel shader.
+	bool compileSunLightShader();
+
+	/// Release the sunlight pixel shader.
+	void releaseSunLightShader();
+
+	IDirect3DPixelShader9 *m_sunLightPS;	///< Sunlight PBR pixel shader.
+	IDirect3DVertexBuffer9 *m_quadVB;		///< Full-screen quad vertex buffer.
+	IDirect3DIndexBuffer9 *m_quadIB;		///< Full-screen quad index buffer.
 
 };
 

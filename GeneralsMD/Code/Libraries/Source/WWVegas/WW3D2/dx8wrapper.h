@@ -122,6 +122,7 @@ extern bool _DX8SingleThreaded;
 // G-Buffer rendering flags (set by W3DDeferredRenderer before/after G-Buffer pass)
 extern bool g_gbufferActive;
 extern IDirect3DPixelShader9 *g_gbufferPS;
+extern IDirect3DVertexShader9 *g_gbufferVS;
 
 void DX8_Assert();
 void Log_DX8_ErrorCode(unsigned res);
@@ -741,6 +742,14 @@ WWINLINE void DX8Wrapper::Set_Vertex_Shader(IDirect3DVertexShader9* vertex_shade
 	// may be incorrect if shaders are created and destroyed dynamically
 	if (Vertex_Shader==vertex_shader) return;
 #endif
+
+	// G-Buffer override: during G-Buffer pass, force the G-Buffer vertex shader
+	// which passes clip-space depth to the pixel shader for RT2.a.
+	if (g_gbufferActive && g_gbufferVS) {
+		if (vertex_shader != g_gbufferVS) {
+			vertex_shader = g_gbufferVS;
+		}
+	}
 
 	Vertex_Shader=vertex_shader;
 	DX8CALL(SetVertexShader(Vertex_Shader));
