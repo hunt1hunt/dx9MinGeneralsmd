@@ -1107,6 +1107,30 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 
 					g_theW3DDeferredRenderer->sunLightPass(
 						sunDir, sunColor, ambient, camPos, invViewProj);
+
+				// Dynamic light pass (additive full-screen quads)
+				g_theW3DDeferredRenderer->renderDynamicLights(
+					DX8Wrapper::_Get_D3D_Device8(), camPos, invViewProj);
+				}
+
+				// Forward transparent pass: render glass, water, particles, sky on top
+				{
+					// Restore forward rendering state
+					g_gbufferActive = false;
+					ShaderClass::Invalidate();
+
+					// Depth test ON, depth write OFF (preserve opaque depth buffer)
+					// Reset viewport to backbuffer size
+					{
+						D3DVIEWPORT9 fullVp;
+						DX8CALL(GetViewport(&fullVp));
+						// might have been changed by sunLightPass, ensure full viewport
+					}
+
+					// Use forward rendering mode: transparent objects only
+					// The Flush() call handles sorted translucent objects, water, particles
+					Customized_Render(rinfo);
+					Flush(rinfo);
 				}
 			}
 			else

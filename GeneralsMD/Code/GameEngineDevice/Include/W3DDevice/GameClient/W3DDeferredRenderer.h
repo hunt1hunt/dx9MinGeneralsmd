@@ -99,6 +99,13 @@ public:
 		const Matrix4x4 &invViewProj
 	);
 
+	/// Render dynamic point/spot lights (additive full-screen quads).
+	void renderDynamicLights(
+		IDirect3DDevice8 *dev,
+		const Vector3 &cameraPos,
+		const Matrix4x4 &invViewProj
+	);
+
 private:
 
 	/// Create (or re-create) the G-Buffer render target textures.
@@ -112,6 +119,7 @@ private:
 	bool m_inGBufferPass;		///< beginGBufferPass() active.
 	int m_gbufferWidth;			///< G-Buffer RT width (pixels).
 	int m_gbufferHeight;		///< G-Buffer RT height (pixels).
+	float m_gbufferScale;		///< Dynamic resolution scale (1.0=full, 0.75=75%, 0.5=50%).
 
 	/// G-Buffer textures (3 RTs: Albedo+Metallic, Normal+Roughness, Emissive+Depth).
 	TextureClass *m_gbufferRT[3];
@@ -136,7 +144,14 @@ private:
 	/// Release the sunlight pixel shader.
 	void releaseSunLightShader();
 
+	/// Compile the point light PBR pixel shader.
+	bool compilePointLightShader();
+
+	/// Release the point light pixel shader.
+	void releasePointLightShader();
+
 	IDirect3DPixelShader9 *m_sunLightPS;	///< Sunlight PBR pixel shader.
+	IDirect3DPixelShader9 *m_pointLightPS;	///< Point light PBR pixel shader (additive).
 	IDirect3DVertexBuffer9 *m_quadVB;		///< Full-screen quad vertex buffer.
 	IDirect3DIndexBuffer9 *m_quadIB;		///< Full-screen quad index buffer.
 
