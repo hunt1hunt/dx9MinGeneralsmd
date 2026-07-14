@@ -821,17 +821,27 @@ void W3DDeferredRenderer::ReAcquireResources()
 
 	if (!createFullScreenQuad()) {
 		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-create quad.\n"));
+		releaseGBufferResources();
 		m_available = false;
 		return;
 	}
 
 	if (!compileSunLightShader()) {
 		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-compile sunlight PS.\n"));
+		releaseFullScreenQuad();
+		releaseGBufferResources();
+		m_available = false;
+		return;
+	}
+
+	if (!compilePointLightShader()) {
+		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-compile point light PS.\n"));
+		releaseSunLightShader();
+		releaseFullScreenQuad();
+		releaseGBufferResources();
 		m_available = false;
 		return;
 	}
 }
 
-// ============================================================================
-// W3DDeferredRenderer member function that doesn't exist in .h yet - add it
 // ============================================================================
