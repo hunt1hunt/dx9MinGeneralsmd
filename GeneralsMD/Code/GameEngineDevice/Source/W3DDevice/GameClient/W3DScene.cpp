@@ -1105,12 +1105,20 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						invViewProj = (Matrix4x4&)d3dInv;
 					}
 
+					// Deferred lighting to HDR RT (or back buffer fallback)
+					g_theW3DDeferredRenderer->beginHDRPass();
+
 					g_theW3DDeferredRenderer->sunLightPass(
 						sunDir, sunColor, ambient, camPos, invViewProj);
 
 				// Dynamic light pass (additive full-screen quads)
 				g_theW3DDeferredRenderer->renderDynamicLights(
 					DX8Wrapper::_Get_D3D_Device8(), camPos, invViewProj);
+
+				g_theW3DDeferredRenderer->endHDRPass();
+
+				// Tone mapping: HDR RT -> back buffer (LDR + gamma)
+				g_theW3DDeferredRenderer->toneMapPass();
 				}
 
 				// Forward transparent pass: render glass, water, particles, sky on top

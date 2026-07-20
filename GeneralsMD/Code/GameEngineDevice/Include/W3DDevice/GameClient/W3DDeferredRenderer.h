@@ -106,6 +106,19 @@ public:
 		const Matrix4x4 &invViewProj
 	);
 
+	// ---- HDR pass lifecycle ----
+
+	/// Bind the HDR render target (A16B16G16R16F or A8R8G8B8 fallback).
+	/// All deferred lighting goes here so values can exceed 1.0.
+	bool beginHDRPass();
+
+	/// Restore the default back buffer after HDR compositing.
+	void endHDRPass();
+
+	/// Full-screen quad tone-mapping pass: HDR RT -> back buffer.
+	/// Applies Reinhard tone mapping + gamma correction.
+	void toneMapPass();
+
 private:
 
 	/// Create (or re-create) the G-Buffer render target textures.
@@ -154,6 +167,20 @@ private:
 	IDirect3DPixelShader9 *m_pointLightPS;	///< Point light PBR pixel shader (additive).
 	IDirect3DVertexBuffer9 *m_quadVB;		///< Full-screen quad vertex buffer.
 	IDirect3DIndexBuffer9 *m_quadIB;		///< Full-screen quad index buffer.
+
+	// ---- HDR resources ----
+
+	/// Create/release the HDR render target.
+	bool createHDRResources();
+	void releaseHDRResources();
+
+	/// Create/release the tone-mapping pixel shader.
+	bool compileToneMapShader();
+	void releaseToneMapShader();
+
+	TextureClass *m_hdrRT;					///< HDR compositing RT (A16B16G16R16F or A8R8G8B8 fallback).
+	bool m_hdrAvailable;					///< HDR RT successfully created.
+	IDirect3DPixelShader9 *m_toneMapPS;		///< Tone-mapping pixel shader (Reinhard + gamma).
 
 };
 

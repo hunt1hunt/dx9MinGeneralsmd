@@ -136,7 +136,10 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_sunLightPS(NULL),
 	m_pointLightPS(NULL),
 	m_quadVB(NULL),
-	m_quadIB(NULL)
+	m_quadIB(NULL),
+	m_hdrRT(NULL),
+	m_hdrAvailable(false),
+	m_toneMapPS(NULL)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -292,6 +295,13 @@ void W3DDeferredRenderer::init()
 		return;
 	}
 
+	if (!createHDRResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: HDR RT creation failed.\n"));
+	}
+	if (!compileToneMapShader()) {
+		DIAG_LOG(("W3DDeferredRenderer: tone map PS compile failed.\n"));
+	}
+
 	//
 	// Register as a cleanup hook (chain with any existing hook).
 	//
@@ -320,8 +330,11 @@ void W3DDeferredRenderer::shutdown()
 	m_prevCleanupHook = NULL;
 
 	releaseSunLightShader();
+	releasePointLightShader();
 	releaseFullScreenQuad();
 	releaseGBufferResources();
+	releaseHDRResources();
+	releaseToneMapShader();
 	m_available = false;
 	m_initialized = false;
 }
@@ -1004,8 +1017,11 @@ void W3DDeferredRenderer::ReleaseResources()
 	}
 
 	releaseSunLightShader();
+	releasePointLightShader();
 	releaseFullScreenQuad();
 	releaseGBufferResources();
+	releaseHDRResources();
+	releaseToneMapShader();
 
 	if (m_prevCleanupHook) {
 		m_prevCleanupHook->ReleaseResources();
@@ -1052,6 +1068,178 @@ void W3DDeferredRenderer::ReAcquireResources()
 		m_available = false;
 		return;
 	}
+	if (!createHDRResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-create HDR RT.\n"));
+	}
+	if (!compileToneMapShader()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-compile tone map PS.\n"));
+	}
 }
 
 // ============================================================================
+// ============================================================================
+// W3DDeferredRenderer::createHDRResources
+// ============================================================================
+bool W3DDeferredRenderer::createHDRResources()
+{
+	WW3DFormat hdrFormat = WW3D_FORMAT_A16B16G16R16F;
+	m_hdrRT = DX8Wrapper::Create_Render_Target(
+		m_gbufferWidth, m_gbufferHeight, hdrFormat, true);
+	if (m_hdrRT) {
+		m_hdrAvailable = true;
+		DIAG_LOG(("W3DDeferredRenderer: HDR RT created (%dx%d, A16B16G16R16F).\n",
+			m_gbufferWidth, m_gbufferHeight));
+		return true;
+	}
+	hdrFormat = WW3D_FORMAT_A8R8G8B8;
+	m_hdrRT = DX8Wrapper::Create_Render_Target(
+		m_gbufferWidth, m_gbufferHeight, hdrFormat, true);
+	if (m_hdrRT) {
+		m_hdrAvailable = false;
+		DIAG_LOG(("W3DDeferredRenderer: HDR RT created as A8R8G8B8 fallback.\n"));
+		return true;
+	}
+	DIAG_LOG(("W3DDeferredRenderer: HDR RT creation completely failed.\n"));
+	m_hdrAvailable = false;
+	return false;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::releaseHDRResources
+// ============================================================================
+void W3DDeferredRenderer::releaseHDRResources()
+{
+	REF_PTR_RELEASE(m_hdrRT);
+	m_hdrAvailable = false;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::compileToneMapShader
+// ============================================================================
+bool W3DDeferredRenderer::compileToneMapShader()
+{
+	const char ps_source[] =
+	"struct PS_IN {\n"
+	"float4 pos : POSITION;\n"
+	"float2 tex0 : TEXCOORD0;\n"
+	"};\n"
+	"sampler hdrSampler : register(s0);\n"
+	"float4 main(PS_IN input) : COLOR {\n"
+	"  float3 hdrColor = tex2D(hdrSampler, input.tex0).rgb;\n"
+	"  // Reinhard tone map\n"
+	"  float3 ldr = hdrColor / (hdrColor + 1.0);\n"
+	"  // Gamma correction (linear to sRGB)\n"
+	"  ldr = pow(abs(ldr), 1.0 / 2.2);\n"
+	"  return float4(ldr, 1.0);\n"
+	"};\n"
+	;
+
+	ID3DXBuffer *compiled = NULL;
+	ID3DXBuffer *errors = NULL;
+	HRESULT hr = D3DXCompileShader(ps_source, (UINT)strlen(ps_source),
+		NULL, NULL, "main", "ps_3_0",
+		0, &compiled, &errors, NULL);
+	if (FAILED(hr) || !compiled) {
+		DIAG_LOG(("W3DDeferredRenderer: ToneMap PS compile failed.\n"));
+		if (errors) {
+			DIAG_LOG(("  error: %s\n", (const char*)errors->GetBufferPointer()));
+			errors->Release();
+		}
+		m_toneMapPS = NULL;
+		return false;
+	}
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev) {
+		hr = dev->CreatePixelShader(
+			(const DWORD*)compiled->GetBufferPointer(), &m_toneMapPS);
+	}
+	compiled->Release();
+	if (FAILED(hr) || !m_toneMapPS) {
+		DIAG_LOG(("W3DDeferredRenderer: ToneMap PS CreatePixelShader failed.\n"));
+		m_toneMapPS = NULL;
+		return false;
+	}
+	DIAG_LOG(("W3DDeferredRenderer: ToneMap PS compiled successfully.\n"));
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::releaseToneMapShader
+// ============================================================================
+void W3DDeferredRenderer::releaseToneMapShader()
+{
+	if (m_toneMapPS) {
+		m_toneMapPS->Release();
+		m_toneMapPS = NULL;
+	}
+}
+
+// ============================================================================
+// W3DDeferredRenderer::beginHDRPass
+// ============================================================================
+bool W3DDeferredRenderer::beginHDRPass()
+{
+	if (!m_hdrRT) {
+		DIAG_LOG(("W3DDeferredRenderer: beginHDRPass called but no HDR RT.\n"));
+		return false;
+	}
+	IDirect3DSurface8 *surf = m_hdrRT->Get_D3D_Surface_Level();
+	if (!surf) return false;
+	DX8Wrapper::Set_Render_Target(0, surf);
+	surf->Release();
+	DX8Wrapper::Clear(true, false, Vector3(0, 0, 0), 0, 1.0f, 0);
+	D3DVIEWPORT9 vp;
+	DX8CALL(GetViewport(&vp));
+	vp.Width = m_gbufferWidth;
+	vp.Height = m_gbufferHeight;
+	vp.X = 0;
+	vp.Y = 0;
+	DX8CALL(SetViewport(&vp));
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::endHDRPass
+// ============================================================================
+void W3DDeferredRenderer::endHDRPass()
+{
+	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+}
+
+// ============================================================================
+// W3DDeferredRenderer::toneMapPass
+// ============================================================================
+void W3DDeferredRenderer::toneMapPass()
+{
+	if (!m_hdrRT || !m_toneMapPS || !m_quadVB || !m_quadIB) {
+		DIAG_LOG(("W3DDeferredRenderer: toneMapPass skipped.\n"));
+		return;
+	}
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+	D3DVIEWPORT9 vp;
+	DX8CALL(GetViewport(&vp));
+	vp.Width = m_gbufferWidth;
+	vp.Height = m_gbufferHeight;
+	vp.X = 0;
+	vp.Y = 0;
+	DX8CALL(SetViewport(&vp));
+	IDirect3DBaseTexture8 *tex = m_hdrRT->Peek_D3D_Base_Texture();
+	dev->SetTexture(0, tex);
+	dev->SetPixelShader(m_toneMapPS);
+	DWORD oldZEnable, oldZWrite;
+	dev->GetRenderState(D3DRS_ZENABLE, &oldZEnable);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &oldZWrite);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+	dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+	dev->SetIndices(m_quadIB);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+	dev->SetRenderState(D3DRS_ZENABLE, oldZEnable);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZWrite);
+	dev->SetTexture(0, NULL);
+}
+
+// ============================================================================
+//

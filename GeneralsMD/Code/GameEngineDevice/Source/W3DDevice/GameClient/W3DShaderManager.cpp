@@ -3358,7 +3358,7 @@ Int W3DPBRShader::init( void )
 				"float2 octEncode(float3 n) {\n"
 				"\tn /= abs(n.x) + abs(n.y) + abs(n.z);\n"
 				"\tfloat2 p = n.xy;\n"
-				"\tp = (n.z >= 0) ? p : (1 - abs(p.yx)) * (2 * step(0, p.yx) - 1);\n"
+				"\tp = (n.z >= 0) ? p : (1 - abs(p.yx)) * (2 * step(0, p) - 1);\n"
 				"\treturn p * 0.5 + 0.5;\n"
 				"}\n"
 				"\n"
