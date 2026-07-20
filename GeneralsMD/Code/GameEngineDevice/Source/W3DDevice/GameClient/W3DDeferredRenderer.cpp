@@ -142,7 +142,12 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_toneMapPS(NULL),
 	m_shadowDepthRT(NULL),
 	m_shadowMapAvailable(false),
-	m_sunLightShadowPS(NULL)
+	m_sunLightShadowPS(NULL),
+	m_aoRawRT(NULL),
+	m_aoBlurredRT(NULL),
+	m_ssaoAvailable(false),
+	m_ssaoPS(NULL),
+	m_ssaoBlurPS(NULL)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -310,6 +315,12 @@ void W3DDeferredRenderer::init()
 	if (!compileSunLightShadowShader()) {
 		DIAG_LOG(("W3DDeferredRenderer: sun light shadow PS compile failed.\n"));
 	}
+	if (!createAOResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: AO RT creation failed.\n"));
+	}
+	if (!compileAOPassShaders()) {
+		DIAG_LOG(("W3DDeferredRenderer: AO shader compile failed.\n"));
+	}
 
 	//
 	// Register as a cleanup hook (chain with any existing hook).
@@ -345,6 +356,8 @@ void W3DDeferredRenderer::shutdown()
 	releaseHDRResources();
 	releaseToneMapShader();
 	releaseShadowResources();
+	releaseAOResources();
+	releaseAOPassShaders();
 	m_available = false;
 	m_initialized = false;
 }
@@ -1050,6 +1063,8 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseHDRResources();
 	releaseToneMapShader();
 	releaseShadowResources();
+	releaseAOResources();
+	releaseAOPassShaders();
 
 	if (m_prevCleanupHook) {
 		m_prevCleanupHook->ReleaseResources();
@@ -1107,6 +1122,12 @@ void W3DDeferredRenderer::ReAcquireResources()
 	}
 	if (!compileSunLightShadowShader()) {
 		DIAG_LOG(("W3DDeferredRenderer: failed to re-compile shadow PS.\n"));
+	}
+	if (!createAOResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed AO create.\n"));
+	}
+	if (!compileAOPassShaders()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed AO shader compile.\n"));
 	}
 }
 
@@ -1472,3 +1493,145 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 	return true;
 }
 
+
+// === createAOResources ===
+
+bool W3DDeferredRenderer::createAOResources()
+{
+	m_aoRawRT = DX8Wrapper::Create_Render_Target(m_gbufferWidth, m_gbufferHeight, WW3D_FORMAT_A8R8G8B8, true);
+	m_aoBlurredRT = DX8Wrapper::Create_Render_Target(m_gbufferWidth, m_gbufferHeight, WW3D_FORMAT_A8R8G8B8, true);
+	if (!m_aoRawRT || !m_aoBlurredRT) {
+		REF_PTR_RELEASE(m_aoRawRT); REF_PTR_RELEASE(m_aoBlurredRT);
+		m_ssaoAvailable = false; return false;
+	}
+	m_ssaoAvailable = true;
+	DIAG_LOG(("W3DDeferredRenderer: AO RTs created (%dx%d).\n", m_gbufferWidth, m_gbufferHeight));
+	return true;
+}
+
+// === releaseAOResources ===
+
+void W3DDeferredRenderer::releaseAOResources()
+{
+	REF_PTR_RELEASE(m_aoRawRT); REF_PTR_RELEASE(m_aoBlurredRT);
+	m_ssaoAvailable = false;
+}
+
+// === compileAOPassShaders ===
+bool W3DDeferredRenderer::compileAOPassShaders()
+{
+	// SSAO compute
+	const char ssao_ps[] =
+		"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+		"sampler sDepth : register(s0);\n"
+		"sampler sNormal : register(s1);\n"
+		"float4 c4 : register(c4);\n"
+		"float4 main(PS_IN i):COLOR {\n"
+		"  float depth = tex2D(sDepth, i.tex0).r;\n"
+		"  float3 N = normalize(tex2D(sNormal, i.tex0).rgb * 2 - 1);\n"
+		"  float2 xy = i.tex0 * 2 - 1;\n"
+		"  // Simple AO: 4-sample at screen-space offset\n"
+		"  float2 off[4] = { {1,0}, {-1,0}, {0,1}, {0,-1} };\n"
+		"  float radius = c4.x; float ao = 0;\n"
+		"  for (int j = 0; j < 4; j++) {\n"
+		"    float2 uv = i.tex0 + off[j] * radius * (1.0/1920);\n"
+		"    float d = tex2D(sDepth, uv).r;\n"
+		"    ao += max(0, depth - d);\n"
+		"  }\n"
+		"  return float4(saturate(1 - ao * c4.y), 0, 0, 1);\n"
+		"};\n"
+	;
+	ID3DXBuffer *c = NULL; ID3DXBuffer *e = NULL;
+	HRESULT hr = D3DXCompileShader(ssao_ps, (UINT)strlen(ssao_ps), NULL, NULL, "main", "ps_3_0", 0, &c, &e, NULL);
+	if (FAILED(hr) || !c) { DIAG_LOG(("W3DDeferredRenderer: SSAO PS failed.\n")); if(e){e->Release();} m_ssaoPS=NULL; return false; }
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev) hr = dev->CreatePixelShader((const DWORD*)c->GetBufferPointer(), &m_ssaoPS);
+	c->Release();
+	if (FAILED(hr) || !m_ssaoPS) { m_ssaoPS = NULL; return false; }
+
+	// AO blur (simple 3x3)
+	const char blur_ps[] =
+		"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+		"sampler sAO : register(s0);\n"
+		"sampler sDepth : register(s1);\n"
+		"float4 c0 : register(c0);\n"
+		"float4 main(PS_IN i):COLOR {\n"
+		"  float cd = tex2D(sDepth, i.tex0).r;\n"
+		"  float aoSum = 0; float wSum = 0;\n"
+		"  float2 ts = c0.xy;\n"
+		"  [unroll] for (int x = -1; x <= 1; x++) {\n"
+		"    [unroll] for (int y = -1; y <= 1; y++) {\n"
+		"      float2 uv = i.tex0 + float2(x,y) * ts;\n"
+		"      float d = tex2D(sDepth, uv).r;\n"
+		"      float w = exp(-abs(d-cd)*10) * 1.0/9.0;\n"
+		"      aoSum += tex2D(sAO, uv).r * w; wSum += w;\n"
+		"    }\n"
+		"  }\n"
+		"  return float4(aoSum/max(wSum,0.001), 0, 0, 1);\n"
+		"};\n"
+	;
+
+	c = NULL; e = NULL;
+	hr = D3DXCompileShader(blur_ps, (UINT)strlen(blur_ps), NULL, NULL, "main", "ps_3_0", 0, &c, &e, NULL);
+	if (FAILED(hr) || !c) { DIAG_LOG(("W3DDeferredRenderer: AOBlur PS failed.\n")); if(e){e->Release();} m_ssaoBlurPS=NULL; return false; }
+	if (dev) hr = dev->CreatePixelShader((const DWORD*)c->GetBufferPointer(), &m_ssaoBlurPS);
+	c->Release();
+	if (FAILED(hr) || !m_ssaoBlurPS) { m_ssaoBlurPS = NULL; return false; }
+	DIAG_LOG(("W3DDeferredRenderer: SSAO shaders compiled.\n"));
+	return true;
+}
+
+
+// === releaseAOPassShaders ===
+
+void W3DDeferredRenderer::releaseAOPassShaders()
+{
+	if (m_ssaoPS) { m_ssaoPS->Release(); m_ssaoPS = NULL; }
+	if (m_ssaoBlurPS) { m_ssaoBlurPS->Release(); m_ssaoBlurPS = NULL; }
+}
+
+// === computeAO ===
+
+void W3DDeferredRenderer::computeAO()
+{
+	if (!m_ssaoAvailable || !m_ssaoPS || !m_ssaoBlurPS) return;
+	if (!m_gbufferRT[1] || !m_gbufferRT[2] || !m_aoRawRT || !m_aoBlurredRT) return;
+	if (!m_quadVB || !m_quadIB) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+
+	// Pass 1: raw AO
+	IDirect3DSurface8 *s = m_aoRawRT->Get_D3D_Surface_Level();
+	if (!s) return;
+	DX8Wrapper::Set_Render_Target(0, s); s->Release();
+	D3DVIEWPORT9 vp; DX8CALL(GetViewport(&vp));
+	vp.Width=m_gbufferWidth; vp.Height=m_gbufferHeight; vp.X=0; vp.Y=0;
+	DX8CALL(SetViewport(&vp));
+	DX8Wrapper::Clear(true,false,Vector3(1,1,1),0,1.0f,0);
+	dev->SetTexture(0, m_gbufferRT[2]->Peek_D3D_Base_Texture());
+	dev->SetTexture(1, m_gbufferRT[1]->Peek_D3D_Base_Texture());
+	dev->SetPixelShader(m_ssaoPS);
+	float p[4]={0.01f,4.0f,0,0}; dev->SetPixelShaderConstantF(4,p,1);
+	dev->SetFVF(D3DFVF_XYZRHW|D3DFVF_TEX1);
+	dev->SetStreamSource(0,m_quadVB,0,sizeof(float)*6);
+	dev->SetIndices(m_quadIB);
+	DWORD z,w; dev->GetRenderState(D3DRS_ZENABLE,&z); dev->GetRenderState(D3DRS_ZWRITEENABLE,&w);
+	dev->SetRenderState(D3DRS_ZENABLE,FALSE); dev->SetRenderState(D3DRS_ZWRITEENABLE,FALSE);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,0,0,4,0,2);
+	dev->SetRenderState(D3DRS_ZENABLE,z); dev->SetRenderState(D3DRS_ZWRITEENABLE,w);
+	dev->SetTexture(0,NULL); dev->SetTexture(1,NULL);
+
+	// Pass 2: blur
+	s = m_aoBlurredRT->Get_D3D_Surface_Level();
+	if (!s) return;
+	DX8Wrapper::Set_Render_Target(0, s); s->Release();
+	dev->SetTexture(0, m_aoRawRT->Peek_D3D_Base_Texture());
+	dev->SetTexture(1, m_gbufferRT[2]->Peek_D3D_Base_Texture());
+	dev->SetPixelShader(m_ssaoBlurPS);
+	float ts[4]={1.0f/m_gbufferWidth,1.0f/m_gbufferHeight,0,0};
+	dev->SetPixelShaderConstantF(0,ts,1);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,0,0,4,0,2);
+	dev->SetTexture(0,NULL); dev->SetTexture(1,NULL);
+
+	DX8Wrapper::Set_Render_Target((IDirect3DSurface8*)NULL);
+}

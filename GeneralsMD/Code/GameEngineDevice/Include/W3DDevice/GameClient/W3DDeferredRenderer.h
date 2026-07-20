@@ -119,6 +119,9 @@ public:
 	/// Applies Reinhard tone mapping + gamma correction.
 	void toneMapPass();
 
+	// ---- SSAO pass lifecycle ----
+	void computeAO();
+
 	// ---- Shadow map pass lifecycle ----
 
 	/// Bind the shadow map RT, set orthographic camera from sun direction.
@@ -204,6 +207,17 @@ private:
 	bool m_shadowMapAvailable;				///< Shadow map resources OK.
 	Matrix4x4 m_shadowViewProj;				///< Sun's view-projection matrix (for shader).
 	IDirect3DPixelShader9 *m_sunLightShadowPS; ///< Sunlight PS with shadow PCF 2x2.
+
+	// ---- SSAO resources ----
+	bool createAOResources();
+	void releaseAOResources();
+	bool compileAOPassShaders();
+	void releaseAOPassShaders();
+	TextureClass *m_aoRawRT;
+	TextureClass *m_aoBlurredRT;
+	bool m_ssaoAvailable;
+	IDirect3DPixelShader9 *m_ssaoPS;
+	IDirect3DPixelShader9 *m_ssaoBlurPS;
 
 };
 
