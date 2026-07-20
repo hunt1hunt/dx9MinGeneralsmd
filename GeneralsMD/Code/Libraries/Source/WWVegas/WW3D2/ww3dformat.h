@@ -98,6 +98,12 @@ enum WW3DFormat {
 	WW3D_FORMAT_DXT3,
 	WW3D_FORMAT_DXT4,
 	WW3D_FORMAT_DXT5,
+
+	// Floating-point / high-precision formats for deferred rendering
+	WW3D_FORMAT_R32F,			// 32-bit float (depth RT)
+	WW3D_FORMAT_G16R16F,		// 16-bit float x2 (octahedral normal, extreme precision)
+	WW3D_FORMAT_A16B16G16R16F,	// 16-bit float x4 (HDR lighting RT)
+
 	WW3D_FORMAT_COUNT	// Used only to determine number of surface formats
 };
 

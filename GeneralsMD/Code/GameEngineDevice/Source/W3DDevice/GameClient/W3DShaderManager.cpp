@@ -3364,7 +3364,7 @@ Int W3DPBRShader::init( void )
 			ID3DXBuffer *compiled = NULL;
 			ID3DXBuffer *errors = NULL;
 			HRESULT hr = D3DXCompileShader(gbuffer_ps, (UINT)strlen(gbuffer_ps),
-				NULL, NULL, "main", "ps_2_0",
+				NULL, NULL, "main", "ps_3_0",
 				0, &compiled, &errors, NULL);
 			if (FAILED(hr) || !compiled) {
 				WWDEBUG_SAY(("W3DShaderManager: G-Buffer PS compile failed.\n"));

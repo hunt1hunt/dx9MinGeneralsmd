@@ -63,7 +63,12 @@ D3DFORMAT WW3DFormatToD3DFormatConversionArray[WW3D_FORMAT_COUNT] = {
 	D3DFMT_DXT2,
 	D3DFMT_DXT3,
 	D3DFMT_DXT4,
-	D3DFMT_DXT5
+	D3DFMT_DXT5,
+
+	// Floating-point format mappings (for deferred rendering)
+	D3DFMT_R32F,
+	D3DFMT_G16R16F,
+	D3DFMT_A16B16G16R16F
 };
 
 // adding depth stencil format conversion
@@ -130,10 +135,12 @@ WW3DFormat D3DFormatToWW3DFormatConversionArray[HIGHEST_SUPPORTED_D3DFORMAT + 1]
 */
 
 #ifndef _XBOX
-#define HIGHEST_SUPPORTED_D3DFORMAT D3DFMT_X8L8V8U8
+// Note: D3DFMT_A16B16G16R16F (=115) >> D3DFMT_X8L8V8U8 (=61), so we bump the upper bound
+// D3DFMT_R32F (114) > A16B16G16R16F (113) in the D3D9 header — cover all three
+#define HIGHEST_SUPPORTED_D3DFORMAT D3DFMT_R32F
 #define HIGHEST_SUPPORTED_D3DZFORMAT D3DFMT_D24X4S4
 #else
-#define HIGHEST_SUPPORTED_D3DFORMAT  D3DFMT_LIN_R8G8B8A8 
+#define HIGHEST_SUPPORTED_D3DFORMAT  D3DFMT_LIN_R8G8B8A8
 #define HIGHEST_SUPPORTED_D3DZFORMAT    D3DFMT_LIN_F16
 #endif
 WW3DFormat D3DFormatToWW3DFormatConversionArray[HIGHEST_SUPPORTED_D3DFORMAT + 1];
@@ -228,6 +235,11 @@ void Init_D3D_To_WW3_Conversion()
 	D3DFormatToWW3DFormatConversionArray[D3DFMT_V8U8]=WW3D_FORMAT_U8V8;				// Bumpmap
 	D3DFormatToWW3DFormatConversionArray[D3DFMT_L6V5U5]=WW3D_FORMAT_L6V5U5;		// Bumpmap
 	D3DFormatToWW3DFormatConversionArray[D3DFMT_X8L8V8U8]=WW3D_FORMAT_X8L8V8U8;	// Bumpmap
+
+	// Floating-point format mappings (for deferred rendering)
+	D3DFormatToWW3DFormatConversionArray[D3DFMT_R32F]=WW3D_FORMAT_R32F;
+	D3DFormatToWW3DFormatConversionArray[D3DFMT_G16R16F]=WW3D_FORMAT_G16R16F;
+	D3DFormatToWW3DFormatConversionArray[D3DFMT_A16B16G16R16F]=WW3D_FORMAT_A16B16G16R16F;
 
 	// init depth stencil conversion
 	for (i=0; i<HIGHEST_SUPPORTED_D3DZFORMAT; i++) 

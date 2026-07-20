@@ -22,6 +22,8 @@
 //																																						//
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cstdio>
+#include <cstdarg>
 #include "always.h"
 #include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "WW3D2/dx8wrapper.h"
@@ -30,6 +32,24 @@
 #include "WW3D2/ww3d.h"
 #include "WW3D2/DX8Caps.h"
 #include "Common/GlobalData.h"
+#include "WW3D2/formconv.h"
+
+// ----------------------------------------------------------------------------
+// Diagnostic logging — always compiled, writes to fixed path on E: drive.
+// Use DIAG_LOG(("format %d", value)) — same double-paren convention as DEBUG_LOG.
+// ----------------------------------------------------------------------------
+static void diagWrite(const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	FILE *f = fopen("E:\\GeneralsMD_DeferredRT.log", "a");
+	if (f) {
+		vfprintf(f, fmt, args);
+		fclose(f);
+	}
+	va_end(args);
+}
+#define DIAG_LOG(x)  do { diagWrite x; } while (0)
 
 // Terrain render object for shroud texture access
 #include "W3DDevice/GameClient/BaseHeightMap.h"
@@ -88,23 +108,41 @@ void W3DDeferredRenderer::init()
 	//
 	const DX8Caps *caps = DX8Wrapper::Get_Current_Caps();
 	if (caps == NULL) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: no caps available, deferred rendering disabled.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: no caps available, deferred rendering disabled.\n"));
 		m_available = false;
 		return;
 	}
 
 	int numRTs = caps->Get_Num_Simultaneous_RTs();
 	if (numRTs < 3) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: GPU supports %d RTs (need 3+). Disabled.\n", numRTs));
+		DIAG_LOG(("W3DDeferredRenderer: GPU supports %d RTs (need 3+). Disabled.\n", numRTs));
 		m_available = false;
 		return;
+	}
+
+	//
+	// Check Pixel Shader 3.0 support (needed for MRT in HLSL).
+	//
+	{
+		const D3DCAPS9 &d3dCaps = caps->Get_DX8_Caps();
+		DWORD psVer = d3dCaps.PixelShaderVersion;
+		int psMajor = D3DSHADER_VERSION_MAJOR(psVer);
+		int psMinor = D3DSHADER_VERSION_MINOR(psVer);
+		DIAG_LOG(("W3DDeferredRenderer: PixelShaderVersion=%d.%d (%s)\n",
+			psMajor, psMinor,
+			psVer >= D3DPS_VERSION(3,0) ? "OK" : "NEED 3.0"));
+		if (psVer < D3DPS_VERSION(3,0)) {
+			DIAG_LOG(("W3DDeferredRenderer: ps_3_0 required for MRT. Disabled.\n"));
+			m_available = false;
+			return;
+		}
 	}
 
 	//
 	// Check INI switch: UseDeferredRendering must be enabled.
 	//
 	if (TheGlobalData && !TheGlobalData->m_useDeferredRendering) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: UseDeferredRendering=0 in INI. Disabled.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: UseDeferredRendering=0 in INI. Disabled.\n"));
 		m_available = false;
 		return;
 	}
@@ -126,10 +164,41 @@ void W3DDeferredRenderer::init()
 	if (m_gbufferHeight < 1) m_gbufferHeight = 1;
 
 	//
+	// WW3DFormat extension self-test: verify new float format conversions.
+	// Always runs; output goes to E:\GeneralsMD_DeferredRT.log regardless of build config.
+	//
+	{
+		struct { WW3DFormat ww3d; const char *name; } testFmts[3] = {
+			{ WW3D_FORMAT_R32F, "R32F" },
+			{ WW3D_FORMAT_G16R16F, "G16R16F" },
+			{ WW3D_FORMAT_A16B16G16R16F, "A16B16G16R16F" },
+		};
+		for (int i = 0; i < 3; i++) {
+			D3DFORMAT d3dFmt = WW3DFormat_To_D3DFormat(testFmts[i].ww3d);
+			DIAG_LOG(("W3DDeferredRenderer: Format[%s] -> D3DFMT=0x%04x (%s)\n",
+				testFmts[i].name, (int)d3dFmt,
+				d3dFmt != D3DFMT_UNKNOWN ? "OK" : "FAIL"));
+
+			WW3DFormat backFmt = D3DFormat_To_WW3DFormat(d3dFmt);
+			DIAG_LOG(("W3DDeferredRenderer:   D3DFMT=0x%04x -> WW3DFormat=%d (%s)\n",
+				(int)d3dFmt, (int)backFmt,
+				backFmt == testFmts[i].ww3d ? "ROUNDTRIP_OK" : "ROUNDTRIP_FAIL"));
+
+			// Try creating a small RT as capability check (non-fatal if fails).
+			TextureClass *testRT = DX8Wrapper::Create_Render_Target(
+				64, 64, testFmts[i].ww3d, true);
+			DIAG_LOG(("W3DDeferredRenderer:   Create_Render_Target(%s,64,64) -> %s\n",
+				testFmts[i].name,
+				testRT ? "SUCCESS" : "NULL (expected on old HW)"));
+			REF_PTR_RELEASE(testRT);
+		}
+	}
+
+	//
 	// Create the three G-Buffer render target textures.
 	//
 	if (!createGBufferResources()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to create G-Buffer RTs. Disabled.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to create G-Buffer RTs. Disabled.\n"));
 		m_available = false;
 		return;
 	}
@@ -138,7 +207,7 @@ void W3DDeferredRenderer::init()
 	// Create full-screen quad resources for the lighting pass.
 	//
 	if (!createFullScreenQuad()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to create full-screen quad.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to create full-screen quad.\n"));
 		releaseGBufferResources();
 		m_available = false;
 		return;
@@ -148,14 +217,14 @@ void W3DDeferredRenderer::init()
 	// Compile the sunlight PBR pixel shader.
 	//
 	if (!compileSunLightShader()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to compile sunlight PS.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to compile sunlight PS.\n"));
 		releaseFullScreenQuad();
 		releaseGBufferResources();
 		m_available = false;
 		return;
 	}
 	if (!compilePointLightShader()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to compile point light PS.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to compile point light PS.\n"));
 		releasePointLightShader();
 		releaseSunLightShader();
 		releaseFullScreenQuad();
@@ -171,7 +240,7 @@ void W3DDeferredRenderer::init()
 	DX8Wrapper::SetCleanupHook(this);
 
 	m_available = true;
-	WWDEBUG_SAY(("W3DDeferredRenderer: initialized (%dx%d, MRT=%d).\n",
+	DIAG_LOG(("W3DDeferredRenderer: initialized (%dx%d, MRT=%d).\n",
 		m_gbufferWidth, m_gbufferHeight, numRTs));
 }
 
@@ -208,7 +277,7 @@ bool W3DDeferredRenderer::createGBufferResources()
 			true);  // allowNonPOT
 
 		if (m_gbufferRT[i] == NULL) {
-			WWDEBUG_SAY(("W3DDeferredRenderer: Create_Render_Target(%d) failed!\n", i));
+			DIAG_LOG(("W3DDeferredRenderer: Create_Render_Target(%d) failed!\n", i));
 			for (int j = 0; j < i; j++) {
 				REF_PTR_RELEASE(m_gbufferRT[j]);
 			}
@@ -318,6 +387,15 @@ void W3DDeferredRenderer::sunLightPass(
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) return;
 
+	// Set viewport to match G-buffer size (quad coordinates are G-buffer pixels).
+	D3DVIEWPORT9 vp;
+	DX8CALL(GetViewport(&vp));
+	vp.Width = m_gbufferWidth;
+	vp.Height = m_gbufferHeight;
+	vp.X = 0;
+	vp.Y = 0;
+	DX8CALL(SetViewport(&vp));
+
 	// Bind G-Buffer textures as pixel shader inputs.
 	// s0 = Albedo+Metallic (RT0), s1 = Normal+Roughness (RT1), s2 = Emissive+Depth (RT2)
 	IDirect3DBaseTexture8 *tex0 = m_gbufferRT[0]->Peek_D3D_Base_Texture();
@@ -406,6 +484,15 @@ void W3DDeferredRenderer::renderDynamicLights(
 {
 	if (!m_available || !m_pointLightPS || !m_quadVB) return;
 	if (!dev || !m_gbufferRT[0]) return;
+
+	// Set viewport to match G-buffer size (quad coordinates are G-buffer pixels).
+	D3DVIEWPORT9 vp;
+	DX8CALL(GetViewport(&vp));
+	vp.Width = m_gbufferWidth;
+	vp.Height = m_gbufferHeight;
+	vp.X = 0;
+	vp.Y = 0;
+	DX8CALL(SetViewport(&vp));
 
 	// Bind G-Buffer textures for sampling.
 	IDirect3DBaseTexture8 *tex0 = m_gbufferRT[0]->Peek_D3D_Base_Texture();
@@ -505,22 +592,50 @@ bool W3DDeferredRenderer::createFullScreenQuad()
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) return false;
 
-	// 4 vertices: pre-transformed (XYZRHW) with texcoords.
-	// Screen coords: (-1,-1) to (1,1) in normalized space, rhw=1.
-	// Texture coords: (0,0) to (1,1).
+	//
+	// Full-screen quad using pre-transformed XYZRHW vertices.
+	//
+	// With D3DFVF_XYZRHW the rasterizer interprets (x,y) as pixel coordinates
+	// within the current viewport.  To cover every pixel in the viewport:
+	//   - The quad must span from (-0.5, -0.5) to (w-0.5, h-0.5)
+	//   - The -0.5 is D3D9's half-pixel offset: texel centres are at half-
+	//     integer positions in texture space, and the rasterizer evaluates
+	//     coverage at integer pixel centres.  Offsetting by -0.5 aligns the
+	//     two coordinate systems so that texel (0,0) maps to pixel (0,0)
+	//     exactly, eliminating a 0.5-pixel misalignment along every edge.
+	//
+	// UVs span (0,0) → (1,1) and are used to sample the G-Buffer textures
+	// at their full resolution regardless of the G-Buffer RT size.
+	//
+	// z=0, rhw=1 (no perspective).
+	//
 	struct QuadVertex { float x, y, z, rhw; float u, v; };
+	float w = (float)m_gbufferWidth;
+	float h = (float)m_gbufferHeight;
+	float o = 0.5f;
 	QuadVertex verts[4] = {
-		{ -1.0f,  1.0f, 0.0f, 1.0f,  0.0f, 0.0f },  // top-left
-		{  1.0f,  1.0f, 0.0f, 1.0f,  1.0f, 0.0f },  // top-right
-		{ -1.0f, -1.0f, 0.0f, 1.0f,  0.0f, 1.0f },  // bottom-left
-		{  1.0f, -1.0f, 0.0f, 1.0f,  1.0f, 1.0f },  // bottom-right
+		{  -o,    -o, 0.0f, 1.0f, 0.0f, 0.0f },  // top-left
+		{ w - o,  -o, 0.0f, 1.0f, 1.0f, 0.0f },  // top-right
+		{  -o,   h - o, 0.0f, 1.0f, 0.0f, 1.0f },  // bottom-left
+		{ w - o, h - o, 0.0f, 1.0f, 1.0f, 1.0f },  // bottom-right
 	};
+
+	DIAG_LOG(("W3DDeferredRenderer: FS quad (%.0fx%.0f) half-pixel offset=%.1f\n"
+		"  vert[0]=(%.1f,%.1f) uv=(%.3f,%.3f)\n"
+		"  vert[1]=(%.1f,%.1f) uv=(%.3f,%.3f)\n"
+		"  vert[2]=(%.1f,%.1f) uv=(%.3f,%.3f)\n"
+		"  vert[3]=(%.1f,%.1f) uv=(%.3f,%.3f)\n",
+		w, h, o,
+		verts[0].x, verts[0].y, verts[0].u, verts[0].v,
+		verts[1].x, verts[1].y, verts[1].u, verts[1].v,
+		verts[2].x, verts[2].y, verts[2].u, verts[2].v,
+		verts[3].x, verts[3].y, verts[3].u, verts[3].v));
 
 	HRESULT hr = dev->CreateVertexBuffer(
 		sizeof(verts), D3DUSAGE_WRITEONLY,
 		D3DFVF_XYZRHW | D3DFVF_TEX1, D3DPOOL_DEFAULT, &m_quadVB, NULL);
 	if (FAILED(hr) || !m_quadVB) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: Quad VB creation failed.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: Quad VB creation failed.\n"));
 		return false;
 	}
 
@@ -538,7 +653,7 @@ bool W3DDeferredRenderer::createFullScreenQuad()
 		sizeof(indices), D3DUSAGE_WRITEONLY,
 		D3DFMT_INDEX16, D3DPOOL_DEFAULT, &m_quadIB, NULL);
 	if (FAILED(hr) || !m_quadIB) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: Quad IB creation failed.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: Quad IB creation failed.\n"));
 		m_quadVB->Release(); m_quadVB = NULL;
 		return false;
 	}
@@ -567,7 +682,7 @@ void W3DDeferredRenderer::releaseFullScreenQuad()
 // ============================================================================
 bool W3DDeferredRenderer::compileSunLightShader()
 {
-	// Sunlight PBR pixel shader (ps_2_0).
+	// Sunlight PBR pixel shader (ps_3_0).
 	// Input G-Buffer textures:
 	//   s0 = Albedo+Metallic, s1 = Normal+Roughness, s2 = Emissive+Depth
 	// Constants:
@@ -590,6 +705,14 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"sampler gbuf1 : register(s1);\n"
 		"sampler gbuf2 : register(s2);\n"
 		"sampler sShroud : register(s3);\n"
+		// Pixel shader constant registers (bound via SetPixelShaderConstantF)
+		"float4 c0 : register(c0);\n"
+		"float4 c1 : register(c1);\n"
+		"float4 c2 : register(c2);\n"
+		"float4 c3 : register(c3);\n"
+		"float4 c4 : register(c4);\n"
+		"float4 c5 : register(c5);\n"
+		"float4 c6 : register(c6);\n"
 		"float4 main(PS_IN input) : COLOR {\n"
 		"	float4 rt0 = tex2D(gbuf0, input.tex0);\n"
 		"	float4 rt1 = tex2D(gbuf1, input.tex0);\n"
@@ -645,13 +768,13 @@ bool W3DDeferredRenderer::compileSunLightShader()
 	ID3DXBuffer *compiled = NULL;
 	ID3DXBuffer *errors = NULL;
 	HRESULT hr = D3DXCompileShader(ps_source, (UINT)strlen(ps_source),
-		NULL, NULL, "main", "ps_2_0",
+		NULL, NULL, "main", "ps_3_0",
 		0, &compiled, &errors, NULL);
 
 	if (FAILED(hr) || !compiled) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: SunLight PS compile failed.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: SunLight PS compile failed.\n"));
 		if (errors) {
-			WWDEBUG_SAY(("  error: %s\n", (const char*)errors->GetBufferPointer()));
+			DIAG_LOG(("  error: %s\n", (const char*)errors->GetBufferPointer()));
 			errors->Release();
 		}
 		m_sunLightPS = NULL;
@@ -666,12 +789,12 @@ bool W3DDeferredRenderer::compileSunLightShader()
 	compiled->Release();
 
 	if (FAILED(hr) || !m_sunLightPS) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: SunLight PS CreatePixelShader failed.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: SunLight PS CreatePixelShader failed.\n"));
 		m_sunLightPS = NULL;
 		return false;
 	}
 
-	WWDEBUG_SAY(("W3DDeferredRenderer: SunLight PS compiled successfully.\n"));
+	DIAG_LOG(("W3DDeferredRenderer: SunLight PS compiled successfully.\n"));
 	return true;
 }
 
@@ -685,6 +808,14 @@ bool W3DDeferredRenderer::compilePointLightShader()
 		"sampler gbuf0 : register(s0);\n"
 		"sampler gbuf1 : register(s1);\n"
 		"sampler gbuf2 : register(s2);\n"
+		// Pixel shader constant registers (bound via SetPixelShaderConstantF)
+		"float4 c2 : register(c2);\n"   // cameraPos.xyz
+		"float4 c3 : register(c3);\n"   // invViewProj row 0
+		"float4 c4 : register(c4);\n"   // invViewProj row 1
+		"float4 c5 : register(c5);\n"   // invViewProj row 2
+		"float4 c6 : register(c6);\n"   // invViewProj row 3
+		"float4 c7 : register(c7);\n"   // lightPos.xyz + range.w
+		"float4 c8 : register(c8);\n"   // lightColor.rgb
 		"float4 main(PS_IN input) : COLOR {\n"
 		"  float4 rt0 = tex2D(gbuf0, input.tex0);\n"
 		"  float4 rt1 = tex2D(gbuf1, input.tex0);\n"
@@ -737,11 +868,11 @@ bool W3DDeferredRenderer::compilePointLightShader()
 	ID3DXBuffer *compiled = NULL;
 	ID3DXBuffer *errors = NULL;
 	HRESULT hr = D3DXCompileShader(ps_source, (UINT)strlen(ps_source),
-		NULL, NULL, "main", "ps_2_0", 0, &compiled, &errors, NULL);
+		NULL, NULL, "main", "ps_3_0", 0, &compiled, &errors, NULL);
 	if (FAILED(hr) || !compiled) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: PointLight PS compile failed.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: PointLight PS compile failed.\n"));
 		if (errors) {
-			WWDEBUG_SAY(("  error: %s\n", (const char*)errors->GetBufferPointer()));
+			DIAG_LOG(("  error: %s\n", (const char*)errors->GetBufferPointer()));
 			errors->Release();
 		}
 		m_pointLightPS = NULL;
@@ -754,11 +885,11 @@ bool W3DDeferredRenderer::compilePointLightShader()
 	}
 	compiled->Release();
 	if (FAILED(hr) || !m_pointLightPS) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: PointLight PS CreatePixelShader failed.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: PointLight PS CreatePixelShader failed.\n"));
 		m_pointLightPS = NULL;
 		return false;
 	}
-	WWDEBUG_SAY(("W3DDeferredRenderer: PointLight PS compiled.\n"));
+	DIAG_LOG(("W3DDeferredRenderer: PointLight PS compiled.\n"));
 	return true;
 }
 
@@ -787,7 +918,7 @@ void W3DDeferredRenderer::releasePointLightShader()
 // ============================================================================
 void W3DDeferredRenderer::ReleaseResources()
 {
-	WWDEBUG_SAY(("W3DDeferredRenderer: releasing resources (device reset).\n"));
+	DIAG_LOG(("W3DDeferredRenderer: releasing resources (device reset).\n"));
 
 	if (m_inGBufferPass) {
 		endGBufferPass();
@@ -811,23 +942,23 @@ void W3DDeferredRenderer::ReAcquireResources()
 		m_prevCleanupHook->ReAcquireResources();
 	}
 
-	WWDEBUG_SAY(("W3DDeferredRenderer: re-acquiring resources.\n"));
+	DIAG_LOG(("W3DDeferredRenderer: re-acquiring resources.\n"));
 
 	if (!createGBufferResources()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-create G-Buffer RTs.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-create G-Buffer RTs.\n"));
 		m_available = false;
 		return;
 	}
 
 	if (!createFullScreenQuad()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-create quad.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-create quad.\n"));
 		releaseGBufferResources();
 		m_available = false;
 		return;
 	}
 
 	if (!compileSunLightShader()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-compile sunlight PS.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-compile sunlight PS.\n"));
 		releaseFullScreenQuad();
 		releaseGBufferResources();
 		m_available = false;
@@ -835,7 +966,7 @@ void W3DDeferredRenderer::ReAcquireResources()
 	}
 
 	if (!compilePointLightShader()) {
-		WWDEBUG_SAY(("W3DDeferredRenderer: failed to re-compile point light PS.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-compile point light PS.\n"));
 		releaseSunLightShader();
 		releaseFullScreenQuad();
 		releaseGBufferResources();
