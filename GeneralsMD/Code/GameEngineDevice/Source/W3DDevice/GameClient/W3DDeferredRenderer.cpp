@@ -139,7 +139,10 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_quadIB(NULL),
 	m_hdrRT(NULL),
 	m_hdrAvailable(false),
-	m_toneMapPS(NULL)
+	m_toneMapPS(NULL),
+	m_shadowDepthRT(NULL),
+	m_shadowMapAvailable(false),
+	m_sunLightShadowPS(NULL)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -301,6 +304,12 @@ void W3DDeferredRenderer::init()
 	if (!compileToneMapShader()) {
 		DIAG_LOG(("W3DDeferredRenderer: tone map PS compile failed.\n"));
 	}
+	if (!createShadowResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: shadow map creation failed.\n"));
+	}
+	if (!compileSunLightShadowShader()) {
+		DIAG_LOG(("W3DDeferredRenderer: sun light shadow PS compile failed.\n"));
+	}
 
 	//
 	// Register as a cleanup hook (chain with any existing hook).
@@ -335,6 +344,7 @@ void W3DDeferredRenderer::shutdown()
 	releaseGBufferResources();
 	releaseHDRResources();
 	releaseToneMapShader();
+	releaseShadowResources();
 	m_available = false;
 	m_initialized = false;
 }
@@ -490,6 +500,22 @@ void W3DDeferredRenderer::sunLightPass(
 		}
 	}
 
+	// Bind shadow map as s4 (if available) and use shadow shader
+	if (m_shadowMapAvailable && m_sunLightShadowPS && m_shadowDepthRT) {
+		IDirect3DBaseTexture8 *shadowTex = m_shadowDepthRT->Peek_D3D_Base_Texture();
+		dev->SetTexture(4, shadowTex);
+		Matrix4x4 svp = m_shadowViewProj;
+		float c9[4]  = { svp[0][0], svp[0][1], svp[0][2], svp[0][3] };
+		float c10[4] = { svp[1][0], svp[1][1], svp[1][2], svp[1][3] };
+		float c11[4] = { svp[2][0], svp[2][1], svp[2][2], svp[2][3] };
+		float c12[4] = { svp[3][0], svp[3][1], svp[3][2], svp[3][3] };
+		dev->SetPixelShaderConstantF(9, c9, 1);
+		dev->SetPixelShaderConstantF(10, c10, 1);
+		dev->SetPixelShaderConstantF(11, c11, 1);
+		dev->SetPixelShaderConstantF(12, c12, 1);
+		dev->SetPixelShader(m_sunLightShadowPS);
+	}
+
 	// Set sunlight PBR shader constants:
 	// c0 = sunDir (normalized, w=0 for directional light)
 	// c1 = sunColor (rgb, a=0)
@@ -549,6 +575,7 @@ void W3DDeferredRenderer::sunLightPass(
 	dev->SetTexture(1, NULL);
 	dev->SetTexture(2, NULL);
 	dev->SetTexture(3, NULL);
+	dev->SetTexture(4, NULL);
 }
 
 
@@ -1022,6 +1049,7 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseGBufferResources();
 	releaseHDRResources();
 	releaseToneMapShader();
+	releaseShadowResources();
 
 	if (m_prevCleanupHook) {
 		m_prevCleanupHook->ReleaseResources();
@@ -1073,6 +1101,12 @@ void W3DDeferredRenderer::ReAcquireResources()
 	}
 	if (!compileToneMapShader()) {
 		DIAG_LOG(("W3DDeferredRenderer: failed to re-compile tone map PS.\n"));
+	}
+	if (!createShadowResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-create shadow map.\n"));
+	}
+	if (!compileSunLightShadowShader()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed to re-compile shadow PS.\n"));
 	}
 }
 
@@ -1243,3 +1277,198 @@ void W3DDeferredRenderer::toneMapPass()
 
 // ============================================================================
 //
+
+// ============================================================================
+// W3DDeferredRenderer::createShadowResources
+// ============================================================================
+bool W3DDeferredRenderer::createShadowResources()
+{
+	// Create 2048x2048 shadow map depth texture (A8R8G8B8, use R channel as depth).
+	// In a full implementation this would be R32F or D24X8, but we keep it simple.
+	const int SM_SIZE = 2048;
+	m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
+		SM_SIZE, SM_SIZE, WW3D_FORMAT_A8R8G8B8, true);
+	if (!m_shadowDepthRT) {
+		DIAG_LOG(("W3DDeferredRenderer: shadow map RT creation failed.\n"));
+		m_shadowMapAvailable = false;
+		return false;
+	}
+	m_shadowMapAvailable = true;
+	DIAG_LOG(("W3DDeferredRenderer: shadow map created (%dx%d).\n", SM_SIZE, SM_SIZE));
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::releaseShadowResources
+// ============================================================================
+void W3DDeferredRenderer::releaseShadowResources()
+{
+	REF_PTR_RELEASE(m_shadowDepthRT);
+	m_shadowMapAvailable = false;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::beginShadowMapPass
+// ============================================================================
+bool W3DDeferredRenderer::beginShadowMapPass(
+	const Vector3 &sunDir, const Matrix4x4 &camView)
+{
+	if (!m_shadowDepthRT) return false;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	// Bind shadow map RT.
+	IDirect3DSurface8 *surf = m_shadowDepthRT->Get_D3D_Surface_Level();
+	if (!surf) return false;
+	DX8Wrapper::Set_Render_Target(0, surf);
+	surf->Release();
+	// Clear to white (far depth) and set viewport.
+	DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
+	D3DVIEWPORT9 vp = { 0, 0, 2048, 2048, 0.0f, 1.0f };
+	DX8CALL(SetViewport(&vp));
+	// Compute shadow VP matrix for the pixel shader.
+	// (Scene depth-to-shadow-map rendering uses the scene's own camera;
+	//  the shadow VP here is used by the lighting PS for projective texturing.)
+	Vector3 target(0, 0, 0);
+	Vector3 up(0, 0, 1);
+	if (fabsf(sunDir.Z) > 0.99f) { up.Set(0, 1, 0); }
+	Vector3 eye = target - sunDir * 500.0f;
+	D3DXMATRIX d3dV, d3dP;
+	D3DXMatrixLookAtLH(&d3dV,
+		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
+	D3DXMatrixOrthoLH(&d3dP, 300.0f, 300.0f, 0.1f, 1000.0f);
+	D3DXMATRIX d3dVP = d3dV * d3dP;
+	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::endShadowMapPass
+// ============================================================================
+void W3DDeferredRenderer::endShadowMapPass()
+{
+	// Restore default render target.
+	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+}
+
+// ============================================================================
+// W3DDeferredRenderer::compileSunLightShadowShader
+// ============================================================================
+bool W3DDeferredRenderer::compileSunLightShadowShader()
+{
+	// Sunlight PBR + shadow map PCF 2x2 (ps_3_0).
+	// s4 = shadow map.
+	const char ps_source[] =
+		"struct PS_IN {\n"
+		"\tfloat4 pos : POSITION;\n"
+		"\tfloat2 tex0 : TEXCOORD0;\n"
+		"\tfloat4 shadowUV : TEXCOORD1;\n"
+		"};\n"
+		"sampler gbuf0 : register(s0);\n"
+		"sampler gbuf1 : register(s1);\n"
+		"sampler gbuf2 : register(s2);\n"
+		"sampler sShadow : register(s4);\n"
+		"float4 c0 : register(c0);\n"
+		"float4 c1 : register(c1);\n"
+		"float4 c2 : register(c2);\n"
+		"float4 c3 : register(c3);\n"
+		"float4 c4 : register(c4);\n"
+		"float4 c5 : register(c5);\n"
+		"float4 c6 : register(c6);\n"
+		"float4 c9 : register(c9);\n"
+		"float3 octDecode(float2 e) {\n"
+		"\tfloat2 p = e * 2.0 - 1.0;\n"
+		"\tfloat3 n = float3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));\n"
+		"\tfloat t = max(-n.z, 0.0);\n"
+		"\tn.xy += (n.xy >= 0) ? -t : t;\n"
+		"\treturn normalize(n);\n"
+		"}\n"
+		"float4 main(PS_IN input) : COLOR {\n"
+		"\tfloat4 rt0 = tex2D(gbuf0, input.tex0);\n"
+		"\tfloat4 rt1 = tex2D(gbuf1, input.tex0);\n"
+		"\tfloat4 rt2 = tex2D(gbuf2, input.tex0);\n"
+		"\tfloat3 albedo = rt0.rgb;\n"
+		"\tfloat metallic = rt0.a;\n"
+		"\tfloat3 N = octDecode(rt1.rg);\n"
+		"\tfloat roughness = rt1.b;\n"
+		"\tfloat depth = rt2.r;\n"
+		"\tfloat3 emissive = rt2.b;\n"
+		"\tfloat2 screenPos = input.tex0 * 2.0 - 1.0;\n"
+		"\tfloat4 clipPos = float4(screenPos, depth, 1.0);\n"
+		"\tfloat4 worldPos = float4(\n"
+		"\t\tdot(clipPos, float4(c3.x,c4.x,c5.x,c6.x)),\n"
+		"\t\tdot(clipPos, float4(c3.y,c4.y,c5.y,c6.y)),\n"
+		"\t\tdot(clipPos, float4(c3.z,c4.z,c5.z,c6.z)),\n"
+		"\t\tdot(clipPos, float4(c3.w,c4.w,c5.w,c6.w))\n"
+		");\n"
+		"\tworldPos.xyz /= worldPos.w;\n"
+		"\tfloat3 V = normalize(c2.xyz - worldPos.xyz);\n"
+		"\tfloat3 L = -c0.xyz;\n"
+		"\tfloat3 H = normalize(V + L);\n"
+	"\t// Shadow map PCF 2x2\n"
+	"\tfloat4 shadProj = mul(float4(worldPos.xyz, 1), c9);\n"
+	"\tfloat2 shadUV = shadProj.xy / shadProj.w;\n"
+	"\tshadUV = shadUV * 0.5 + 0.5;\n"
+	"\tfloat shadDepth = shadProj.z / shadProj.w;\n"
+		"\tfloat bias = 0.002;\n"
+		"\tfloat2 texelSize = 1.0 / 2048;\n"
+		"\tfloat shadow = 0.0;\n"
+		"\tfor (int x = -1; x <= 1; x += 2) {\n"
+		"\t\tfor (int y = -1; y <= 1; y += 2) {\n"
+		"\t\t\tfloat d = tex2D(sShadow, shadUV + float2(x,y)*texelSize).r;\n"
+		"\t\t\tshadow += (shadDepth - bias) > d ? 1.0 : 0.0;\n"
+		"\t\t}\n"
+		"\t}\n"
+		"\tshadow *= 0.25;\n"
+		"\tfloat NdotL = saturate(dot(N, L));\n"
+		"\tfloat NdotV = saturate(dot(N, V));\n"
+		"\tfloat NdotH = saturate(dot(N, H));\n"
+		"\tfloat HdotV = saturate(dot(H, V));\n"
+		"\tfloat alpha = max(roughness * roughness, 0.001);\n"
+		"\tfloat a2 = alpha * alpha;\n"
+		"\tfloat denom = NdotH*NdotH*(a2-1.0)+1.0;\n"
+		"\tfloat D = a2 / (3.14159*denom*denom);\n"
+		"\tfloat k = (roughness+1)*(roughness+1)/8.0;\n"
+		"\tfloat G1 = NdotL/(NdotL*(1-k)+k);\n"
+		"\tfloat G2 = NdotV/(NdotV*(1-k)+k);\n"
+		"\tfloat G = G1*G2;\n"
+		"\tfloat3 F0 = lerp(float3(0.04,0.04,0.04), albedo, metallic);\n"
+		"\tfloat3 F = F0 + (1-F0)*pow(1-HdotV,5);\n"
+		"\tfloat3 spec = D*F*G/max(4*NdotV*NdotL,0.001);\n"
+		"\tfloat3 kD = (1-F)*(1-metallic);\n"
+		"\tfloat3 direct = (albedo*kD + spec) * c1.rgb * NdotL * shadow;\n"
+		"\tfloat3 ambient = c2.www * albedo * 0.5;\n"
+		"\tfloat3 final = ambient + direct + emissive;\n"
+		"\t// Gamma\n"
+		"\tfinal = pow(abs(final), 1.0/2.2);\n"
+		"\treturn float4(final, 1.0);\n"
+		"};\n"
+	;
+
+	ID3DXBuffer *compiled = NULL;
+	ID3DXBuffer *errors = NULL;
+	HRESULT hr = D3DXCompileShader(ps_source, (UINT)strlen(ps_source),
+		NULL, NULL, "main", "ps_3_0",
+		0, &compiled, &errors, NULL);
+	if (FAILED(hr) || !compiled) {
+		DIAG_LOG(("W3DDeferredRenderer: SunLightShadow PS compile failed.\n"));
+		if (errors) {
+			DIAG_LOG(("  error: %s\n", (const char*)errors->GetBufferPointer()));
+			errors->Release();
+		}
+		m_sunLightShadowPS = NULL;
+		return false;
+	}
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev) {
+		hr = dev->CreatePixelShader(
+			(const DWORD*)compiled->GetBufferPointer(), &m_sunLightShadowPS);
+	}
+	compiled->Release();
+	if (FAILED(hr) || !m_sunLightShadowPS) {
+		m_sunLightShadowPS = NULL;
+		return false;
+	}
+	DIAG_LOG(("W3DDeferredRenderer: SunLightShadow PS compiled with PCF 2x2.\n"));
+	return true;
+}
+

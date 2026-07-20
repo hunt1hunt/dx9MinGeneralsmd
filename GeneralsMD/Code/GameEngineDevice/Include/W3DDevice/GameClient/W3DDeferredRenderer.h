@@ -119,6 +119,18 @@ public:
 	/// Applies Reinhard tone mapping + gamma correction.
 	void toneMapPass();
 
+	// ---- Shadow map pass lifecycle ----
+
+	/// Bind the shadow map RT, set orthographic camera from sun direction.
+	/// Returns true if shadow map is available and pass started.
+	bool beginShadowMapPass(const Vector3 &sunDir, const Matrix4x4 &camView);
+
+	/// Restore default RT after shadow map rendering.
+	void endShadowMapPass();
+
+	/// Recompile the sunlight PS with shadow-map variant.
+	bool compileSunLightShadowShader();
+
 private:
 
 	/// Create (or re-create) the G-Buffer render target textures.
@@ -181,6 +193,17 @@ private:
 	TextureClass *m_hdrRT;					///< HDR compositing RT (A16B16G16R16F or A8R8G8B8 fallback).
 	bool m_hdrAvailable;					///< HDR RT successfully created.
 	IDirect3DPixelShader9 *m_toneMapPS;		///< Tone-mapping pixel shader (Reinhard + gamma).
+
+	// ---- Shadow map resources ----
+
+	/// Create/release the shadow map render target.
+	bool createShadowResources();
+	void releaseShadowResources();
+
+	TextureClass *m_shadowDepthRT;			///< Shadow map depth RT (2048x2048).
+	bool m_shadowMapAvailable;				///< Shadow map resources OK.
+	Matrix4x4 m_shadowViewProj;				///< Sun's view-projection matrix (for shader).
+	IDirect3DPixelShader9 *m_sunLightShadowPS; ///< Sunlight PS with shadow PCF 2x2.
 
 };
 
