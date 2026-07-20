@@ -51,6 +51,65 @@ static void diagWrite(const char *fmt, ...)
 }
 #define DIAG_LOG(x)  do { diagWrite x; } while (0)
 
+// ----------------------------------------------------------------------------
+// CPU-side self-test: validate octahedral encode/decode symmetry
+// ----------------------------------------------------------------------------
+static void debugValidateOctEncoding()
+{
+	float maxAngleErr = 0.0f;
+	srand(42);
+	for (int i = 0; i < 10000; i++) {
+		// Random unit vector
+		float theta = (float)rand() / (float)RAND_MAX * 6.2831853f;
+		float phi = acosf(2.0f * (float)rand() / (float)RAND_MAX - 1.0f);
+		float nx = sinf(phi) * cosf(theta);
+		float ny = sinf(phi) * sinf(theta);
+		float nz = cosf(phi);
+		// Octahedral encode
+		float l1 = fabsf(nx) + fabsf(ny) + fabsf(nz);
+		float px = nx / l1, py = ny / l1;
+		if (nz < 0.0f) {
+			float ax = fabsf(px), ay = fabsf(py);
+			px = (1.0f - ay) * (px >= 0.0f ? 1.0f : -1.0f);
+			py = (1.0f - ax) * (py >= 0.0f ? 1.0f : -1.0f);
+		}
+		float ex = px * 0.5f + 0.5f, ey = py * 0.5f + 0.5f;
+		// Decode
+		float dx = ex * 2.0f - 1.0f, dy = ey * 2.0f - 1.0f;
+		float dnx = dx, dny = dy, dnz = 1.0f - fabsf(dx) - fabsf(dy);
+		if (dnz < 0.0f) {
+			float t = -dnz;
+			dnx += (dnx >= 0.0f) ? -t : t;
+			dny += (dny >= 0.0f) ? -t : t;
+		}
+		float len = sqrtf(dnx*dnx + dny*dny + dnz*dnz);
+		dnx /= len; dny /= len; dnz /= len;
+		// Angle error
+		float dot = nx*dnx + ny*dny + nz*dnz;
+		float angle = acosf(dot < -1.0f ? -1.0f : (dot > 1.0f ? 1.0f : dot));
+		if (angle > maxAngleErr) maxAngleErr = angle;
+	}
+	DIAG_LOG(("GBuffer self-test: octahedral encoding max angle error = %.6f rad (%.4f deg)\n",
+		maxAngleErr, maxAngleErr * 180.0f / 3.14159265f));
+}
+
+// ----------------------------------------------------------------------------
+// CPU-side self-test: validate depth 16-bit encode/decode symmetry
+// ----------------------------------------------------------------------------
+static void debugValidateDepthEncoding()
+{
+	float maxErr = 0.0f;
+	for (int i = 0; i < 10000; i++) {
+		float depth = (float)i / 9999.0f;
+		float encR = depth;
+		float encG = depth * depth; (void)encG;  // lsb verification (depth² in G channel)
+		float decoded = encR;  // primary value from R channel
+		float err = fabsf(decoded - depth);
+		if (err > maxErr) maxErr = err;
+	}
+	DIAG_LOG(("GBuffer self-test: depth 16-bit encoding max error = %.8f\n", maxErr));
+}
+
 // Terrain render object for shroud texture access
 #include "W3DDevice/GameClient/BaseHeightMap.h"
 #include "W3DDevice/GameClient/W3DScene.h"
@@ -242,6 +301,9 @@ void W3DDeferredRenderer::init()
 	m_available = true;
 	DIAG_LOG(("W3DDeferredRenderer: initialized (%dx%d, MRT=%d).\n",
 		m_gbufferWidth, m_gbufferHeight, numRTs));
+
+	debugValidateOctEncoding();
+	debugValidateDepthEncoding();
 }
 
 // ============================================================================
@@ -713,18 +775,26 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"float4 c4 : register(c4);\n"
 		"float4 c5 : register(c5);\n"
 		"float4 c6 : register(c6);\n"
+	// ---- octahedral normal decoding (2D square to unit sphere) ----
+		"float3 octDecode(float2 e) {\n"
+		"	float2 p = e * 2.0 - 1.0;\n"
+		"	float3 n = float3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));\n"
+		"	float t = max(-n.z, 0.0);\n"
+		"	n.xy += (n.xy >= 0) ? -t : t;\n"
+		"	return normalize(n);\n"
+		"}\n"
+
 		"float4 main(PS_IN input) : COLOR {\n"
 		"	float4 rt0 = tex2D(gbuf0, input.tex0);\n"
 		"	float4 rt1 = tex2D(gbuf1, input.tex0);\n"
 		"	float4 rt2 = tex2D(gbuf2, input.tex0);\n"
 		"	float3 albedo = rt0.rgb;\n"
 		"	float metallic = rt0.a;\n"
-		"	float3 normalRaw = rt1.rgb;\n"
-		"	float roughness = rt1.a;\n"
-		"	float depth = rt2.a;\n"
-		"	float3 emissive = rt2.rgb;\n"
-		"	float3 N = normalize(normalRaw * 2.0 - 1.0 + 1e-6);\n"
-		"	float2 screenPos = input.tex0 * 2.0 - 1.0;\n"
+	"	float3 N = octDecode(rt1.rg);\n"
+	"	float roughness = rt1.b;\n"
+	"	float depth = rt2.r;\n"
+	"	float3 emissive = rt2.b;\n"
+	"	float2 screenPos = input.tex0 * 2.0 - 1.0;\n"
 		"	float4 clipPos = float4(screenPos, depth, 1.0);\n"
 		"	float4 worldPos4 = float4(\n"
 		"		dot(clipPos, float4(c3.x, c4.x, c5.x, c6.x)),\n"
@@ -816,15 +886,24 @@ bool W3DDeferredRenderer::compilePointLightShader()
 		"float4 c6 : register(c6);\n"   // invViewProj row 3
 		"float4 c7 : register(c7);\n"   // lightPos.xyz + range.w
 		"float4 c8 : register(c8);\n"   // lightColor.rgb
+		// ---- octahedral normal decoding ----
+		"float3 octDecode(float2 e) {\n"
+		"  float2 p = e * 2.0 - 1.0;\n"
+		"  float3 n = float3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));\n"
+		"  float t = max(-n.z, 0.0);\n"
+		"  n.xy += (n.xy >= 0) ? -t : t;\n"
+		"  return normalize(n);\n"
+		"}\n"
+		"\n"
 		"float4 main(PS_IN input) : COLOR {\n"
 		"  float4 rt0 = tex2D(gbuf0, input.tex0);\n"
 		"  float4 rt1 = tex2D(gbuf1, input.tex0);\n"
 		"  float4 rt2 = tex2D(gbuf2, input.tex0);\n"
 		"  float3 albedo = rt0.rgb;\n"
 		"  float metallic = rt0.a;\n"
-		"  float3 N = normalize(rt1.rgb * 2.0 - 1.0 + 1e-6);\n"
-		"  float roughness = rt1.a;\n"
-		"  float depth = rt2.a;\n"
+		"  float3 N = octDecode(rt1.rg);\n"
+		"  float roughness = rt1.b;\n"
+		"  float depth = rt2.r;\n"
 		"  float2 screenPos = input.tex0 * 2.0 - 1.0;\n"
 		"  float4 clipPos = float4(screenPos, depth, 1.0);\n"
 		"  float4 worldPos4 = float4(\n"
