@@ -143,6 +143,9 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_shadowDepthRT(NULL),
 	m_shadowMapAvailable(false),
 	m_sunLightShadowPS(NULL),
+	m_shadowDepthStencilTex(NULL),
+	m_shadowDepthStencilAvailable(false),
+	m_savedDS(NULL),
 	m_aoRawRT(NULL),
 	m_aoBlurredRT(NULL),
 	m_ssaoAvailable(false),
@@ -513,9 +516,14 @@ void W3DDeferredRenderer::sunLightPass(
 		}
 	}
 
-	// Bind shadow map as s4 (if available) and use shadow shader
+	// Bind shadow map as s4 (if available). Prefer D24X8 depth-stencil texture.
 	if (m_shadowMapAvailable && m_sunLightShadowPS && m_shadowDepthRT) {
-		IDirect3DBaseTexture8 *shadowTex = m_shadowDepthRT->Peek_D3D_Base_Texture();
+		IDirect3DBaseTexture8 *shadowTex;
+		if (m_shadowDepthStencilAvailable && m_shadowDepthStencilTex) {
+			shadowTex = static_cast<IDirect3DBaseTexture8*>(m_shadowDepthStencilTex);
+		} else {
+			shadowTex = m_shadowDepthRT->Peek_D3D_Base_Texture();
+		}
 		dev->SetTexture(4, shadowTex);
 		Matrix4x4 svp = m_shadowViewProj;
 		float c9[4]  = { svp[0][0], svp[0][1], svp[0][2], svp[0][3] };
@@ -1304,18 +1312,32 @@ void W3DDeferredRenderer::toneMapPass()
 // ============================================================================
 bool W3DDeferredRenderer::createShadowResources()
 {
-	// Create 2048x2048 shadow map depth texture (A8R8G8B8, use R channel as depth).
-	// In a full implementation this would be R32F or D24X8, but we keep it simple.
 	const int SM_SIZE = 2048;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
 		SM_SIZE, SM_SIZE, WW3D_FORMAT_A8R8G8B8, true);
 	if (!m_shadowDepthRT) {
 		DIAG_LOG(("W3DDeferredRenderer: shadow map RT creation failed.\n"));
 		m_shadowMapAvailable = false;
+		m_shadowDepthStencilAvailable = false;
 		return false;
 	}
+	m_shadowDepthStencilTex = NULL;
+	m_shadowDepthStencilAvailable = false;
+	if (dev) {
+		IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+		HRESULT hr = dev9->CreateTexture(SM_SIZE, SM_SIZE, 1,
+			D3DUSAGE_DEPTHSTENCIL, D3DFMT_D24X8, D3DPOOL_DEFAULT,
+			&m_shadowDepthStencilTex, NULL);
+		if (SUCCEEDED(hr) && m_shadowDepthStencilTex) {
+			m_shadowDepthStencilAvailable = true;
+			DIAG_LOG(("W3DDeferredRenderer: shadow DS texture created (%dx%d, D24X8).\n", SM_SIZE, SM_SIZE));
+		} else {
+			DIAG_LOG(("W3DDeferredRenderer: shadow DS texture creation failed (hr=0x%08x). Acceptable, no depth.\n", hr));
+		}
+	}
 	m_shadowMapAvailable = true;
-	DIAG_LOG(("W3DDeferredRenderer: shadow map created (%dx%d).\n", SM_SIZE, SM_SIZE));
+	DIAG_LOG(("W3DDeferredRenderer: shadow map resources created (%dx%d).\n", SM_SIZE, SM_SIZE));
 	return true;
 }
 
@@ -1325,7 +1347,12 @@ bool W3DDeferredRenderer::createShadowResources()
 void W3DDeferredRenderer::releaseShadowResources()
 {
 	REF_PTR_RELEASE(m_shadowDepthRT);
+	if (m_shadowDepthStencilTex) {
+		m_shadowDepthStencilTex->Release();
+		m_shadowDepthStencilTex = NULL;
+	}
 	m_shadowMapAvailable = false;
+	m_shadowDepthStencilAvailable = false;
 }
 
 // ============================================================================
@@ -1342,13 +1369,26 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	if (!surf) return false;
 	DX8Wrapper::Set_Render_Target(0, surf);
 	surf->Release();
-	// Clear to white (far depth) and set viewport.
-	DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
-	D3DVIEWPORT9 vp = { 0, 0, 2048, 2048, 0.0f, 1.0f };
-	DX8CALL(SetViewport(&vp));
-	// Compute shadow VP matrix for the pixel shader.
-	// (Scene depth-to-shadow-map rendering uses the scene's own camera;
-	//  the shadow VP here is used by the lighting PS for projective texturing.)
+
+	// Save current DS, bind D24X8, disable color writes.
+	{
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+		m_savedDS = NULL;
+		d9->GetDepthStencilSurface(&m_savedDS);
+		if (m_shadowDepthStencilAvailable && m_shadowDepthStencilTex) {
+			IDirect3DSurface9 *ds = NULL;
+			m_shadowDepthStencilTex->GetSurfaceLevel(0, &ds);
+			if (ds) { d9->SetDepthStencilSurface(ds); DIAG_LOG(("W3DDeferredRenderer: shadow DS bound (D24X8).\n")); ds->Release(); }
+		} else {
+			d9->SetDepthStencilSurface(NULL);
+		}
+		DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
+		D3DVIEWPORT9 vp2 = { 0, 0, 2048, 2048, 0.0f, 1.0f };
+		DX8CALL(SetViewport(&vp2));
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, 0);
+		DIAG_LOG(("W3DDeferredRenderer: shadow pass started (D24X8 depth).\n"));
+	}
+
 	Vector3 target(0, 0, 0);
 	Vector3 up(0, 0, 1);
 	if (fabsf(sunDir.Z) > 0.99f) { up.Set(0, 1, 0); }
@@ -1359,6 +1399,8 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	D3DXMatrixOrthoLH(&d3dP, 300.0f, 300.0f, 0.1f, 1000.0f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
+	m_shadowView = *(Matrix4x4*)&d3dV;
+	m_shadowProj = *(Matrix4x4*)&d3dP;
 	return true;
 }
 
@@ -1367,7 +1409,18 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 // ============================================================================
 void W3DDeferredRenderer::endShadowMapPass()
 {
-	// Restore default render target.
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev) {
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE,
+			D3DCOLORWRITEENABLE_RED|D3DCOLORWRITEENABLE_GREEN|
+			D3DCOLORWRITEENABLE_BLUE|D3DCOLORWRITEENABLE_ALPHA);
+	}
+	if (dev && m_savedDS) {
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+		d9->SetDepthStencilSurface(m_savedDS);
+		m_savedDS->Release();
+		m_savedDS = NULL;
+	}
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
 }
 

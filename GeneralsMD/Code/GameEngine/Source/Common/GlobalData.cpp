@@ -75,6 +75,9 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseTrees",									INI::parseBool,				NULL,			offsetof( GlobalData, m_useTrees ) },
 	{ "UseFPSLimit",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useFpsLimit ) },
 	{ "UseDeferredRendering",				INI::parseBool,				NULL,			offsetof( GlobalData, m_useDeferredRendering ) },
+	{ "UseShadowMap",					INI::parseBool,				NULL,			offsetof( GlobalData, m_useShadowMap ) },
+	{ "UseSSAO",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useSSAO ) },
+	{ "UseHDR",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useHDR ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
 	{ "ChipsetType",							INI::parseInt,				NULL,			offsetof( GlobalData, m_chipSetType ) },
@@ -701,6 +704,9 @@ GlobalData::GlobalData()
 	m_enableDynamicLOD = TRUE;
 	m_enableStaticLOD = TRUE;
 	m_useDeferredRendering = FALSE;
+	m_useShadowMap = TRUE;
+	m_useSSAO = FALSE;
+	m_useHDR = TRUE;
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
 	m_useCloudPlane = FALSE;

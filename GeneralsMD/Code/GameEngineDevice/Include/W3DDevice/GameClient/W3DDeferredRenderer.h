@@ -134,6 +134,14 @@ public:
 	/// Recompile the sunlight PS with shadow-map variant.
 	bool compileSunLightShadowShader();
 
+	/// Access shadow view-projection matrix.
+	const Matrix4x4& getShadowViewProj() const { return m_shadowViewProj; }
+	const Matrix4x4& getShadowView() const { return m_shadowView; }
+	const Matrix4x4& getShadowProj() const { return m_shadowProj; }
+
+	/// Whether shadow map is ready (D24X8 depth-stencil must be available).
+	bool isShadowMapAvailable() const { return m_shadowMapAvailable && m_shadowDepthStencilAvailable; }
+
 private:
 
 	/// Create (or re-create) the G-Buffer render target textures.
@@ -206,7 +214,12 @@ private:
 	TextureClass *m_shadowDepthRT;			///< Shadow map depth RT (2048x2048).
 	bool m_shadowMapAvailable;				///< Shadow map resources OK.
 	Matrix4x4 m_shadowViewProj;				///< Sun's view-projection matrix (for shader).
+	Matrix4x4 m_shadowView;					///< Sun's view matrix (shadow camera).
+	Matrix4x4 m_shadowProj;					///< Sun's projection matrix (shadow camera).
 	IDirect3DPixelShader9 *m_sunLightShadowPS; ///< Sunlight PS with shadow PCF 2x2.
+	IDirect3DTexture9 *m_shadowDepthStencilTex; ///< D24X8 depth-stencil texture for shadow map.
+	bool m_shadowDepthStencilAvailable;		///< D24X8 depth-stencil created OK.
+	IDirect3DSurface9 *m_savedDS;			///< Saved depth-stencil (restored after shadow pass).
 
 	// ---- SSAO resources ----
 	bool createAOResources();

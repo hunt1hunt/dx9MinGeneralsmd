@@ -67,6 +67,20 @@
 
 // C-linkage sun glow shader from W3DShaderManager (cross-library)
 extern "C" bool PBR_IsSunGlowEnabled(void);
+
+// Pipeline diagnostic logging
+static void diagSceneWrite(const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	FILE *f = fopen("E:\\GeneralsMD_DeferredRT.log", "a");
+	if (f) {
+		vfprintf(f, fmt, args);
+		fclose(f);
+	}
+	va_end(args);
+}
+#define DIAG_LOG(x)  do { diagSceneWrite x; } while (0)
 extern "C" void PBR_RenderSunGlow(void);
 
 #ifdef _INTERNAL
@@ -1048,91 +1062,93 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 		{	//Regular rendering pass with no effects
 
 			// Deferred G-Buffer pass (when available and UseDeferredRendering=1)
-			if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable())
+						if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable())
 			{
-				g_theW3DDeferredRenderer->beginGBufferPass();
-				g_gbufferActive = true;
-				setCustomPassMode(SCENE_PASS_GBUFFER);
-
-				updatePlayerColorPasses();
-				updateFixedLightEnvironments(rinfo);
-				Customized_Render(rinfo);
-				Flush(rinfo);
-
-				g_gbufferActive = false;
-				setCustomPassMode(SCENE_PASS_DEFAULT);
-				g_theW3DDeferredRenderer->endGBufferPass();
-
-				// Sunlight PBR deferred lighting pass
-				{
-					// Get sun light parameters from the first global light
-					Vector3 sunDir(0, 0, -1);
-					Vector3 sunColor(1, 1, 1);
-					Vector3 ambient(0.1f, 0.1f, 0.15f);
-					if (m_globalLight[0]) {
-						sunDir = m_globalLight[0]->Get_Position();
-						m_globalLight[0]->Get_Diffuse(&sunColor);
-						m_globalLight[0]->Get_Ambient(&ambient);
-						float intens = m_globalLight[0]->Get_Intensity();
-						sunColor.X *= intens;
-						sunColor.Y *= intens;
-						sunColor.Z *= intens;
-					}
-					Vector3 camPos = rinfo.Camera.Get_Position();
-
-					// Compute inverse view-projection matrix
-					Matrix4x4 viewMatrix;
-					Matrix4x4 projMatrix;
-					Matrix4x4 viewProj;
-					Matrix4x4 invViewProj;
-
-					Matrix3D view3D = rinfo.Camera.Get_View_Matrix();
-					viewMatrix = Matrix4x4(view3D);
-					projMatrix = rinfo.Camera.Get_Projection_Matrix();
-
-					// View * Projection (in D3D/row-major convention)
-					Matrix4x4 viewT = viewMatrix.Transpose();
-					Matrix4x4 projT = projMatrix.Transpose();
-					viewProj = viewT * projT;
-
-					// Invert
-					// Use D3DXMatrixInverse (Matrix4x4::Inverse is broken)
-					{
-						D3DXMATRIX d3dViewProj = (D3DXMATRIX&)viewProj;
-						D3DXMATRIX d3dInv;
-						float det;
-						D3DXMatrixInverse(&d3dInv, &det, &d3dViewProj);
-						invViewProj = (Matrix4x4&)d3dInv;
-					}
-
-					// Deferred lighting to HDR RT (or back buffer fallback)
-					g_theW3DDeferredRenderer->beginHDRPass();
-
-					g_theW3DDeferredRenderer->sunLightPass(
-						sunDir, sunColor, ambient, camPos, invViewProj);
-
-				// Dynamic light pass (additive full-screen quads)
-				g_theW3DDeferredRenderer->renderDynamicLights(
-					DX8Wrapper::_Get_D3D_Device8(), camPos, invViewProj);
-
-				g_theW3DDeferredRenderer->endHDRPass();
-
-				// Tone mapping: HDR RT -> back buffer (LDR + gamma)
-				g_theW3DDeferredRenderer->toneMapPass();
+				Vector3 sunDir(0,0,-1), sunColor(1,1,1), ambient(0.1f,0.1f,0.15f);
+				if (m_globalLight[0]) {
+					sunDir=m_globalLight[0]->Get_Position();
+					m_globalLight[0]->Get_Diffuse(&sunColor);
+					m_globalLight[0]->Get_Ambient(&ambient);
+					float intens=m_globalLight[0]->Get_Intensity();
+					sunColor.X*=intens; sunColor.Y*=intens; sunColor.Z*=intens;
 				}
-
-				// Forward transparent pass: render glass, water, particles, sky on top
+				Vector3 camPos=rinfo.Camera.Get_Position();
+				Matrix4x4 viewMatrix,projMatrix,viewProj,invViewProj;
 				{
-					// Restore forward rendering state
-					g_gbufferActive = false;
+					Matrix3D v3d=rinfo.Camera.Get_View_Matrix();
+					viewMatrix=Matrix4x4(v3d);
+					projMatrix=rinfo.Camera.Get_Projection_Matrix();
+					Matrix4x4 vT=viewMatrix.Transpose(),pT=projMatrix.Transpose();
+					viewProj=vT*pT;
+					D3DXMATRIX d3dVP=(D3DXMATRIX&)viewProj,d3dInv; float det;
+					D3DXMatrixInverse(&d3dInv,&det,&d3dVP);
+					invViewProj=(Matrix4x4&)d3dInv;
+				}
+				LARGE_INTEGER pf; QueryPerformanceFrequency(&pf);
+				if (TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
+				{
+					DIAG_LOG(("PIPELINE: === Shadow Map Pass ===\n"));
+					LARGE_INTEGER shS,shE; QueryPerformanceCounter(&shS);
+					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix)) {
+						RefRenderObjListIterator si(&RenderList);
+						for (si.First(); !si.Is_Done(); si.Next()) {
+						RenderObjClass *r=si.Peek_Obj();
+						if (r->Class_ID()==RenderObjClass::CLASSID_TILEMAP) continue;
+						if (r->Is_Really_Visible()) {
+						Matrix4x4 ident(true); DX8Wrapper::Set_Transform(D3DTS_WORLD,ident);
+						r->Render(rinfo);
+						}
+						}
+						TheDX8MeshRenderer.Flush();
+					}
+					g_theW3DDeferredRenderer->endShadowMapPass();
+					QueryPerformanceCounter(&shE);
+					DIAG_LOG(("PIPELINE: Shadow Map Pass took %.2f ms\n",(float)(shE.QuadPart-shS.QuadPart)*1000.0f/(float)pf.QuadPart));
 					ShaderClass::Invalidate();
-
-					// Use forward rendering mode: transparent objects only
-					// The Flush() call handles sorted translucent objects, water, particles
-					Customized_Render(rinfo);
-					Flush(rinfo);
+				}
+				{
+					DIAG_LOG(("PIPELINE: === G-Buffer Pass ===\n"));
+					LARGE_INTEGER gS,gE; QueryPerformanceCounter(&gS);
+					g_theW3DDeferredRenderer->beginGBufferPass();
+					g_gbufferActive=true; setCustomPassMode(SCENE_PASS_GBUFFER);
+					updatePlayerColorPasses(); updateFixedLightEnvironments(rinfo);
+					Customized_Render(rinfo); Flush(rinfo);
+					g_gbufferActive=false; setCustomPassMode(SCENE_PASS_DEFAULT);
+					g_theW3DDeferredRenderer->endGBufferPass();
+					QueryPerformanceCounter(&gE);
+					DIAG_LOG(("PIPELINE: G-Buffer Pass took %.2f ms\n",(float)(gE.QuadPart-gS.QuadPart)*1000.0f/(float)pf.QuadPart));
+				}
+				if (TheGlobalData->m_useSSAO) {
+					DIAG_LOG(("PIPELINE: === SSAO Pass ===\n"));
+					LARGE_INTEGER aS,aE; QueryPerformanceCounter(&aS);
+					g_theW3DDeferredRenderer->computeAO();
+					QueryPerformanceCounter(&aE);
+					DIAG_LOG(("PIPELINE: SSAO Pass took %.2f ms\n",(float)(aE.QuadPart-aS.QuadPart)*1000.0f/(float)pf.QuadPart));
+				}
+				{
+					DIAG_LOG(("PIPELINE: === Deferred Lighting Pass ===\n"));
+					LARGE_INTEGER lS,lE; QueryPerformanceCounter(&lS);
+					if (TheGlobalData->m_useHDR) g_theW3DDeferredRenderer->beginHDRPass();
+					g_theW3DDeferredRenderer->sunLightPass(sunDir,sunColor,ambient,camPos,invViewProj);
+					g_theW3DDeferredRenderer->renderDynamicLights(DX8Wrapper::_Get_D3D_Device8(),camPos,invViewProj);
+					if (TheGlobalData->m_useHDR) {
+						g_theW3DDeferredRenderer->endHDRPass();
+						DIAG_LOG(("PIPELINE: === Tone Mapping Pass ===\n"));
+						g_theW3DDeferredRenderer->toneMapPass();
+					}
+					QueryPerformanceCounter(&lE);
+					DIAG_LOG(("PIPELINE: Lighting+Tonemap took %.2f ms\n",(float)(lE.QuadPart-lS.QuadPart)*1000.0f/(float)pf.QuadPart));
+				}
+				{
+					DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
+					LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
+					g_gbufferActive=false; ShaderClass::Invalidate();
+					Customized_Render(rinfo); Flush(rinfo);
+					QueryPerformanceCounter(&fE);
+					DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
 				}
 			}
+
 			else
 			{
 				// Original forward rendering path

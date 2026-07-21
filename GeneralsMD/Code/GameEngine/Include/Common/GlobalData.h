@@ -121,6 +121,9 @@ public:
 	Bool m_enableDynamicLOD;
 	Bool m_enableStaticLOD;
 	Bool m_useDeferredRendering;	///< Enable deferred rendering path (G-Buffer + light pass)
+	Bool m_useShadowMap;		///< Enable shadow map in deferred rendering (default: true)
+	Bool m_useSSAO;			///< Enable SSAO in deferred rendering (default: false)
+	Bool m_useHDR;			///< Enable HDR tone mapping in deferred rendering (default: true)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
 	Bool m_clientRetaliationModeEnabled;
