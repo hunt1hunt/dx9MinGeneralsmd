@@ -35,6 +35,48 @@
 #include "WW3D2/formconv.h"
 
 // ----------------------------------------------------------------------------
+// Shader loading helper: try .fxo file first, fall back to inline compile.
+// Returns true on success, sets *outShader to the created pixel shader.
+// ----------------------------------------------------------------------------
+static bool LoadCompiledShader(const char *fxoPath, const char *entry,
+	const char *profile, const char *inlineSrc,
+	IDirect3DPixelShader9 **outShader)
+{
+	*outShader = NULL;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	ID3DXBuffer *compiled = NULL;
+	ID3DXBuffer *errors = NULL;
+	HRESULT hr = E_FAIL;
+
+	// Try .fxo file first (faster iteration, no VC6 rebuild).
+	if (fxoPath) {
+		hr = D3DXCompileShaderFromFileA(fxoPath, NULL, NULL, entry, profile, 0, &compiled, &errors, NULL);
+		if (FAILED(hr) || !compiled) {
+			DIAG_LOG(("SHADER: .fxo not found (%s), using inline fallback.\n", fxoPath));
+			if (errors) { errors->Release(); errors = NULL; }
+		}
+	}
+	// Fallback: compile inline source.
+	if (!compiled && inlineSrc) {
+		hr = D3DXCompileShader(inlineSrc, (UINT)strlen(inlineSrc), NULL, NULL, entry, profile, 0, &compiled, &errors, NULL);
+	}
+	if (FAILED(hr) || !compiled) {
+		DIAG_LOG(("SHADER: compile failed for %s.\n", entry));
+		if (errors) { errors->Release(); }
+		return false;
+	}
+	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+	hr = dev9->CreatePixelShader((const DWORD*)compiled->GetBufferPointer(), outShader);
+	compiled->Release();
+	if (FAILED(hr) || !*outShader) {
+		DIAG_LOG(("SHADER: CreatePixelShader failed for %s.\n", entry));
+		return false;
+	}
+	return true;
+}
+
+// ----------------------------------------------------------------------------
 // Diagnostic logging — always compiled, writes to fixed path on E: drive.
 // Use DIAG_LOG(("format %d", value)) — same double-paren convention as DEBUG_LOG.
 // ----------------------------------------------------------------------------
@@ -872,6 +914,7 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"float4 c5 : register(c5);\n"
 		"float4 c6 : register(c6);\n"
 		"float4 c13 : register(c13);\n"
+	"float4 c14 : register(c14);\n"
 	// ---- octahedral normal decoding (2D square to unit sphere) ----
 		"float3 octDecode(float2 e) {\n"
 		"	float2 p = e * 2.0 - 1.0;\n"
@@ -934,6 +977,14 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"	// Apply shroud visibility from s3\n"
 		"	float shroudVis = tex2D(sShroud, input.tex0).a;\n"
 		"	finalColor = lerp(float3(0,0,0), finalColor, shroudVis);\n"
+		"	// Debug: PBRDebugMode in c14.x (1=metal,2=rough,3=amb,4=norm,5=diffIBL,6=specIBL,7=direct)\n"
+		"	if (c14.x > 6.5) finalColor = direct + emissive;\n"
+		"	else if (c14.x > 5.5) finalColor = specIBL;\n"
+		"	else if (c14.x > 4.5) finalColor = diffuseIBL * albedo;\n"
+		"	else if (c14.x > 3.5) finalColor = N * 0.5 + 0.5;\n"
+		"	else if (c14.x > 2.5) finalColor = ambientLight;\n"
+		"	else if (c14.x > 1.5) finalColor = float3(roughness,roughness,roughness);\n"
+		"	else if (c14.x > 0.5) finalColor = float3(metallic,metallic,metallic);\n"
 		"	// Gamma correction (linear to sRGB)\n"
 		"	if (c13.x >= 0.5) finalColor = sqrt(abs(finalColor));\n"
 		"	return float4(finalColor, 1.0);\n"
@@ -1236,36 +1287,16 @@ bool W3DDeferredRenderer::compileToneMapShader()
 	"sampler hdrSampler : register(s0);\n"
 	"float4 main(PS_IN input) : COLOR {\n"
 	"  float3 hdrColor = tex2D(hdrSampler, input.tex0).rgb;\n"
-	"  // Reinhard tone map\n"
 	"  float3 ldr = hdrColor / (hdrColor + 1.0);\n"
-	"  // Gamma correction (linear to sRGB)\n"
-		"  ldr = sqrt(abs(ldr));\n"
+	"  ldr = sqrt(abs(ldr));\n"
 	"  return float4(ldr, 1.0);\n"
 	"};\n"
 	;
 
-	ID3DXBuffer *compiled = NULL;
-	ID3DXBuffer *errors = NULL;
-	HRESULT hr = D3DXCompileShader(ps_source, (UINT)strlen(ps_source),
-		NULL, NULL, "main", "ps_3_0",
-		0, &compiled, &errors, NULL);
-	if (FAILED(hr) || !compiled) {
-		DIAG_LOG(("W3DDeferredRenderer: ToneMap PS compile failed.\n"));
-		if (errors) {
-			DIAG_LOG(("  error: %s\n", (const char*)errors->GetBufferPointer()));
-			errors->Release();
-		}
-		m_toneMapPS = NULL;
-		return false;
-	}
-	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
-	if (dev) {
-		hr = dev->CreatePixelShader(
-			(const DWORD*)compiled->GetBufferPointer(), &m_toneMapPS);
-	}
-	compiled->Release();
-	if (FAILED(hr) || !m_toneMapPS) {
-		DIAG_LOG(("W3DDeferredRenderer: ToneMap PS CreatePixelShader failed.\n"));
+	if (!LoadCompiledShader("Shaders\\deferred_tonemap.ps.fxo",
+		"main", "ps_3_0", ps_source, &m_toneMapPS))
+	{
+		DIAG_LOG(("W3DDeferredRenderer: ToneMap PS failed.\n"));
 		m_toneMapPS = NULL;
 		return false;
 	}

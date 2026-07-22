@@ -1136,6 +1136,11 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						if (_d) {
 							float _gf[4] = { TheGlobalData && !TheGlobalData->m_useHDR ? 1.0f : 0.0f, 0, 0, 0 };
 							_d->SetPixelShaderConstantF(13, _gf, 1);
+							// Pass PBRDebugMode as c14.x for debug visualization.
+							if (_d && TheGlobalData) {
+								float _dm[4] = { (float)TheGlobalData->m_pbrDebugMode, 0, 0, 0 };
+								_d->SetPixelShaderConstantF(14, _dm, 1);
+							}
 						}
 					}
 					g_theW3DDeferredRenderer->sunLightPass(sunDir,sunColor,ambient,camPos,invViewProj);
