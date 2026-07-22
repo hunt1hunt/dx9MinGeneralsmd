@@ -151,6 +151,7 @@ public:
 	Bool m_useNormalMaps;		///< enable normal mapping (INI: UseNormalMaps)
 	Int m_pbrLightCount;		///< max dynamic lights in PBR (1-8, INI: PBRLightCount)
 	Bool m_usePS30;				///< use PS 3.0 path when available (INI: UsePS30)
+	Bool m_useIBL;				///< enable IBL environment lighting (INI: UseIBL)
 
 	Int m_featherWater;
 

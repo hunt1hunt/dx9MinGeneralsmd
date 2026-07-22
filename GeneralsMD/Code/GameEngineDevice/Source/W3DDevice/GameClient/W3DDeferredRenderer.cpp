@@ -343,9 +343,10 @@ void W3DDeferredRenderer::init()
 	createIBLResources();
 
 	// Step 5: Log INI switch status.
-	DIAG_LOG(("STEP5: INI UsePBRMaterials=%d UseNormalMaps=%d PBRLightCount=%d UsePS30=%d\n",
+	DIAG_LOG(("STEP5: INI UsePBRMaterials=%d UseNormalMaps=%d PBRLightCount=%d UsePS30=%d UseIBL=%d\n",
 		TheGlobalData?TheGlobalData->m_usePBRMaterials:0, TheGlobalData?TheGlobalData->m_useNormalMaps:0,
-		TheGlobalData?TheGlobalData->m_pbrLightCount:0, TheGlobalData?TheGlobalData->m_usePS30:0));
+		TheGlobalData?TheGlobalData->m_pbrLightCount:0, TheGlobalData?TheGlobalData->m_usePS30:0,
+		TheGlobalData?TheGlobalData->m_useIBL:0));
 
 	debugValidateOctEncoding();
 	debugValidateDepthEncoding();
@@ -549,7 +550,8 @@ void W3DDeferredRenderer::sunLightPass(
 	}
 
 	// Bind IBL cubemaps as s5 (diffuse), s6 (specular), s7 (BRDF LUT).
-	if (m_iblAvailable && m_iblDiffuseCube && m_iblSpecularCube && m_brdfLUT) {
+	bool wantIBL = TheGlobalData && TheGlobalData->m_useIBL;
+	if (wantIBL && m_iblAvailable && m_iblDiffuseCube && m_iblSpecularCube && m_brdfLUT) {
 		dev->SetTexture(5, static_cast<IDirect3DBaseTexture8*>(m_iblDiffuseCube));
 		dev->SetTexture(6, static_cast<IDirect3DBaseTexture8*>(m_iblSpecularCube));
 		dev->SetTexture(7, static_cast<IDirect3DBaseTexture8*>(m_brdfLUT));
@@ -684,7 +686,14 @@ void W3DDeferredRenderer::renderDynamicLights(
 
 	// Collect and render dynamic lights.
 	int lightCount = 0;
-	const int MAX_DYNAMIC_LIGHTS = 8;
+	// Clamp PBRLightCount to valid range [1, 8].
+	int maxLights = 8;
+	if (TheGlobalData) {
+		int cfg = TheGlobalData->m_pbrLightCount;
+		if (cfg < 1) cfg = 1;
+		if (cfg > 8) cfg = 8;
+		maxLights = cfg;
+	}
 	RefRenderObjListClass *lightList = NULL;
 	if (W3DDisplay::m_3DScene) {
 		lightList = W3DDisplay::m_3DScene->getDynamicLights();
@@ -693,7 +702,7 @@ void W3DDeferredRenderer::renderDynamicLights(
 	if (lightList) {
 		RefRenderObjListIterator it(lightList);
 		for (it.First(); !it.Is_Done(); it.Next()) {
-			if (lightCount >= MAX_DYNAMIC_LIGHTS) break;
+			if (lightCount >= maxLights) break;
 			W3DDynamicLight *pDyna = (W3DDynamicLight*)it.Peek_Obj();
 			if (!pDyna || !pDyna->isEnabled()) continue;
 
@@ -1660,7 +1669,9 @@ bool W3DDeferredRenderer::compileAOPassShaders()
 		"      float d = tex2D(sDepth, uv).r;\n"
 		"      float diff = depth - d;\n"
 		"      float range = abs(diff) < radius * 0.5 ? 1.0 : 0.0;\n"
-		"      ao += max(0, diff / (depth + 0.001)) * range;\n"
+		"      float3 sn = normalize(tex2D(sNormal, uv).rgb * 2 - 1);\n"
+		"      float normW = max(0, dot(N, sn));\n"
+		"      ao += max(0, diff / (depth + 0.001)) * range * normW;\n"
 		"    }\n"
 		"  }\n"
 		"  return float4(saturate(1 - ao * c4.y / 16), 0, 0, 1);\n"
@@ -1702,7 +1713,7 @@ bool W3DDeferredRenderer::compileAOPassShaders()
 	if (dev) hr = dev->CreatePixelShader((const DWORD*)c->GetBufferPointer(), &m_ssaoBlurPS);
 	c->Release();
 	if (FAILED(hr) || !m_ssaoBlurPS) { m_ssaoBlurPS = NULL; return false; }
-	DIAG_LOG(("W3DDeferredRenderer: SSAO shaders compiled (STEP4: 16-sample+random-rot).\n"));
+	DIAG_LOG(("W3DDeferredRenderer: SSAO shaders compiled (STEP8: 16-sample+normal-weighted).\n"));
 	return true;
 }
 

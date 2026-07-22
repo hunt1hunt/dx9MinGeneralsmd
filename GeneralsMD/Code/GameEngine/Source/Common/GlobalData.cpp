@@ -100,6 +100,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseNormalMaps",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useNormalMaps ) },
 	{ "PBRLightCount",							INI::parseInt,				NULL,			offsetof( GlobalData, m_pbrLightCount ) },
 	{ "UsePS30",								INI::parseBool,				NULL,			offsetof( GlobalData, m_usePS30 ) },
+	{ "UseIBL",									INI::parseBool,				NULL,			offsetof( GlobalData, m_useIBL ) },
 	
 	{ "DrawEntireTerrain",					INI::parseBool,				NULL,			offsetof( GlobalData, m_drawEntireTerrain ) },
 	{ "TerrainLOD",									INI::parseIndexList,	TerrainLODNames,	offsetof( GlobalData, m_terrainLOD ) },
@@ -683,6 +684,7 @@ GlobalData::GlobalData()
 	m_useNormalMaps = TRUE;
 	m_pbrLightCount = 4;
 	m_usePS30 = TRUE;
+	m_useIBL = TRUE;
 	m_mapName.clear();
 	m_moveHintName.clear();
 	m_useTrees = 0;
