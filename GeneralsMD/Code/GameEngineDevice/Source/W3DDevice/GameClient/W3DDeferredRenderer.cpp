@@ -33,48 +33,7 @@
 #include "WW3D2/DX8Caps.h"
 #include "Common/GlobalData.h"
 #include "WW3D2/formconv.h"
-
-// ----------------------------------------------------------------------------
-// Shader loading helper: try .fxo file first, fall back to inline compile.
-// Returns true on success, sets *outShader to the created pixel shader.
-// ----------------------------------------------------------------------------
-static bool LoadCompiledShader(const char *fxoPath, const char *entry,
-	const char *profile, const char *inlineSrc,
-	IDirect3DPixelShader9 **outShader)
-{
-	*outShader = NULL;
-	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
-	if (!dev) return false;
-	ID3DXBuffer *compiled = NULL;
-	ID3DXBuffer *errors = NULL;
-	HRESULT hr = E_FAIL;
-
-	// Try .fxo file first (faster iteration, no VC6 rebuild).
-	if (fxoPath) {
-		hr = D3DXCompileShaderFromFileA(fxoPath, NULL, NULL, entry, profile, 0, &compiled, &errors, NULL);
-		if (FAILED(hr) || !compiled) {
-			DIAG_LOG(("SHADER: .fxo not found (%s), using inline fallback.\n", fxoPath));
-			if (errors) { errors->Release(); errors = NULL; }
-		}
-	}
-	// Fallback: compile inline source.
-	if (!compiled && inlineSrc) {
-		hr = D3DXCompileShader(inlineSrc, (UINT)strlen(inlineSrc), NULL, NULL, entry, profile, 0, &compiled, &errors, NULL);
-	}
-	if (FAILED(hr) || !compiled) {
-		DIAG_LOG(("SHADER: compile failed for %s.\n", entry));
-		if (errors) { errors->Release(); }
-		return false;
-	}
-	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
-	hr = dev9->CreatePixelShader((const DWORD*)compiled->GetBufferPointer(), outShader);
-	compiled->Release();
-	if (FAILED(hr) || !*outShader) {
-		DIAG_LOG(("SHADER: CreatePixelShader failed for %s.\n", entry));
-		return false;
-	}
-	return true;
-}
+#include <vector>
 
 // ----------------------------------------------------------------------------
 // Diagnostic logging — always compiled, writes to fixed path on E: drive.
@@ -135,6 +94,48 @@ static void debugValidateOctEncoding()
 		maxAngleErr, maxAngleErr * 180.0f / 3.14159265f));
 }
 
+
+// ----------------------------------------------------------------------------
+// Shader loading helper: try .fxo file first, fall back to inline compile.
+// Returns true on success, sets *outShader to the created pixel shader.
+// ----------------------------------------------------------------------------
+static bool LoadCompiledShader(const char *fxoPath, const char *entry,
+	const char *profile, const char *inlineSrc,
+	IDirect3DPixelShader9 **outShader)
+{
+	*outShader = NULL;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	ID3DXBuffer *compiled = NULL;
+	ID3DXBuffer *errors = NULL;
+	HRESULT hr = E_FAIL;
+
+	// Try .fxo file first (faster iteration, no VC6 rebuild).
+	if (fxoPath) {
+		hr = D3DXCompileShaderFromFileA(fxoPath, NULL, NULL, entry, profile, 0, &compiled, &errors, NULL);
+		if (FAILED(hr) || !compiled) {
+			DIAG_LOG(("SHADER: .fxo not found (%s), using inline fallback.\n", fxoPath));
+			if (errors) { errors->Release(); errors = NULL; }
+		}
+	}
+	// Fallback: compile inline source.
+	if (!compiled && inlineSrc) {
+		hr = D3DXCompileShader(inlineSrc, (UINT)strlen(inlineSrc), NULL, NULL, entry, profile, 0, &compiled, &errors, NULL);
+	}
+	if (FAILED(hr) || !compiled) {
+		DIAG_LOG(("SHADER: compile failed for %s.\n", entry));
+		if (errors) { errors->Release(); }
+		return false;
+	}
+	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+	hr = dev9->CreatePixelShader((const DWORD*)compiled->GetBufferPointer(), outShader);
+	compiled->Release();
+	if (FAILED(hr) || !*outShader) {
+		DIAG_LOG(("SHADER: CreatePixelShader failed for %s.\n", entry));
+		return false;
+	}
+	return true;
+}
 // ----------------------------------------------------------------------------
 // CPU-side self-test: validate depth 16-bit encode/decode symmetry
 // ----------------------------------------------------------------------------
@@ -196,7 +197,11 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_iblDiffuseCube(NULL),
 	m_iblSpecularCube(NULL),
 	m_brdfLUT(NULL),
-	m_iblAvailable(false)
+	m_iblAvailable(false),
+	m_stencilSphereVB(NULL),
+	m_stencilSphereIB(NULL),
+	m_stencilSphereVerts(0),
+	m_stencilSphereTris(0)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -383,6 +388,7 @@ void W3DDeferredRenderer::init()
 
 	// Create IBL procedural cubemaps (best-effort, non-fatal if fails).
 	createIBLResources();
+	createStencilSphere();
 
 	// Step 5: Log INI switch status.
 	DIAG_LOG(("STEP5: INI UsePBRMaterials=%d UseNormalMaps=%d PBRLightCount=%d UsePS30=%d UseIBL=%d\n",
@@ -417,6 +423,7 @@ void W3DDeferredRenderer::shutdown()
 	releaseAOResources();
 	releaseAOPassShaders();
 	releaseIBLResources();
+	releaseStencilSphere();
 	m_available = false;
 	m_initialized = false;
 }
@@ -764,7 +771,23 @@ void W3DDeferredRenderer::renderDynamicLights(
 			float lightColorConst[4] = { diffColor.X, diffColor.Y, diffColor.Z, 0 };
 			dev->SetPixelShaderConstantF(7, lightPosConst, 1);
 			dev->SetPixelShaderConstantF(8, lightColorConst, 1);
-			dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+			if (m_stencilSphereVB && m_stencilSphereIB) {
+				beginStencilLight(lightPos, range);
+				dev->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_NOTEQUAL);
+				dev->SetRenderState(D3DRS_STENCILREF, 0);
+				dev->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_KEEP);
+				dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+				dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+				dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+				dev->SetPixelShader(m_pointLightPS);
+				dev->SetFVF(D3DFVF_XYZRHW|D3DFVF_TEX1);
+				dev->SetStreamSource(0, m_quadVB, 0, sizeof(float)*6);
+				dev->SetIndices(m_quadIB);
+				dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+				endStencilLight();
+			} else {
+				dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+			}
 			lightCount++;
 		}
 	}
@@ -1170,6 +1193,7 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseAOResources();
 	releaseAOPassShaders();
 	releaseIBLResources();
+	releaseStencilSphere();
 
 	if (m_prevCleanupHook) {
 		m_prevCleanupHook->ReleaseResources();
@@ -1235,6 +1259,7 @@ void W3DDeferredRenderer::ReAcquireResources()
 		DIAG_LOG(("W3DDeferredRenderer: failed AO shader compile.\n"));
 	}
 	createIBLResources();
+	createStencilSphere();
 }
 
 // ============================================================================
@@ -1867,6 +1892,7 @@ bool W3DDeferredRenderer::createIBLResources()
 	specCube = NULL;
 	hr = dev9->CreateCubeTexture(128, 7, D3DUSAGE_AUTOGENMIPMAP, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &specCube, NULL);
 	if (FAILED(hr) || !specCube) { DIAG_LOG(("W3DDeferredRenderer: IBL specular fallback failed.\n")); releaseIBLResources(); return false; }
+	releaseStencilSphere();
 	for (int f2 = 0; f2 < 6; f2++) {
 		D3DLOCKED_RECT lr; D3DCUBEMAP_FACES face = (D3DCUBEMAP_FACES)f2;
 		if (FAILED(specCube->LockRect(face, 0, &lr, NULL, 0))) continue;
@@ -1898,6 +1924,7 @@ bool W3DDeferredRenderer::createIBLResources()
 	brdfTex = NULL;
 	hr = dev9->CreateTexture(256, 256, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &brdfTex, NULL);
 	if (FAILED(hr) || !brdfTex) { DIAG_LOG(("W3DDeferredRenderer: IBL BRDF LUT fallback failed.\n")); releaseIBLResources(); return false; }
+	releaseStencilSphere();
 	D3DLOCKED_RECT lr;
 	if (SUCCEEDED(brdfTex->LockRect(0, &lr, NULL, 0))) {
 		for (int y = 0; y < 256; y++) {
@@ -1930,4 +1957,159 @@ void W3DDeferredRenderer::releaseIBLResources()
 	if (m_brdfLUT) { m_brdfLUT->Release(); m_brdfLUT = NULL; }
 	m_iblAvailable = false;
 	DIAG_LOG(("W3DDeferredRenderer: IBL resources released.\n"));
+}
+
+// ============================================================================
+// Stencil light volume — icosphere generation
+// ============================================================================
+static void subdivide(std::vector<Vector3> &verts, std::vector<int> &idx)
+{
+	std::vector<int> newIdx;
+	for (size_t i = 0; i < idx.size(); i += 3) {
+		int i0 = idx[i], i1 = idx[i+1], i2 = idx[i+2];
+		Vector3 p0 = verts[i0], p1 = verts[i1], p2 = verts[i2];
+		Vector3 p01 = p0 + p1; p01.Normalize();
+		Vector3 p12 = p1 + p2; p12.Normalize();
+		Vector3 p20 = p2 + p0; p20.Normalize();
+		int i01 = (int)verts.size(); verts.push_back(p01);
+		int i12 = (int)verts.size(); verts.push_back(p12);
+		int i20 = (int)verts.size(); verts.push_back(p20);
+		newIdx.push_back(i0); newIdx.push_back(i01); newIdx.push_back(i20);
+		newIdx.push_back(i1); newIdx.push_back(i12); newIdx.push_back(i01);
+		newIdx.push_back(i2); newIdx.push_back(i20); newIdx.push_back(i12);
+		newIdx.push_back(i01); newIdx.push_back(i12); newIdx.push_back(i20);
+	}
+	idx = newIdx;
+}
+
+bool W3DDeferredRenderer::createStencilSphere()
+{
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// Build icosphere: start with icosahedron, subdivide twice
+	std::vector<Vector3> verts;
+	std::vector<int> idx;
+	float t = (1.0f + sqrtf(5.0f)) * 0.5f;
+	float icoV[12][3] = {
+		{-1,t,0},{1,t,0},{-1,-t,0},{1,-t,0},
+		{0,-1,t},{0,1,t},{0,-1,-t},{0,1,-t},
+		{t,0,-1},{t,0,1},{-t,0,-1},{-t,0,1} };
+	for (int _vi = 0; _vi < 12; _vi++) {
+		float _l = sqrtf(icoV[_vi][0]*icoV[_vi][0] + icoV[_vi][1]*icoV[_vi][1] + icoV[_vi][2]*icoV[_vi][2]);
+		verts.push_back(Vector3(icoV[_vi][0]/_l, icoV[_vi][1]/_l, icoV[_vi][2]/_l));
+	}
+	int icosa[] = {
+		0,11,5, 0,5,1, 0,1,7, 0,7,10, 0,10,11,
+		1,5,9, 5,11,4, 11,10,2, 10,7,6, 7,1,8,
+		3,9,4, 3,4,2, 3,2,6, 3,6,8, 3,8,9,
+		4,9,5, 2,4,11, 6,2,10, 8,6,7, 9,8,1 };
+	for (int i = 0; i < 60; i++) idx.push_back(icosa[i]);
+	subdivide(verts, idx);
+	subdivide(verts, idx);
+
+	m_stencilSphereVerts = (int)verts.size();
+	m_stencilSphereTris = (int)idx.size() / 3;
+
+	// Create VB
+	UINT vbSize = m_stencilSphereVerts * sizeof(float) * 3;
+	if (FAILED(dev9->CreateVertexBuffer(vbSize, D3DUSAGE_WRITEONLY, D3DFVF_XYZ,
+		D3DPOOL_MANAGED, &m_stencilSphereVB, NULL)))
+	{
+		m_stencilSphereVB = NULL; return false;
+	}
+	// Create IB
+	UINT ibSize = m_stencilSphereTris * 3 * sizeof(WORD);
+	if (FAILED(dev9->CreateIndexBuffer(ibSize, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16,
+		D3DPOOL_MANAGED, &m_stencilSphereIB, NULL)))
+	{
+		m_stencilSphereIB = NULL; releaseStencilSphere(); return false;
+	}
+	// Fill VB
+	float *vptr = NULL;
+	m_stencilSphereVB->Lock(0, 0, (void**)&vptr, 0);
+	for (int vi = 0; vi < m_stencilSphereVerts; vi++) {
+		vptr[vi*3+0] = verts[vi].X;
+		vptr[vi*3+1] = verts[vi].Y;
+		vptr[vi*3+2] = verts[vi].Z;
+	}
+	m_stencilSphereVB->Unlock();
+	// Fill IB
+	WORD *iptr = NULL;
+	m_stencilSphereIB->Lock(0, 0, (void**)&iptr, 0);
+	for (int wi = 0; wi < m_stencilSphereTris * 3; wi++) iptr[wi] = (WORD)idx[wi];
+	m_stencilSphereIB->Unlock();
+
+	DIAG_LOG(("STEP7: Stencil sphere created (%d verts, %d tris).\n",
+		m_stencilSphereVerts, m_stencilSphereTris));
+	return true;
+}
+
+void W3DDeferredRenderer::releaseStencilSphere()
+{
+	if (m_stencilSphereVB) { m_stencilSphereVB->Release(); m_stencilSphereVB = NULL; }
+	if (m_stencilSphereIB) { m_stencilSphereIB->Release(); m_stencilSphereIB = NULL; }
+	m_stencilSphereVerts = 0;
+	m_stencilSphereTris = 0;
+}
+
+void W3DDeferredRenderer::beginStencilLight(const Vector3 &pos, float range)
+{
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev || !m_stencilSphereVB || !m_stencilSphereIB) return;
+	// Compute world matrix: scale by range, translate to light position
+	Matrix4x4 world(true);
+	world[0][0] = range; world[1][1] = range; world[2][2] = range;
+	world[3][0] = pos.X; world[3][1] = pos.Y; world[3][2] = pos.Z;
+	DX8Wrapper::Set_Transform(D3DTS_WORLD, world);
+
+	// Set vertex/index buffers
+	dev->SetStreamSource(0, m_stencilSphereVB, 0, 12);
+	dev->SetIndices(m_stencilSphereIB);
+	dev->SetFVF(D3DFVF_XYZ);
+
+	// Save render states
+	dev->GetRenderState(D3DRS_ZENABLE, &m_savedStencilZen);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &m_savedStencilZw);
+	dev->GetRenderState(D3DRS_STENCILENABLE, &m_savedStencilEn);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &m_savedStencilAlpha);
+
+	// Setup: depth test on, color write off, stencil on
+	dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+	dev->SetRenderState(D3DRS_STENCILENABLE, TRUE);
+	dev->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_ALWAYS);
+	dev->SetRenderState(D3DRS_STENCILREF, 1);
+	dev->SetRenderState(D3DRS_STENCILMASK, 0xFF);
+	dev->SetRenderState(D3DRS_STENCILWRITEMASK, 0xFF);
+	dev->SetRenderState(D3DRS_STENCILFAIL, D3DSTENCILOP_KEEP);
+	dev->SetRenderState(D3DRS_STENCILZFAIL, D3DSTENCILOP_KEEP);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+
+	// Pass 1: back faces → increment stencil on Z-pass
+	dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW);
+	dev->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_INCR);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, m_stencilSphereVerts, 0, m_stencilSphereTris);
+
+	// Pass 2: front faces → decrement stencil on Z-pass
+	dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
+	dev->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_DECR);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, m_stencilSphereVerts, 0, m_stencilSphereTris);
+}
+
+void W3DDeferredRenderer::endStencilLight()
+{
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+
+	// Restore render states
+	dev->SetRenderState(D3DRS_ZENABLE, m_savedStencilZen);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, m_savedStencilZw);
+	dev->SetRenderState(D3DRS_STENCILENABLE, m_savedStencilEn);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, m_savedStencilAlpha);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE,
+		D3DCOLORWRITEENABLE_RED|D3DCOLORWRITEENABLE_GREEN|
+		D3DCOLORWRITEENABLE_BLUE|D3DCOLORWRITEENABLE_ALPHA);
 }

@@ -191,6 +191,17 @@ private:
 	IDirect3DVertexBuffer9 *m_quadVB;		///< Full-screen quad vertex buffer.
 	IDirect3DIndexBuffer9 *m_quadIB;		///< Full-screen quad index buffer.
 
+	// ---- Stencil light volume resources ----
+	bool createStencilSphere();
+	void releaseStencilSphere();
+	IDirect3DVertexBuffer9 *m_stencilSphereVB;
+	IDirect3DIndexBuffer9 *m_stencilSphereIB;
+	int m_stencilSphereVerts;
+	int m_stencilSphereTris;
+	void beginStencilLight(const Vector3 &pos, float range);
+	void endStencilLight();
+	DWORD m_savedStencilZen, m_savedStencilZw, m_savedStencilEn, m_savedStencilAlpha;
+
 	// ---- HDR resources ----
 
 	/// Create/release the HDR render target.
