@@ -16,6 +16,8 @@
 | 5 | HDR RT + Tone Mapping (Reinhard + Gamma) | ✅ | A16B16G16R16F 创建 |
 | 6 | Sun Shadow Map (2048² RT + PCF 2×2 shader) | ✅ | Shadow PS compiled |
 | 7 | SSAO (compute + blur) | ✅ | AO RTs + shaders OK |
+| 8 | 完整管线集成 + D24X8 阴影 | ✅ | checkpoint da8d3ca1 |
+| P0 | sRGB修正 + PBROverride.ini | ⚠️ 编译中 | 4个文件已改，有编译错误待修 |
 
 ---
 

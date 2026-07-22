@@ -96,6 +96,10 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	
 	{ "UseLegacyPBR",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useLegacyPBR ) },
 	{ "PBRDebugMode",							INI::parseInt,				NULL,			offsetof( GlobalData, m_pbrDebugMode ) },
+	{ "UsePBRMaterials",						INI::parseBool,				NULL,			offsetof( GlobalData, m_usePBRMaterials ) },
+	{ "UseNormalMaps",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useNormalMaps ) },
+	{ "PBRLightCount",							INI::parseInt,				NULL,			offsetof( GlobalData, m_pbrLightCount ) },
+	{ "UsePS30",								INI::parseBool,				NULL,			offsetof( GlobalData, m_usePS30 ) },
 	
 	{ "DrawEntireTerrain",					INI::parseBool,				NULL,			offsetof( GlobalData, m_drawEntireTerrain ) },
 	{ "TerrainLOD",									INI::parseIndexList,	TerrainLODNames,	offsetof( GlobalData, m_terrainLOD ) },
@@ -675,6 +679,10 @@ GlobalData::GlobalData()
 	m_usePBRTextures = FALSE;
 	m_useLegacyPBR = FALSE;
 	m_pbrDebugMode = 0;
+	m_usePBRMaterials = TRUE;
+	m_useNormalMaps = TRUE;
+	m_pbrLightCount = 4;
+	m_usePS30 = TRUE;
 	m_mapName.clear();
 	m_moveHintName.clear();
 	m_useTrees = 0;

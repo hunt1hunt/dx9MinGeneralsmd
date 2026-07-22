@@ -2073,6 +2073,12 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  		W3DShaderManager::setTexture(1,m_stageZeroTexture);
  		W3DShaderManager::setTexture(2,m_stageTwoTexture);	//cloud
  		W3DShaderManager::setTexture(3,m_stageThreeTexture);//noise
+		// Stage 4: procedural detail texture (PBR terrain micro-detail)
+		if (TheGlobalData->m_useDetailTerrainTex && m_detailTexture) {
+			W3DShaderManager::setTexture(4, m_detailTexture);
+		} else {
+			W3DShaderManager::setTexture(4, NULL);
+		}
 		//Disable writes to destination alpha channel (if there is one)
 		if (DX8Wrapper::getBackBufferFormat() == WW3D_FORMAT_A8R8G8B8)
 			DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE,D3DCOLORWRITEENABLE_BLUE|D3DCOLORWRITEENABLE_GREEN|D3DCOLORWRITEENABLE_RED);

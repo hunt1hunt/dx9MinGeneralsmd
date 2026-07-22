@@ -82,6 +82,8 @@ static void diagSceneWrite(const char *fmt, ...)
 }
 #define DIAG_LOG(x)  do { diagSceneWrite x; } while (0)
 extern "C" void PBR_RenderSunGlow(void);
+struct PBRCheckParams { float r; float m; float pad[2]; };
+extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, PBRCheckParams *outParams);
 
 #ifdef _INTERNAL
 // for occasional debugging...
@@ -1129,6 +1131,13 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					DIAG_LOG(("PIPELINE: === Deferred Lighting Pass ===\n"));
 					LARGE_INTEGER lS,lE; QueryPerformanceCounter(&lS);
 					if (TheGlobalData->m_useHDR) g_theW3DDeferredRenderer->beginHDRPass();
+					{
+						IDirect3DDevice8 *_d = DX8Wrapper::_Get_D3D_Device8();
+						if (_d) {
+							float _gf[4] = { TheGlobalData && !TheGlobalData->m_useHDR ? 1.0f : 0.0f, 0, 0, 0 };
+							_d->SetPixelShaderConstantF(13, _gf, 1);
+						}
+					}
 					g_theW3DDeferredRenderer->sunLightPass(sunDir,sunColor,ambient,camPos,invViewProj);
 					g_theW3DDeferredRenderer->renderDynamicLights(DX8Wrapper::_Get_D3D_Device8(),camPos,invViewProj);
 					if (TheGlobalData->m_useHDR) {
@@ -1359,6 +1368,20 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 
 		if (robj->Class_ID() == RenderObjClass::CLASSID_TILEMAP)
 			continue;	//we already rendered terrain
+
+		// DIAG: trace all non-terrain objects during G-Buffer pass
+		if (m_customPassMode == SCENE_PASS_GBUFFER) {
+			static int _go = 0;
+			if (_go < 30) {
+				_go++;
+				PBRCheckParams _pbr = {0,0,{0,0}};
+				bool _hp = PBR_GetLegacyPBRParams(robj->Get_Name(), &_pbr);
+				DrawableInfo *_di = (DrawableInfo *)robj->Get_User_Data();
+				DIAG_LOG(("GBUF_OBJ: #%d name=\"%s\" vis=%d class=0x%x flags=0x%x hasPBR=%d pbr=(%.2f,%.2f)\n",
+					_go, robj->Get_Name(), robj->Is_Really_Visible()?1:0, robj->Class_ID(),
+					_di ? _di->m_flags : 0, _hp?1:0, _pbr.r, _pbr.m));
+			}
+		}
 
 		if (robj->Is_Really_Visible()) {
 			DrawableInfo *drawInfo = (DrawableInfo *)robj->Get_User_Data();

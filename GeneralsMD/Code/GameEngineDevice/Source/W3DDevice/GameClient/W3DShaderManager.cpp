@@ -2112,6 +2112,7 @@ Int TerrainShaderPBR::init( void )
 		const char* src =
 			"sampler s0 : register(s0);\n"
 			"sampler s1 : register(s1);\n"
+			"sampler s4 : register(s4);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0) : COLOR\n"
@@ -2119,6 +2120,8 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -2151,6 +2154,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s0 : register(s0);\n"
 			"sampler s1 : register(s1);\n"
 			"sampler s2 : register(s2);\n"
+			"sampler s4 : register(s4);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0) : COLOR\n"
@@ -2158,6 +2162,8 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
@@ -2191,6 +2197,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s0 : register(s0);\n"
 			"sampler s1 : register(s1);\n"
 			"sampler s2 : register(s2);\n"
+			"sampler s4 : register(s4);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0) : COLOR\n"
@@ -2198,6 +2205,8 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 lightmapTex = tex2D(s2, tex2);\n"
 			"    float3 N = float3(0, 0, 1);\n"
 			"    float3 L = normalize(sunDirection);\n"
@@ -2232,6 +2241,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s1 : register(s1);\n"
 			"sampler s2 : register(s2);\n"
 			"sampler s3 : register(s3);\n"
+			"sampler s4 : register(s4);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0) : COLOR\n"
@@ -2239,6 +2249,8 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float4 lightmapTex = tex2D(s3, tex3);\n"
 			"    float3 N = float3(0, 0, 1);\n"
@@ -2382,6 +2394,16 @@ Int TerrainShaderPBR::set(Int pass)
 		}
 	}
 
+		// Stage 4: PBR detail texture (procedural noise, micro-detail for terrain).
+		if (W3DShaderManager::getShaderTexture(4)) {
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(4,
+				W3DShaderManager::getShaderTexture(4)->Peek_D3D_Texture());
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXCOORDINDEX, 0);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		}
 
 		// DIAG: log PBR shader selection (first call only)
 		{
@@ -3352,7 +3374,8 @@ Int W3DPBRShader::init( void )
 				"\tfloat4 color1 : COLOR1;\n"
 				"\tfloat4 color2 : COLOR2;\n"
 				"};\n"
-				"sampler Diffuse : register(s0);\n"
+								"float4 c11 : register(c11);\n"
+"sampler Diffuse : register(s0);\n"
 				"\n"
 				// ---- octahedral normal encoding (unit sphere → 2D square) ----
 				"float2 octEncode(float3 n) {\n"
@@ -3368,25 +3391,23 @@ Int W3DPBRShader::init( void )
 				"\tfloat3 n = normalize(input.worldNormal);\n"
 				"\tfloat depth = input.clipDepth.x / input.clipDepth.y;\n"
 				"\n"
-				"\t// sRGB→linear for PBR lighting (D3D9 does not support sRGB MRT writes)\n"
-				"\tfloat3 albedoLinear = pow(albedo.rgb, 2.2);\n"
 				"\n"
 				"\t// Octahedral encode normal → RG\n"
 				"\tfloat2 encN = octEncode(n);\n"
 				"\n"
 				"\t// Material properties (PBR defaults; overridden by PBROverride.ini later)\n"
-				"\tfloat metallic = 0.0f;\n"
-				"\tfloat roughness = 0.8f;\n"
+				"\tfloat metallic = c11.y;\n"
+				"\tfloat roughness = c11.x;\n"
 				"\n"
 				"\t// Emissive (placeholder)\n"
 				"\tfloat emissive = 0.0f;\n"
 				"\tfloat specialFlag = 0.0f;\n"
 				"\n"
 				"\t// ---- G-Buffer channel layout ----\n"
-				"\t// RT0 (A8R8G8B8): albedoLinear.rgb + metallic.a\n"
+				"\t// RT0 (A8R8G8B8): albedoSrgb.rgb + metallic.a\n"
 				"\t// RT1 (A8R8G8B8): octNormal.rg + roughness.b + specialFlag.a\n"
 				"\t// RT2 (A8R8G8B8): depth.r + depth*depth.g + emissive.b + specialFlag.a\n"
-				"\to.color0 = float4(albedoLinear, metallic);\n"
+				"\to.color0 = float4(albedo.rgb, metallic);\n"
 				"\to.color1 = float4(encN, roughness, specialFlag);\n"
 				"\to.color2 = float4(depth, depth * depth, emissive, specialFlag);\n"
 				"\treturn o;\n"

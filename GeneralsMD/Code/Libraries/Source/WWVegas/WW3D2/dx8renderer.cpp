@@ -1845,6 +1845,50 @@ void DX8TextureCategoryClass::Render(void)
 				}
 			}
 
+				// Phase 3.5b: G-Buffer PBR params (c11 = roughness.x, metalness.y)
+				if (g_gbufferActive) {
+					float r = 0.4f, m = 0.15f;
+					int src = 2; // 0=PBROverride, 1=Has_Legacy_PBR, 2=default
+					MeshModelClass *mm = mesh->Peek_Model();
+					LegacyPBRParams ov;
+					if (PBR_GetLegacyPBRParams(mesh->Get_Name(), &ov)) {
+						r = ov.roughness; m = ov.metalness;
+						src = 0;
+					} else if (mm && mm->Has_Legacy_PBR() && !PBR_IsMeshExcluded(mesh->Get_Name())) {
+						r = mm->Get_Legacy_Roughness(); m = mm->Get_Legacy_Metalness();
+						src = 1;
+					}
+					float gbufPBR[4] = { r, m, 0, 0 };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, gbufPBR, 1);
+					// === DIAG: Causal chain trace - source + values + fopen status ===
+					{
+						static int sTotal = 0, sOv = 0, sLeg = 0, sDef = 0;
+						static int sTrOv = 0, sTrLeg = 0, sTrDef = 0;
+						static int sFopenFail = 0;
+						sTotal++;
+						if (src == 0) sOv++; else if (src == 1) sLeg++; else sDef++;
+						bool doTrace = false;
+						if      (src == 0 && sTrOv < 5) { sTrOv++; doTrace = true; }
+						else if (src == 1 && sTrLeg < 5) { sTrLeg++; doTrace = true; }
+						else if (src == 2 && sTrDef < 5) { sTrDef++; doTrace = true; }
+						if (doTrace || sTotal % 500 == 0) {
+							FILE *f = fopen("E:/GeneralsMD_DeferredRT.log", "a");
+							if (f) {
+								if (sFopenFail > 0) { fprintf(f, "GBUF_FOPEN_FAIL: recovered after %d failures\n", sFopenFail); sFopenFail = 0; }
+								if (doTrace)
+									fprintf(f, "GBUF_DIAG src=%d mesh=\"%s\" r=%.2f m=%.2f | cumul: total=%d ov=%d leg=%d def=%d\n",
+										src, mesh->Get_Name(), r, m, sTotal, sOv, sLeg, sDef);
+								else
+									fprintf(f, "GBUF_SUMMARY total=%d override=%d legacy=%d default=%d\n",
+										sTotal, sOv, sLeg, sDef);
+								fclose(f);
+							} else {
+								sFopenFail++;
+							}
+						}
+					}
+				}
+
 		// Phase 4c: Select PBR pixel shader variant per-mesh
 		// Excluded meshes (via PBR_IsMeshExcluded) skip PBR entirely and
 		// continue rendering with the current fixed-function pixel shader.

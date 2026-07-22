@@ -150,7 +150,11 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_aoBlurredRT(NULL),
 	m_ssaoAvailable(false),
 	m_ssaoPS(NULL),
-	m_ssaoBlurPS(NULL)
+	m_ssaoBlurPS(NULL),
+	m_iblDiffuseCube(NULL),
+	m_iblSpecularCube(NULL),
+	m_brdfLUT(NULL),
+	m_iblAvailable(false)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -335,6 +339,14 @@ void W3DDeferredRenderer::init()
 	DIAG_LOG(("W3DDeferredRenderer: initialized (%dx%d, MRT=%d).\n",
 		m_gbufferWidth, m_gbufferHeight, numRTs));
 
+	// Create IBL procedural cubemaps (best-effort, non-fatal if fails).
+	createIBLResources();
+
+	// Step 5: Log INI switch status.
+	DIAG_LOG(("STEP5: INI UsePBRMaterials=%d UseNormalMaps=%d PBRLightCount=%d UsePS30=%d\n",
+		TheGlobalData?TheGlobalData->m_usePBRMaterials:0, TheGlobalData?TheGlobalData->m_useNormalMaps:0,
+		TheGlobalData?TheGlobalData->m_pbrLightCount:0, TheGlobalData?TheGlobalData->m_usePS30:0));
+
 	debugValidateOctEncoding();
 	debugValidateDepthEncoding();
 }
@@ -361,6 +373,7 @@ void W3DDeferredRenderer::shutdown()
 	releaseShadowResources();
 	releaseAOResources();
 	releaseAOPassShaders();
+	releaseIBLResources();
 	m_available = false;
 	m_initialized = false;
 }
@@ -516,14 +529,11 @@ void W3DDeferredRenderer::sunLightPass(
 		}
 	}
 
-	// Bind shadow map as s4 (if available). Prefer D24X8 depth-stencil texture.
-	if (m_shadowMapAvailable && m_sunLightShadowPS && m_shadowDepthRT) {
-		IDirect3DBaseTexture8 *shadowTex;
-		if (m_shadowDepthStencilAvailable && m_shadowDepthStencilTex) {
-			shadowTex = static_cast<IDirect3DBaseTexture8*>(m_shadowDepthStencilTex);
-		} else {
-			shadowTex = m_shadowDepthRT->Peek_D3D_Base_Texture();
-		}
+	// Bind shadow map as s4 (D24X8 depth-stencil texture). Color RT has no
+	// depth data so require the D24X8 + INI flag for meaningful shadow.
+	if (TheGlobalData && TheGlobalData->m_useShadowMap && m_shadowMapAvailable
+		&& m_sunLightShadowPS && m_shadowDepthStencilAvailable && m_shadowDepthStencilTex) {
+		IDirect3DBaseTexture8 *shadowTex = static_cast<IDirect3DBaseTexture8*>(m_shadowDepthStencilTex);
 		dev->SetTexture(4, shadowTex);
 		Matrix4x4 svp = m_shadowViewProj;
 		float c9[4]  = { svp[0][0], svp[0][1], svp[0][2], svp[0][3] };
@@ -535,6 +545,15 @@ void W3DDeferredRenderer::sunLightPass(
 		dev->SetPixelShaderConstantF(11, c11, 1);
 		dev->SetPixelShaderConstantF(12, c12, 1);
 		dev->SetPixelShader(m_sunLightShadowPS);
+		{ static bool _sd = false; if (!_sd) { _sd=true; DIAG_LOG(("STEP1: Shadow PS activated.\n")); } }
+	}
+
+	// Bind IBL cubemaps as s5 (diffuse), s6 (specular), s7 (BRDF LUT).
+	if (m_iblAvailable && m_iblDiffuseCube && m_iblSpecularCube && m_brdfLUT) {
+		dev->SetTexture(5, static_cast<IDirect3DBaseTexture8*>(m_iblDiffuseCube));
+		dev->SetTexture(6, static_cast<IDirect3DBaseTexture8*>(m_iblSpecularCube));
+		dev->SetTexture(7, static_cast<IDirect3DBaseTexture8*>(m_brdfLUT));
+		{ static bool _ib = false; if (!_ib) { _ib=true; DIAG_LOG(("STEP3c: IBL cubemaps bound (s5/s6/s7).\n")); } }
 	}
 
 	// Set sunlight PBR shader constants:
@@ -566,8 +585,12 @@ void W3DDeferredRenderer::sunLightPass(
 	dev->SetPixelShaderConstantF(5, c5, 1);
 	dev->SetPixelShaderConstantF(6, c6, 1);
 
-	// Set pixel shader.
-	dev->SetPixelShader(m_sunLightPS);
+	// Set pixel shader. If shadow variant was already bound above, keep it;
+	// otherwise fall back to the standard sunlight shader.
+	if (!TheGlobalData || !TheGlobalData->m_useShadowMap || !m_shadowMapAvailable
+		|| !m_sunLightShadowPS || !m_shadowDepthStencilAvailable || !m_shadowDepthStencilTex) {
+		dev->SetPixelShader(m_sunLightPS);
+	}
 
 	// Disable depth writes, enable alpha blending (for additive lights later).
 	// For the sun light, just disable depth test (full-screen quad).
@@ -828,6 +851,9 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"sampler gbuf1 : register(s1);\n"
 		"sampler gbuf2 : register(s2);\n"
 		"sampler sShroud : register(s3);\n"
+			"samplerCUBE sIblDiff : register(s5);\n"
+			"samplerCUBE sIblSpec : register(s6);\n"
+			"sampler2D sBrdfLUT : register(s7);\n"
 		// Pixel shader constant registers (bound via SetPixelShaderConstantF)
 		"float4 c0 : register(c0);\n"
 		"float4 c1 : register(c1);\n"
@@ -836,6 +862,7 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"float4 c4 : register(c4);\n"
 		"float4 c5 : register(c5);\n"
 		"float4 c6 : register(c6);\n"
+		"float4 c13 : register(c13);\n"
 	// ---- octahedral normal decoding (2D square to unit sphere) ----
 		"float3 octDecode(float2 e) {\n"
 		"	float2 p = e * 2.0 - 1.0;\n"
@@ -850,6 +877,7 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"	float4 rt1 = tex2D(gbuf1, input.tex0);\n"
 		"	float4 rt2 = tex2D(gbuf2, input.tex0);\n"
 		"	float3 albedo = rt0.rgb;\n"
+		"	albedo *= albedo;\n"
 		"	float metallic = rt0.a;\n"
 	"	float3 N = octDecode(rt1.rg);\n"
 	"	float roughness = rt1.b;\n"
@@ -885,14 +913,20 @@ bool W3DDeferredRenderer::compileSunLightShader()
 		"	float3 spec = D * F * G / max(4.0 * NdotV * NdotL, 0.001);\n"
 		"	float3 kD = (1.0 - F) * (1.0 - metallic);\n"
 		"	float3 diffuse = albedo * kD;\n"
-		"	float3 ambientLight = c2.www * albedo;\n"
+		"	float3 R = reflect(-V, N);\n"
+		"	float3 diffuseIBL = texCUBE(sIblDiff, N).rgb * c2.w * 0.5;\n"
+		"	float3 specularIBL = texCUBElod(sIblSpec, float4(R, roughness * 7.0)).rgb * 0.3;\n"
+		"	float2 brdf = tex2D(sBrdfLUT, float2(NdotV, roughness)).rg;\n"
+		"	float3 F0_ibl = lerp(float3(0.04,0.04,0.04), albedo, metallic);\n"
+		"	float3 specIBL = specularIBL * (F0_ibl * brdf.x + brdf.y);\n"
+		"	float3 ambientLight = diffuseIBL * albedo;\n"
 		"	float3 direct = (diffuse + spec) * c1.rgb * NdotL;\n"
-		"	float3 finalColor = ambientLight + direct + emissive;\n"
+		"	float3 finalColor = ambientLight + direct + specIBL + emissive;\n"
 		"	// Apply shroud visibility from s3\n"
 		"	float shroudVis = tex2D(sShroud, input.tex0).a;\n"
 		"	finalColor = lerp(float3(0,0,0), finalColor, shroudVis);\n"
 		"	// Gamma correction (linear to sRGB)\n"
-		"	finalColor = pow(abs(finalColor), 1.0 / 2.2);\n"
+		"	if (c13.x >= 0.5) finalColor = sqrt(abs(finalColor));\n"
 		"	return float4(finalColor, 1.0);\n"
 		"};\n";
 
@@ -947,6 +981,7 @@ bool W3DDeferredRenderer::compilePointLightShader()
 		"float4 c6 : register(c6);\n"   // invViewProj row 3
 		"float4 c7 : register(c7);\n"   // lightPos.xyz + range.w
 		"float4 c8 : register(c8);\n"   // lightColor.rgb
+		"float4 c13 : register(c13);\n"
 		// ---- octahedral normal decoding ----
 		"float3 octDecode(float2 e) {\n"
 		"  float2 p = e * 2.0 - 1.0;\n"
@@ -961,6 +996,7 @@ bool W3DDeferredRenderer::compilePointLightShader()
 		"  float4 rt1 = tex2D(gbuf1, input.tex0);\n"
 		"  float4 rt2 = tex2D(gbuf2, input.tex0);\n"
 		"  float3 albedo = rt0.rgb;\n"
+		"  albedo *= albedo;\n"
 		"  float metallic = rt0.a;\n"
 		"  float3 N = octDecode(rt1.rg);\n"
 		"  float roughness = rt1.b;\n"
@@ -1001,7 +1037,7 @@ bool W3DDeferredRenderer::compilePointLightShader()
 		"  float3 diffuse = albedo * kD;\n"
 		"  float3 direct = (diffuse + spec) * c8.rgb * NdotL * atten;\n"
 		"  // Gamma correction\n"
-		"  direct = pow(abs(direct), 1.0 / 2.2);\n"
+		"  if (c13.x >= 0.5) direct = sqrt(abs(direct));\n"
 		"  return float4(direct, 0.0);\n"
 		"};\n";
 
@@ -1073,6 +1109,7 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseShadowResources();
 	releaseAOResources();
 	releaseAOPassShaders();
+	releaseIBLResources();
 
 	if (m_prevCleanupHook) {
 		m_prevCleanupHook->ReleaseResources();
@@ -1137,6 +1174,7 @@ void W3DDeferredRenderer::ReAcquireResources()
 	if (!compileAOPassShaders()) {
 		DIAG_LOG(("W3DDeferredRenderer: failed AO shader compile.\n"));
 	}
+	createIBLResources();
 }
 
 // ============================================================================
@@ -1192,7 +1230,7 @@ bool W3DDeferredRenderer::compileToneMapShader()
 	"  // Reinhard tone map\n"
 	"  float3 ldr = hdrColor / (hdrColor + 1.0);\n"
 	"  // Gamma correction (linear to sRGB)\n"
-	"  ldr = pow(abs(ldr), 1.0 / 2.2);\n"
+		"  ldr = sqrt(abs(ldr));\n"
 	"  return float4(ldr, 1.0);\n"
 	"};\n"
 	;
@@ -1361,6 +1399,10 @@ void W3DDeferredRenderer::releaseShadowResources()
 bool W3DDeferredRenderer::beginShadowMapPass(
 	const Vector3 &sunDir, const Matrix4x4 &camView)
 {
+	// Save main camera view/proj before overriding for shadow rendering.
+	DX8Wrapper::Get_Transform(D3DTS_VIEW, m_savedView);
+	DX8Wrapper::Get_Transform(D3DTS_PROJECTION, m_savedProj);
+
 	if (!m_shadowDepthRT) return false;
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) return false;
@@ -1401,6 +1443,12 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
 	m_shadowProj = *(Matrix4x4*)&d3dP;
+
+	// Set shadow view/proj as active transforms so scene depth is
+	// written from the light's perspective, not the main camera's.
+	DX8Wrapper::Set_Transform(D3DTS_VIEW, m_shadowView);
+	DX8Wrapper::Set_Transform(D3DTS_PROJECTION, m_shadowProj);
+
 	return true;
 }
 
@@ -1422,6 +1470,10 @@ void W3DDeferredRenderer::endShadowMapPass()
 		m_savedDS = NULL;
 	}
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+
+	// Restore main camera view/proj transforms.
+	DX8Wrapper::Set_Transform(D3DTS_VIEW, m_savedView);
+	DX8Wrapper::Set_Transform(D3DTS_PROJECTION, m_savedProj);
 }
 
 // ============================================================================
@@ -1441,6 +1493,9 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"sampler gbuf1 : register(s1);\n"
 		"sampler gbuf2 : register(s2);\n"
 		"sampler sShadow : register(s4);\n"
+		"samplerCUBE sIblDiff : register(s5);\n"
+		"samplerCUBE sIblSpec : register(s6);\n"
+		"sampler2D sBrdfLUT : register(s7);\n"
 		"float4 c0 : register(c0);\n"
 		"float4 c1 : register(c1);\n"
 		"float4 c2 : register(c2);\n"
@@ -1448,7 +1503,8 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"float4 c4 : register(c4);\n"
 		"float4 c5 : register(c5);\n"
 		"float4 c6 : register(c6);\n"
-		"float4 c9 : register(c9);\n"
+		"float4x4 shadowVP : register(c9);\n"
+		"float4 c13 : register(c13);\n"
 		"float3 octDecode(float2 e) {\n"
 		"\tfloat2 p = e * 2.0 - 1.0;\n"
 		"\tfloat3 n = float3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));\n"
@@ -1461,6 +1517,7 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"\tfloat4 rt1 = tex2D(gbuf1, input.tex0);\n"
 		"\tfloat4 rt2 = tex2D(gbuf2, input.tex0);\n"
 		"\tfloat3 albedo = rt0.rgb;\n"
+		"\talbedo *= albedo;\n"
 		"\tfloat metallic = rt0.a;\n"
 		"\tfloat3 N = octDecode(rt1.rg);\n"
 		"\tfloat roughness = rt1.b;\n"
@@ -1479,7 +1536,7 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"\tfloat3 L = -c0.xyz;\n"
 		"\tfloat3 H = normalize(V + L);\n"
 	"\t// Shadow map PCF 2x2\n"
-	"\tfloat4 shadProj = mul(float4(worldPos.xyz, 1), c9);\n"
+	"\tfloat4 shadProj = mul(float4(worldPos.xyz, 1), shadowVP);\n"
 	"\tfloat2 shadUV = shadProj.xy / shadProj.w;\n"
 	"\tshadUV = shadUV * 0.5 + 0.5;\n"
 	"\tfloat shadDepth = shadProj.z / shadProj.w;\n"
@@ -1510,10 +1567,16 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"\tfloat3 spec = D*F*G/max(4*NdotV*NdotL,0.001);\n"
 		"\tfloat3 kD = (1-F)*(1-metallic);\n"
 		"\tfloat3 direct = (albedo*kD + spec) * c1.rgb * NdotL * shadow;\n"
-		"\tfloat3 ambient = c2.www * albedo * 0.5;\n"
-		"\tfloat3 final = ambient + direct + emissive;\n"
+		"\tfloat3 R = reflect(-V, N);\n"
+		"\tfloat3 diffuseIBL = texCUBE(sIblDiff, N).rgb * c2.w * 0.25;\n"
+		"\tfloat3 specularIBL = texCUBElod(sIblSpec, float4(R, roughness * 7.0)).rgb * 0.3;\n"
+		"\tfloat2 brdf = tex2D(sBrdfLUT, float2(NdotV, roughness)).rg;\n"
+		"\tfloat3 F0_ibl = lerp(float3(0.04,0.04,0.04), albedo, metallic);\n"
+		"\tfloat3 specIBL = specularIBL * (F0_ibl * brdf.x + brdf.y);\n"
+		"\tfloat3 ambient = diffuseIBL * albedo;\n"
+		"\tfloat3 final = ambient + direct + specIBL + emissive;\n"
 		"\t// Gamma\n"
-		"\tfinal = pow(abs(final), 1.0/2.2);\n"
+		"\tif (c13.x >= 0.5) final = sqrt(abs(final));\n"
 		"\treturn float4(final, 1.0);\n"
 		"};\n"
 	;
@@ -1579,19 +1642,28 @@ bool W3DDeferredRenderer::compileAOPassShaders()
 		"sampler sDepth : register(s0);\n"
 		"sampler sNormal : register(s1);\n"
 		"float4 c4 : register(c4);\n"
+	"float hash(float2 p) { return frac(sin(dot(p,float2(12.9898,78.233)))*43758.5453); }\n"
 		"float4 main(PS_IN i):COLOR {\n"
 		"  float depth = tex2D(sDepth, i.tex0).r;\n"
 		"  float3 N = normalize(tex2D(sNormal, i.tex0).rgb * 2 - 1);\n"
-		"  float2 xy = i.tex0 * 2 - 1;\n"
-		"  // Simple AO: 4-sample at screen-space offset\n"
-		"  float2 off[4] = { {1,0}, {-1,0}, {0,1}, {0,-1} };\n"
-		"  float radius = c4.x; float ao = 0;\n"
+		"  // 16-sample SSAO: random-rotated 4 dirs x 4 radial steps\n"
+		"  float radius = c4.x * 0.5 / max(depth, 0.001);\n"
+		"  float2 ts = float2(1.0/1920, 1.0/1080);\n"
+		"  float angle = hash(i.tex0) * 6.283;\n"
+		"  float s = sin(angle), c = cos(angle);\n"
+		"  float ao = 0;\n"
 		"  for (int j = 0; j < 4; j++) {\n"
-		"    float2 uv = i.tex0 + off[j] * radius * (1.0/1920);\n"
-		"    float d = tex2D(sDepth, uv).r;\n"
-		"    ao += max(0, depth - d);\n"
+		"    float2 dir = float2(cos(j*1.571), sin(j*1.571));\n"
+		"    float2 rd = float2(dir.x*c - dir.y*s, dir.x*s + dir.y*c);\n"
+		"    for (int k = 1; k <= 4; k++) {\n"
+		"      float2 uv = i.tex0 + rd * (radius * k * 0.2) * ts;\n"
+		"      float d = tex2D(sDepth, uv).r;\n"
+		"      float diff = depth - d;\n"
+		"      float range = abs(diff) < radius * 0.5 ? 1.0 : 0.0;\n"
+		"      ao += max(0, diff / (depth + 0.001)) * range;\n"
+		"    }\n"
 		"  }\n"
-		"  return float4(saturate(1 - ao * c4.y), 0, 0, 1);\n"
+		"  return float4(saturate(1 - ao * c4.y / 16), 0, 0, 1);\n"
 		"};\n"
 	;
 	ID3DXBuffer *c = NULL; ID3DXBuffer *e = NULL;
@@ -1630,7 +1702,7 @@ bool W3DDeferredRenderer::compileAOPassShaders()
 	if (dev) hr = dev->CreatePixelShader((const DWORD*)c->GetBufferPointer(), &m_ssaoBlurPS);
 	c->Release();
 	if (FAILED(hr) || !m_ssaoBlurPS) { m_ssaoBlurPS = NULL; return false; }
-	DIAG_LOG(("W3DDeferredRenderer: SSAO shaders compiled.\n"));
+	DIAG_LOG(("W3DDeferredRenderer: SSAO shaders compiled (STEP4: 16-sample+random-rot).\n"));
 	return true;
 }
 
@@ -1687,4 +1759,133 @@ void W3DDeferredRenderer::computeAO()
 	dev->SetTexture(0,NULL); dev->SetTexture(1,NULL);
 
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8*)NULL);
+}
+
+// ============================================================================
+// W3DDeferredRenderer::createIBLResources
+// ============================================================================
+bool W3DDeferredRenderer::createIBLResources()
+{
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// Try loading pre-baked DDS files first (best quality).
+	// Path: ART\Textures\  relative to game working directory.
+	IDirect3DCubeTexture9 *diffCube = NULL;
+	IDirect3DCubeTexture9 *specCube = NULL;
+	IDirect3DTexture9 *brdfTex = NULL;
+	HRESULT hrDiff = D3DXCreateCubeTextureFromFile(dev9, "ART\\Textures\\env_irradiance.dds", &diffCube);
+	HRESULT hrSpec = D3DXCreateCubeTextureFromFile(dev9, "ART\\Textures\\env_prefiltered.dds", &specCube);
+	HRESULT hrBrdf = D3DXCreateTextureFromFile(dev9, "ART\\Textures\\env_brdf_lut.dds", &brdfTex);
+	if (SUCCEEDED(hrDiff) && SUCCEEDED(hrSpec) && SUCCEEDED(hrBrdf) && diffCube && specCube && brdfTex) {
+		m_iblDiffuseCube = diffCube;
+		m_iblSpecularCube = specCube;
+		m_brdfLUT = brdfTex;
+		m_iblAvailable = true;
+		DIAG_LOG(("W3DDeferredRenderer: IBL loaded from DDS files (OK).\n"));
+		return true;
+	}
+	// Release partial loads if some files failed.
+	if (diffCube) diffCube->Release();
+	if (specCube) specCube->Release();
+	if (brdfTex) brdfTex->Release();
+	DIAG_LOG(("W3DDeferredRenderer: IBL DDS files not found, using CPU fallback.\n"));
+
+	// --- Fallback: CPU procedural generation ---
+
+	// Diffuse cubemap (32x32): gradient sky
+	diffCube = NULL;
+	HRESULT hr = dev9->CreateCubeTexture(32, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &diffCube, NULL);
+	if (FAILED(hr) || !diffCube) { DIAG_LOG(("W3DDeferredRenderer: IBL diffuse fallback failed.\n")); return false; }
+	for (int f = 0; f < 6; f++) {
+		D3DLOCKED_RECT lr; D3DCUBEMAP_FACES face = (D3DCUBEMAP_FACES)f;
+		if (FAILED(diffCube->LockRect(face, 0, &lr, NULL, 0))) continue;
+		for (int y = 0; y < 32; y++) {
+			unsigned int *pix = (unsigned int*)((char*)lr.pBits + y * lr.Pitch);
+			for (int x = 0; x < 32; x++) {
+				float fx = (x+0.5f)/16.0f-1.0f, fy = (y+0.5f)/16.0f-1.0f;
+				Vector3 dir;
+				switch (f) {
+					case 0: dir = Vector3( 1,-fy,-fx); break; case 1: dir = Vector3(-1,-fy, fx); break;
+					case 2: dir = Vector3( fx, 1, fy); break; case 3: dir = Vector3( fx,-1,-fy); break;
+					case 4: dir = Vector3( fx,-fy, 1); break; case 5: dir = Vector3(-fx,-fy,-1); break;
+				}
+				dir.Normalize();
+				float u = max(dir.Z,0.0f);
+				unsigned char c = (unsigned char)((0.4f+0.4f*u)*255);
+				pix[x] = 0xFF000000 | (c<<16) | ((unsigned char)((0.6f+0.3f*u)*255)<<8) | (unsigned char)((0.8f+0.1f*u)*255);
+			}
+		}
+		diffCube->UnlockRect(face, 0);
+	}
+	m_iblDiffuseCube = diffCube;
+
+	// Specular cubemap (128x128, 7 mips): gradient + sun highlight
+	specCube = NULL;
+	hr = dev9->CreateCubeTexture(128, 7, D3DUSAGE_AUTOGENMIPMAP, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &specCube, NULL);
+	if (FAILED(hr) || !specCube) { DIAG_LOG(("W3DDeferredRenderer: IBL specular fallback failed.\n")); releaseIBLResources(); return false; }
+	for (int f2 = 0; f2 < 6; f2++) {
+		D3DLOCKED_RECT lr; D3DCUBEMAP_FACES face = (D3DCUBEMAP_FACES)f2;
+		if (FAILED(specCube->LockRect(face, 0, &lr, NULL, 0))) continue;
+		for (int y = 0; y < 128; y++) {
+			unsigned int *pix = (unsigned int*)((char*)lr.pBits + y * lr.Pitch);
+			for (int x = 0; x < 128; x++) {
+				float fx = (x+0.5f)/64.0f-1.0f, fy = (y+0.5f)/64.0f-1.0f;
+				Vector3 dir;
+				switch (f2) {
+					case 0: dir = Vector3( 1,-fy,-fx); break; case 1: dir = Vector3(-1,-fy, fx); break;
+					case 2: dir = Vector3( fx, 1, fy); break; case 3: dir = Vector3( fx,-1,-fy); break;
+					case 4: dir = Vector3( fx,-fy, 1); break; case 5: dir = Vector3(-fx,-fy,-1); break;
+				}
+				dir.Normalize();
+				float u = max(dir.Z,0.0f);
+				float sh = pow(max(0.0f,dir.Z),64.0f);
+				int r = (int)((0.4f+0.4f*u+sh)*255); if (r>255) r=255;
+				int g = (int)((0.6f+0.3f*u+sh)*255); if (g>255) g=255;
+				int b = (int)((0.8f+0.1f*u+sh)*255); if (b>255) b=255;
+				pix[x] = 0xFF000000 | (r<<16) | (g<<8) | b;
+			}
+		}
+		specCube->UnlockRect(face, 0);
+	}
+	specCube->GenerateMipSubLevels();
+	m_iblSpecularCube = specCube;
+
+	// BRDF LUT (256x256): analytical approximation
+	brdfTex = NULL;
+	hr = dev9->CreateTexture(256, 256, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &brdfTex, NULL);
+	if (FAILED(hr) || !brdfTex) { DIAG_LOG(("W3DDeferredRenderer: IBL BRDF LUT fallback failed.\n")); releaseIBLResources(); return false; }
+	D3DLOCKED_RECT lr;
+	if (SUCCEEDED(brdfTex->LockRect(0, &lr, NULL, 0))) {
+		for (int y = 0; y < 256; y++) {
+			float rough = (y+0.5f)/256.0f;
+			unsigned int *pix = (unsigned int*)((char*)lr.pBits + y * lr.Pitch);
+			for (int x = 0; x < 256; x++) {
+				float NdotV = (x+0.5f)/256.0f;
+				float a = rough*rough;
+				float scale = 1.0f - a*0.5f;
+				float biasv = a*pow(1.0f-NdotV,3.0f)*0.5f;
+				pix[x] = 0xFF000000 | ((unsigned char)(scale*255)<<16) | ((unsigned char)(biasv*255)<<8) | 0;
+			}
+		}
+		brdfTex->UnlockRect(0);
+	}
+	m_brdfLUT = brdfTex;
+
+	m_iblAvailable = true;
+	DIAG_LOG(("W3DDeferredRenderer: IBL procedural fallback created (OK).\n"));
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::releaseIBLResources
+// ============================================================================
+void W3DDeferredRenderer::releaseIBLResources()
+{
+	if (m_iblDiffuseCube) { m_iblDiffuseCube->Release(); m_iblDiffuseCube = NULL; }
+	if (m_iblSpecularCube) { m_iblSpecularCube->Release(); m_iblSpecularCube = NULL; }
+	if (m_brdfLUT) { m_brdfLUT->Release(); m_brdfLUT = NULL; }
+	m_iblAvailable = false;
+	DIAG_LOG(("W3DDeferredRenderer: IBL resources released.\n"));
 }

@@ -216,6 +216,8 @@ private:
 	Matrix4x4 m_shadowViewProj;				///< Sun's view-projection matrix (for shader).
 	Matrix4x4 m_shadowView;					///< Sun's view matrix (shadow camera).
 	Matrix4x4 m_shadowProj;					///< Sun's projection matrix (shadow camera).
+	Matrix4x4 m_savedView;					///< Saved main view matrix (restored after shadow pass).
+	Matrix4x4 m_savedProj;					///< Saved main projection matrix (restored after shadow pass).
 	IDirect3DPixelShader9 *m_sunLightShadowPS; ///< Sunlight PS with shadow PCF 2x2.
 	IDirect3DTexture9 *m_shadowDepthStencilTex; ///< D24X8 depth-stencil texture for shadow map.
 	bool m_shadowDepthStencilAvailable;		///< D24X8 depth-stencil created OK.
@@ -231,6 +233,13 @@ private:
 	bool m_ssaoAvailable;
 	IDirect3DPixelShader9 *m_ssaoPS;
 	IDirect3DPixelShader9 *m_ssaoBlurPS;
+	// ---- IBL resources (CPU-generated procedural cubemaps) ----
+	bool createIBLResources();
+	void releaseIBLResources();
+	IDirect3DCubeTexture9 *m_iblDiffuseCube;
+	IDirect3DCubeTexture9 *m_iblSpecularCube;
+	IDirect3DTexture9 *m_brdfLUT;
+	bool m_iblAvailable;
 
 };
 

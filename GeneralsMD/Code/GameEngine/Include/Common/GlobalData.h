@@ -147,6 +147,10 @@ public:
 		Bool m_usePBRTextures;	///< enable PBR texture pipeline (normal/roughness/metalness)
 		Bool m_useLegacyPBR;		///< enable legacy PBR fallback for old models without _pbr.dds
 		Int m_pbrDebugMode;			///< PBR debug visualization mode: 0=off,1=metalness,2=roughness,3=AO,4=normals,5=diffIBL,6=specIBL,7=direct
+	Bool m_usePBRMaterials;		///< enable PBR materials for units/buildings (INI: UsePBRMaterials)
+	Bool m_useNormalMaps;		///< enable normal mapping (INI: UseNormalMaps)
+	Int m_pbrLightCount;		///< max dynamic lights in PBR (1-8, INI: PBRLightCount)
+	Bool m_usePS30;				///< use PS 3.0 path when available (INI: UsePS30)
 
 	Int m_featherWater;
 
