@@ -41,13 +41,16 @@
 // ----------------------------------------------------------------------------
 static void diagWrite(const char *fmt, ...)
 {
+	// Persistent file handle — avoids fopen/fclose per-call overhead.
+	static FILE *s_log = NULL;
+	if (!s_log) {
+		s_log = fopen("E:\\GeneralsMD_DeferredRT.log", "a");
+		if (s_log) setvbuf(s_log, NULL, _IONBF, 0);
+	}
+	if (!s_log) return;
 	va_list args;
 	va_start(args, fmt);
-	FILE *f = fopen("E:\\GeneralsMD_DeferredRT.log", "a");
-	if (f) {
-		vfprintf(f, fmt, args);
-		fclose(f);
-	}
+	vfprintf(s_log, fmt, args);
 	va_end(args);
 }
 #define DIAG_LOG(x)  do { diagWrite x; } while (0)

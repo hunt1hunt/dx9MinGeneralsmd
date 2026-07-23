@@ -1860,32 +1860,12 @@ void DX8TextureCategoryClass::Render(void)
 					}
 					float gbufPBR[4] = { r, m, 0, 0 };
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, gbufPBR, 1);
-					// === DIAG: Causal chain trace - source + values + fopen status ===
-					{
-						static int sTotal = 0, sOv = 0, sLeg = 0, sDef = 0;
-						static int sTrOv = 0, sTrLeg = 0, sTrDef = 0;
-						static int sFopenFail = 0;
+					// DIAG: lightweight cumulative counters (no file I/O in hot path)
+					{	static int sTotal = 0, sOv = 0, sLeg = 0, sDef = 0;
 						sTotal++;
 						if (src == 0) sOv++; else if (src == 1) sLeg++; else sDef++;
-						bool doTrace = false;
-						if      (src == 0 && sTrOv < 5) { sTrOv++; doTrace = true; }
-						else if (src == 1 && sTrLeg < 5) { sTrLeg++; doTrace = true; }
-						else if (src == 2 && sTrDef < 5) { sTrDef++; doTrace = true; }
-						if (doTrace || sTotal % 500 == 0) {
-							FILE *f = fopen("E:/GeneralsMD_DeferredRT.log", "a");
-							if (f) {
-								if (sFopenFail > 0) { fprintf(f, "GBUF_FOPEN_FAIL: recovered after %d failures\n", sFopenFail); sFopenFail = 0; }
-								if (doTrace)
-									fprintf(f, "GBUF_DIAG src=%d mesh=\"%s\" r=%.2f m=%.2f | cumul: total=%d ov=%d leg=%d def=%d\n",
-										src, mesh->Get_Name(), r, m, sTotal, sOv, sLeg, sDef);
-								else
-									fprintf(f, "GBUF_SUMMARY total=%d override=%d legacy=%d default=%d\n",
-										sTotal, sOv, sLeg, sDef);
-								fclose(f);
-							} else {
-								sFopenFail++;
-							}
-						}
+						// (Diagnostic counters maintained in memory for debugging.)
+						// Note: file I/O removed from hot path — was causing GPU pipeline stalls.
 					}
 				}
 

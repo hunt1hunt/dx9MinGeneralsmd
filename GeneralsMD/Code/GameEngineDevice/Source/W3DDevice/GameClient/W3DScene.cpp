@@ -1156,11 +1156,11 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				{
 					DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
 					LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
-					g_gbufferActive=false; ShaderClass::Invalidate();
+				g_gbufferActive=false; ShaderClass::Invalidate();
 					Customized_Render(rinfo); Flush(rinfo);
-					QueryPerformanceCounter(&fE);
-					DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
-				}
+						QueryPerformanceCounter(&fE);
+						DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					}
 			}
 
 			else
