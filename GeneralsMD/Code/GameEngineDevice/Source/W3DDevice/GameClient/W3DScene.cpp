@@ -1160,6 +1160,8 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					Customized_Render(rinfo); Flush(rinfo);
 						QueryPerformanceCounter(&fE);
 						DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
+						g_theW3DDeferredRenderer->aoCompositePass();
+						g_theW3DDeferredRenderer->iblCompositePass();
 					}
 			}
 

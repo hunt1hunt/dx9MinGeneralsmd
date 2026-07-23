@@ -122,6 +122,14 @@ public:
 	// ---- SSAO pass lifecycle ----
 	void computeAO();
 
+	// ---- Forward+ compositing passes (screen-space overlays) ----
+	void aoCompositePass();
+	void iblCompositePass();
+	bool createCompositeShaders();
+	void releaseCompositeShaders();
+	IDirect3DPixelShader9 *m_aoCompositePS;
+	IDirect3DPixelShader9 *m_iblCompositePS;
+
 	// ---- Shadow map pass lifecycle ----
 
 	/// Bind the shadow map RT, set orthographic camera from sun direction.

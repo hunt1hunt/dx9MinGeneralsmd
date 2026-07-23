@@ -204,7 +204,9 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_stencilSphereVB(NULL),
 	m_stencilSphereIB(NULL),
 	m_stencilSphereVerts(0),
-	m_stencilSphereTris(0)
+	m_stencilSphereTris(0),
+	m_aoCompositePS(NULL),
+	m_iblCompositePS(NULL)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -392,6 +394,7 @@ void W3DDeferredRenderer::init()
 	// Create IBL procedural cubemaps (best-effort, non-fatal if fails).
 	createIBLResources();
 	createStencilSphere();
+	createCompositeShaders();
 
 	// Step 5: Log INI switch status.
 	DIAG_LOG(("STEP5: INI UsePBRMaterials=%d UseNormalMaps=%d PBRLightCount=%d UsePS30=%d UseIBL=%d\n",
@@ -427,6 +430,7 @@ void W3DDeferredRenderer::shutdown()
 	releaseAOPassShaders();
 	releaseIBLResources();
 	releaseStencilSphere();
+	releaseCompositeShaders();
 	m_available = false;
 	m_initialized = false;
 }
@@ -1197,6 +1201,7 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseAOPassShaders();
 	releaseIBLResources();
 	releaseStencilSphere();
+	releaseCompositeShaders();
 
 	if (m_prevCleanupHook) {
 		m_prevCleanupHook->ReleaseResources();
@@ -1263,6 +1268,7 @@ void W3DDeferredRenderer::ReAcquireResources()
 	}
 	createIBLResources();
 	createStencilSphere();
+	createCompositeShaders();
 }
 
 // ============================================================================
@@ -1896,6 +1902,7 @@ bool W3DDeferredRenderer::createIBLResources()
 	hr = dev9->CreateCubeTexture(128, 7, D3DUSAGE_AUTOGENMIPMAP, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &specCube, NULL);
 	if (FAILED(hr) || !specCube) { DIAG_LOG(("W3DDeferredRenderer: IBL specular fallback failed.\n")); releaseIBLResources(); return false; }
 	releaseStencilSphere();
+	releaseCompositeShaders();
 	for (int f2 = 0; f2 < 6; f2++) {
 		D3DLOCKED_RECT lr; D3DCUBEMAP_FACES face = (D3DCUBEMAP_FACES)f2;
 		if (FAILED(specCube->LockRect(face, 0, &lr, NULL, 0))) continue;
@@ -1928,6 +1935,7 @@ bool W3DDeferredRenderer::createIBLResources()
 	hr = dev9->CreateTexture(256, 256, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &brdfTex, NULL);
 	if (FAILED(hr) || !brdfTex) { DIAG_LOG(("W3DDeferredRenderer: IBL BRDF LUT fallback failed.\n")); releaseIBLResources(); return false; }
 	releaseStencilSphere();
+	releaseCompositeShaders();
 	D3DLOCKED_RECT lr;
 	if (SUCCEEDED(brdfTex->LockRect(0, &lr, NULL, 0))) {
 		for (int y = 0; y < 256; y++) {
@@ -2115,4 +2123,159 @@ void W3DDeferredRenderer::endStencilLight()
 	DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE,
 		D3DCOLORWRITEENABLE_RED|D3DCOLORWRITEENABLE_GREEN|
 		D3DCOLORWRITEENABLE_BLUE|D3DCOLORWRITEENABLE_ALPHA);
+}
+
+// ============================================================================
+// Forward+ compositing: AO modulate over forward-lit back buffer
+// ============================================================================
+static const char s_aoComposite_ps[] =
+	"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+	"sampler sAO : register(s0);\n"
+	"float4 main(PS_IN i):COLOR {\n"
+	"  float ao = tex2D(sAO, i.tex0).r;\n"
+	"  return float4(0.7 + 0.3 * ao, 0.7 + 0.3 * ao, 0.7 + 0.3 * ao, 1.0);\n"
+	"};\n";
+
+void W3DDeferredRenderer::aoCompositePass()
+{
+	if (!m_aoCompositePS || !m_ssaoAvailable || !m_aoBlurredRT) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+	// Bind blurred AO texture
+	dev->SetTexture(0, m_aoBlurredRT->Peek_D3D_Base_Texture());
+	dev->SetPixelShader(m_aoCompositePS);
+	dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+	dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+	dev->SetIndices(m_quadIB);
+	// Modulate blend: dest *= (0.7 + 0.3 * ao)
+	DWORD oldSrc, oldDst, oldAlpha, oldZen, oldZw;
+	dev->GetRenderState(D3DRS_SRCBLEND, &oldSrc);
+	dev->GetRenderState(D3DRS_DESTBLEND, &oldDst);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
+	dev->GetRenderState(D3DRS_ZENABLE, &oldZen);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &oldZw);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
+	dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_SRCCOLOR);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+	dev->SetRenderState(D3DRS_SRCBLEND, oldSrc);
+	dev->SetRenderState(D3DRS_DESTBLEND, oldDst);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
+	dev->SetRenderState(D3DRS_ZENABLE, oldZen);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZw);
+	dev->SetTexture(0, NULL);
+	dev->SetPixelShader(NULL);
+}
+
+// ============================================================================
+// Forward+ compositing: IBL diffuse additive
+// ============================================================================
+static const char s_iblComposite_ps[] =
+	"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+	"sampler sDepth : register(s0);\n"
+	"sampler sNorm : register(s1);\n"
+	"samplerCUBE sIblDiff : register(s2);\n"
+	"sampler2D sAlbedo : register(s3);\n"
+	"float4 c0 : register(c0);\n"  // invViewProj row 0
+	"float4 c1 : register(c1);\n"
+	"float4 c2 : register(c2);\n"
+	"float4 c3 : register(c3);\n"
+	"float4 c4 : register(c4);\n"  // ambientIntensity.w + IBL strength
+	"float4 main(PS_IN i):COLOR {\n"
+	"  float depth = tex2D(sDepth, i.tex0).r;\n"
+	"  if (depth > 0.999) return float4(0,0,0,0);\n"
+	"  float3 N = normalize(tex2D(sNorm, i.tex0).rgb * 2 - 1);\n"
+	"  float3 albedo = tex2D(sAlbedo, i.tex0).rgb;\n"
+	"  albedo *= albedo;\n"
+	"  float3 diffIBL = texCUBE(sIblDiff, N).rgb;\n"
+	"  float3 result = diffIBL * albedo * c4.w;\n"
+	"  return float4(result, 1.0);\n"
+	"};\n";
+
+void W3DDeferredRenderer::iblCompositePass()
+{
+	if (!m_iblCompositePS || !m_iblAvailable || !m_iblDiffuseCube) return;
+	if (!m_gbufferRT[0] || !m_gbufferRT[1] || !m_gbufferRT[2]) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev || !m_quadVB || !m_quadIB) return;
+	// Bind G-Buffer textures + IBL cubemap
+	dev->SetTexture(0, m_gbufferRT[2]->Peek_D3D_Base_Texture()); // depth
+	dev->SetTexture(1, m_gbufferRT[1]->Peek_D3D_Base_Texture()); // normal
+	dev->SetTexture(2, static_cast<IDirect3DBaseTexture8*>(m_iblDiffuseCube));
+	dev->SetTexture(3, m_gbufferRT[0]->Peek_D3D_Base_Texture()); // albedo
+	// Upload invViewProj for world pos reconstruction (c0-c3)
+	// Actually for IBL we only need normal direction, so skip.
+	// Use c4 for IBL strength
+	float c4[4] = { 0, 0, 0, 0.15f };
+	if (TheGlobalData && TheGlobalData->m_useIBL) c4[3] = 0.15f;
+	dev->SetPixelShaderConstantF(4, c4, 1);
+	dev->SetPixelShader(m_iblCompositePS);
+	dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+	dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+	dev->SetIndices(m_quadIB);
+	// Additive blend: backbuffer += IBL
+	DWORD oldSrc, oldDst, oldAlpha, oldZen, oldZw;
+	dev->GetRenderState(D3DRS_SRCBLEND, &oldSrc);
+	dev->GetRenderState(D3DRS_DESTBLEND, &oldDst);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
+	dev->GetRenderState(D3DRS_ZENABLE, &oldZen);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &oldZw);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+	dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+	dev->SetRenderState(D3DRS_SRCBLEND, oldSrc);
+	dev->SetRenderState(D3DRS_DESTBLEND, oldDst);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
+	dev->SetRenderState(D3DRS_ZENABLE, oldZen);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZw);
+	dev->SetTexture(0, NULL); dev->SetTexture(1, NULL);
+	dev->SetTexture(2, NULL); dev->SetTexture(3, NULL);
+	dev->SetPixelShader(NULL);
+}
+
+// ============================================================================
+// Compile composite shaders
+// ============================================================================
+bool W3DDeferredRenderer::createCompositeShaders()
+{
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+	ID3DXBuffer *c = NULL, *e = NULL;
+
+	HRESULT hr = D3DXCompileShader(s_aoComposite_ps, (UINT)strlen(s_aoComposite_ps),
+		NULL, NULL, "main", "ps_3_0", 0, &c, &e, NULL);
+	if (SUCCEEDED(hr) && c) {
+		dev9->CreatePixelShader((const DWORD*)c->GetBufferPointer(), &m_aoCompositePS);
+		c->Release();
+	}
+	if (!m_aoCompositePS) {
+		DIAG_LOG(("FWD+: AO composite PS failed.\n"));
+	}
+
+	c = NULL; e = NULL;
+	hr = D3DXCompileShader(s_iblComposite_ps, (UINT)strlen(s_iblComposite_ps),
+		NULL, NULL, "main", "ps_3_0", 0, &c, &e, NULL);
+	if (SUCCEEDED(hr) && c) {
+		dev9->CreatePixelShader((const DWORD*)c->GetBufferPointer(), &m_iblCompositePS);
+		c->Release();
+	}
+	if (!m_iblCompositePS) {
+		DIAG_LOG(("FWD+: IBL composite PS failed.\n"));
+	}
+
+	DIAG_LOG(("FWD+: Composite shaders %s.\n",
+		(m_aoCompositePS && m_iblCompositePS) ? "OK" : "partial"));
+	return (m_aoCompositePS != NULL);
+}
+
+void W3DDeferredRenderer::releaseCompositeShaders()
+{
+	if (m_aoCompositePS) { m_aoCompositePS->Release(); m_aoCompositePS = NULL; }
+	if (m_iblCompositePS) { m_iblCompositePS->Release(); m_iblCompositePS = NULL; }
 }
