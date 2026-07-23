@@ -1064,7 +1064,8 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 		{	//Regular rendering pass with no effects
 
 			// Deferred G-Buffer pass (when available and UseDeferredRendering=1)
-						if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable())
+						if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isAvailable()
+				&& !ShaderClass::Is_Backface_Culling_Inverted())
 			{
 				Vector3 sunDir(0,0,-1), sunColor(1,1,1), ambient(0.1f,0.1f,0.15f);
 				if (m_globalLight[0]) {
