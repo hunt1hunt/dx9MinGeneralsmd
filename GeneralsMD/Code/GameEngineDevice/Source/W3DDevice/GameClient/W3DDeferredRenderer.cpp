@@ -1812,7 +1812,22 @@ void W3DDeferredRenderer::computeAO()
 	dev->SetTexture(0, m_gbufferRT[2]->Peek_D3D_Base_Texture());
 	dev->SetTexture(1, m_gbufferRT[1]->Peek_D3D_Base_Texture());
 	dev->SetPixelShader(m_ssaoPS);
-	float p[4]={0.01f,4.0f,0,0}; dev->SetPixelShaderConstantF(4,p,1);
+	// SSAO strength from INI level (c4.x = radius, c4.y = occlusion accumulation multiplier)
+	{
+		float strength = 4.0f;	// level 2 default
+		if (TheGlobalData) {
+			Int lev = TheGlobalData->m_ssaoLevel;
+			if (lev < 1) lev = 1;
+			if (lev > 3) lev = 3;
+			switch (lev) {
+				case 1: strength = 2.0f; break;
+				case 2: strength = 4.0f; break;
+				case 3: strength = 8.0f; break;
+			}
+		}
+		float p[4]={0.01f, strength, 0, 0};
+		dev->SetPixelShaderConstantF(4,p,1);
+	}
 	dev->SetFVF(D3DFVF_XYZRHW|D3DFVF_TEX1);
 	dev->SetStreamSource(0,m_quadVB,0,sizeof(float)*6);
 	dev->SetIndices(m_quadIB);
@@ -2131,9 +2146,10 @@ void W3DDeferredRenderer::endStencilLight()
 static const char s_aoComposite_ps[] =
 	"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
 	"sampler sAO : register(s0);\n"
+	"float4 c0 : register(c0);\n"
 	"float4 main(PS_IN i):COLOR {\n"
 	"  float ao = tex2D(sAO, i.tex0).r;\n"
-	"  return float4(0.7 + 0.3 * ao, 0.7 + 0.3 * ao, 0.7 + 0.3 * ao, 1.0);\n"
+	"  return float4(c0.x + c0.y * ao, c0.x + c0.y * ao, c0.x + c0.y * ao, 1.0);\n"
 	"};\n";
 
 void W3DDeferredRenderer::aoCompositePass()
@@ -2144,10 +2160,26 @@ void W3DDeferredRenderer::aoCompositePass()
 	// Bind blurred AO texture
 	dev->SetTexture(0, m_aoBlurredRT->Peek_D3D_Base_Texture());
 	dev->SetPixelShader(m_aoCompositePS);
+	// Set composite constants from SSAO level (read from GlobalData)
+	{
+		float base = 0.70f, scale = 0.30f;	// level 2 default
+		if (TheGlobalData) {
+			Int lev = TheGlobalData->m_ssaoLevel;
+			if (lev < 1) lev = 1;
+			if (lev > 3) lev = 3;
+			switch (lev) {
+				case 1: base = 0.85f; scale = 0.15f; break;
+				case 2: base = 0.70f; scale = 0.30f; break;
+				case 3: base = 0.50f; scale = 0.50f; break;
+			}
+		}
+		float c0[4] = { base, scale, 0, 0 };
+		dev->SetPixelShaderConstantF(0, c0, 1);
+	}
 	dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
 	dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
 	dev->SetIndices(m_quadIB);
-	// Modulate blend: dest *= (0.7 + 0.3 * ao)
+	// Modulate blend: dest *= (base + scale * ao)
 	DWORD oldSrc, oldDst, oldAlpha, oldZen, oldZw;
 	dev->GetRenderState(D3DRS_SRCBLEND, &oldSrc);
 	dev->GetRenderState(D3DRS_DESTBLEND, &oldDst);

@@ -123,6 +123,7 @@ public:
 	Bool m_useDeferredRendering;	///< Enable deferred rendering path (G-Buffer + light pass)
 	Bool m_useShadowMap;		///< Enable shadow map in deferred rendering (default: true)
 	Bool m_useSSAO;			///< Enable SSAO in deferred rendering (default: false)
+	Int m_ssaoLevel;		///< SSAO quality level: 1=low, 2=medium, 3=high (default: 2)
 	Bool m_useHDR;			///< Enable HDR tone mapping in deferred rendering (default: true)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
@@ -154,6 +155,7 @@ public:
 	Bool m_useIBL;				///< enable IBL environment lighting (INI: UseIBL)
 
 	Int m_featherWater;
+	Int m_waterReflectionLevel;	///< Water reflection quality: 1=low, 2=medium, 3=high (default: 2)
 
 	// these are for WATER_TYPE_3 vertex animated water
 	enum { MAX_WATER_GRID_SETTINGS = 4 };

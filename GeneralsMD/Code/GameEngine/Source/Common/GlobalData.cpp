@@ -77,6 +77,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseDeferredRendering",				INI::parseBool,				NULL,			offsetof( GlobalData, m_useDeferredRendering ) },
 	{ "UseShadowMap",					INI::parseBool,				NULL,			offsetof( GlobalData, m_useShadowMap ) },
 	{ "UseSSAO",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useSSAO ) },
+	{ "SSAOLevel",						INI::parseInt,				NULL,			offsetof( GlobalData, m_ssaoLevel ) },
 	{ "UseHDR",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useHDR ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
@@ -121,6 +122,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "WaterType",									INI::parseInt,				NULL,			offsetof( GlobalData, m_waterType ) },
 	{ "FeatherWater",						  	INI::parseInt,				NULL,			offsetof( GlobalData, m_featherWater ) },
 	{ "ShowSoftWaterEdge",					INI::parseBool,				NULL,			offsetof( GlobalData, m_showSoftWaterEdge ) },
+	{ "WaterReflectionLevel",					INI::parseInt,				NULL,			offsetof( GlobalData, m_waterReflectionLevel ) },
 
 	// nasty ick, we need to save this data with a map and not hard code INI values
 	{ "VertexWaterAvailableMaps1",		INI::parseAsciiString,	NULL,		offsetof( GlobalData, m_vertexWaterAvailableMaps[ 0 ] ) },
@@ -716,6 +718,7 @@ GlobalData::GlobalData()
 	m_useDeferredRendering = FALSE;
 	m_useShadowMap = TRUE;
 	m_useSSAO = FALSE;
+	m_ssaoLevel = 2;
 	m_useHDR = TRUE;
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
@@ -742,6 +745,7 @@ GlobalData::GlobalData()
 	m_waterExtentY = 0.0f;
 	m_waterType = 0;
 	m_featherWater = FALSE;
+	m_waterReflectionLevel = 2;
 	m_showSoftWaterEdge = TRUE;	//display soft water edge
 	m_usingWaterTrackEditor = FALSE;
 	m_isWorldBuilder = FALSE;

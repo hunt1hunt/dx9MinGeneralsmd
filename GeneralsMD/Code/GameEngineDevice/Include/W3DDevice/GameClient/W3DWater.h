@@ -183,6 +183,8 @@ protected:
 	TextureClass * m_pReflectionTextures[MAX_WATER_HEIGHT_LEVELS]; ///< per-height reflection render targets
 	Real           m_reflectionHeights[MAX_WATER_HEIGHT_LEVELS];   ///< water heights for each reflection texture
 	Int            m_numReflectionHeights;                          ///< number of unique water height levels
+	Real           m_reflectionFactor;                              ///< reflection brightness multiplier (replaces REFLECTION_FACTOR)
+	Int            m_reflectionSize;                                ///< reflection render target size (replaces SEA_REFLECTION_SIZE)
 	//RenderObjClass	*m_skyBox;		///<box around level
 	//
 	RenderObjClass	*m_skyBox;		///<box around level

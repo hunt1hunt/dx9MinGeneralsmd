@@ -125,11 +125,11 @@ extern bool g_pbrInsideWaterRender;
 #define PATCH_SIZE 15		//number of vertices on patch edge.  Large patches may waste vertices off edge of screen.
 #define PATCH_UV_TILES	42	//number of times the bump map texture is tiled across patch (must be integer!).
 #define PATCH_SCALE (4.0f * MAP_XY_FACTOR)	//horizontal scale factor. Adjust this and size to get desired vertex density.
-#define SEA_REFLECTION_SIZE 256		//dimensions of reflection texture
+//#define SEA_REFLECTION_SIZE 256	//(replaced by m_reflectionSize)
+//#define REFLECTION_FACTOR 0.1f	//(replaced by m_reflectionFactor)
 
 #define SEA_BUMP_SCALE		(0.06f)		//scales the du/dv offsets stored in bump map (~ amount to perturb)
 #define BUMP_SIZE (50.f)
-#define REFLECTION_FACTOR 0.1f
 
 #define PATCH_WIDTH (PATCH_SIZE-1)	//internal defines
 #define PATCH_UV_SCALE	((Real)PATCH_UV_TILES/(Real)PATCH_WIDTH)	
@@ -296,7 +296,8 @@ void WaterRenderObjClass::setupJbaWaterShader(void)
 	m_pDev->SetSamplerState( 3, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );
 	m_pDev->SetSamplerState( 3, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
 	if (m_riverWaterPixelShader){
-		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, (const float*)&D3DXVECTOR4(REFLECTION_FACTOR, REFLECTION_FACTOR, REFLECTION_FACTOR, 1.0f), 1);
+		float refl[4] = { m_reflectionFactor, m_reflectionFactor, m_reflectionFactor, 1.0f };
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, refl, 1);
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_riverWaterPixelShader);
 	}
 }
@@ -380,6 +381,8 @@ WaterRenderObjClass::WaterRenderObjClass(void)
 			m_reflectionHeights[i] = 0.0f;
 		}
 	}
+	m_reflectionFactor = 0.1f;	// default, will be overridden from GlobalData in init()
+	m_reflectionSize = 256;		// default, will be overridden from GlobalData in init()
 	m_skyBox=NULL;
 	m_vertexBufferD3D=NULL;
 	m_indexBufferD3D=NULL;
@@ -1292,6 +1295,21 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 	m_meshVertexMaterialClass->Set_Lighting(true);
 
 	//
+	//
+	// init reflection quality from GlobalData INI setting
+	//
+	if (TheGlobalData) {
+		Int level = TheGlobalData->m_waterReflectionLevel;
+		if (level < 1) level = 1;
+		if (level > 3) level = 3;
+		switch (level) {
+			case 1: m_reflectionFactor = 0.05f; m_reflectionSize = 128; break;
+			case 2: m_reflectionFactor = 0.15f; m_reflectionSize = 256; break;
+			case 3: m_reflectionFactor = 0.30f; m_reflectionSize = 512; break;
+			default: m_reflectionFactor = 0.15f; m_reflectionSize = 256; break;
+		}
+	}
+
 	// assign the data from the WaterSettings[] global to the data for this
 	// render object (we at present only have one water plane)
 	//
@@ -1734,7 +1752,7 @@ void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 	for (i = 0; i < numUniqueHeights; i++) {
 		m_reflectionHeights[i] = uniqueHeights[i];
 		if (m_pReflectionTextures[i] == NULL) {
-			m_pReflectionTextures[i] = DX8Wrapper::Create_Render_Target(SEA_REFLECTION_SIZE, SEA_REFLECTION_SIZE);
+			m_pReflectionTextures[i] = DX8Wrapper::Create_Render_Target(m_reflectionSize, m_reflectionSize);
 		}
 	}
 	// Release extra textures if height count decreased from previous frame
@@ -3732,7 +3750,8 @@ void WaterRenderObjClass::setupFlatWaterShader(void)
 	m_pDev->SetSamplerState( 2, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );
 	m_pDev->SetSamplerState( 2, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
 	if (m_trapezoidWaterPixelShader){
-		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, (const float*)&D3DXVECTOR4(REFLECTION_FACTOR, REFLECTION_FACTOR, REFLECTION_FACTOR, 1.0f), 1);
+		float refl[4] = { m_reflectionFactor, m_reflectionFactor, m_reflectionFactor, 1.0f };
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(0, refl, 1);
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_trapezoidWaterPixelShader);
 	}
 }

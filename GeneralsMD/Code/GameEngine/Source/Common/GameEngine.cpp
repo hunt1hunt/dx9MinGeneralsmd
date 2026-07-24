@@ -525,6 +525,14 @@ void GameEngine::init( int argc, char *argv[] )
 								char *e = name + strlen(name) - 1;
 								while (e > name && (*e == ' ' || *e == '\t')) *e-- = '\0';
 								PBR_SetLegacyParam(name, rough, metal);
+								// Also parse WaterReflectionLevel / SSAOLevel from PBROverride.ini
+								if (TheWritableGlobalData) {
+									int tmpVal;
+									if (sscanf(s, " WaterReflectionLevel = %d", &tmpVal) == 1)
+										TheWritableGlobalData->m_waterReflectionLevel = tmpVal;
+									if (sscanf(s, " SSAOLevel = %d", &tmpVal) == 1)
+										TheWritableGlobalData->m_ssaoLevel = tmpVal;
+								}
 							}
 						}
 						line = next;
