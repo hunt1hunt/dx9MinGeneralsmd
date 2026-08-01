@@ -18,6 +18,12 @@ STATUS_*.md
 
 # Diagnostic & fix scripts
 _*.py
+
+# EXE protection tools — NOT FOR PUBLIC REPO
+Tools/RTSPacker/
+Tools/RTSKeyGen/
+Tools/RTSProtector/
+打包工具实施计划.md
 方案A_*.py
 
 # Other design/analysis artifacts

@@ -102,6 +102,7 @@ public:
 		DIRTY_BOUNDS							= 0x00000001,
 		DIRTY_PLANES							= 0x00000002,
 		DIRTY_VNORMALS							= 0x00000004,
+		DIRTY_TANGENTS							= 0x00000008,
 
 		SORT										= 0x00000010,
 		DISABLE_BOUNDING_BOX					= 0x00000020,
@@ -140,17 +141,26 @@ public:
 	int							Get_Vertex_Count(void) const								{ return VertexCount; }
 
 	const TriIndex*			Get_Polygon_Array(void)										{ return get_polys(); }
+	TriIndex*						Get_Polygon_Array(bool forWrite)								{ return get_polys(); }
 	Vector3 *					Get_Vertex_Array(void)										{ WWASSERT(Vertex); return Vertex->Get_Array(); }
 	const Vector3 *			Get_Vertex_Normal_Array(void);
+	Vector3 *				Get_Vertex_Normal_Array(bool forWrite);	// non-const for W3X loader
+	const Vector3 *			Get_Tangent_Array(void) const;
+	const Vector3 *			Get_Binormal_Array(void) const;
+	void							Set_Tangent_Array(Vector3 *tan, int count);
+	void							Set_Binormal_Array(Vector3 *bin, int count);
 	const Vector4 *			Get_Plane_Array(bool create = true);
 	void							Compute_Plane(int pidx,PlaneClass * set_plane) const;	
 	const uint32 *				Get_Vertex_Shade_Index_Array(bool create = true)	{ return get_shade_indices(create); }
 	const uint16 *				Get_Vertex_Bone_Links(void)								{ return get_bone_links(); }
+	uint16 *						Get_Vertex_Bone_Links(bool forWrite)						{ return get_bone_links(forWrite); }
 	uint8 *						Get_Poly_Surface_Type_Array(void)						{ WWASSERT(PolySurfaceType); return PolySurfaceType->Get_Array(); }
 	uint8							Get_Poly_Surface_Type(int poly_index) const;
 
 	void							Get_Bounding_Box(AABoxClass * set_box);
 	void							Get_Bounding_Sphere(SphereClass * set_sphere);
+	void							Set_Bounding_Box(const Vector3 &min, const Vector3 &max)			{ BoundBoxMin = min; BoundBoxMax = max; }
+	void							Set_Bounding_Sphere(const Vector3 &center, float radius)			{ BoundSphereCenter = center; BoundSphereRadius = radius; }
 
 	// exposed culling support
 	bool							Has_Cull_Tree(void)											{ return CullTree != NULL; }
@@ -209,6 +219,8 @@ protected:
 	virtual void				Compute_Plane_Equations(Vector4 * array);
 	virtual void				Compute_Vertex_Normals(Vector3 * array);
 	virtual void				Compute_Bounds(Vector3 * verts);
+	virtual void				Compute_Tangents_Lengyel(void);
+	virtual void				Compute_Tangents_MikkTSpace(void);
 	void							Generate_Culling_Tree(void);
 
 	// W3D chunk reading	
@@ -220,6 +232,7 @@ protected:
 	WW3DErrorType				read_vertex_influences(ChunkLoadClass & cload);
 	WW3DErrorType				read_vertex_shade_indices(ChunkLoadClass & cload);
 	WW3DErrorType				read_aabtree(ChunkLoadClass &cload);
+	WW3DErrorType				read_tangents(ChunkLoadClass &cload);
 
 	// functions to compute the deformed vertices of skins.
 	// Destination pointers MUST point to arrays large enough to hold all vertices
@@ -241,9 +254,11 @@ protected:
 	ShareBufferClass<TriIndex> *						Poly;
 	ShareBufferClass<Vector3> *						Vertex;
 	ShareBufferClass<Vector3> *						VertexNorm;
+	ShareBufferClass<Vector3> *						Tangent;	///< per-vertex tangent vectors (normal mapping)
+	ShareBufferClass<Vector3> *						Binormal;	///< per-vertex binormal vectors (normal mapping)
 	ShareBufferClass<Vector4> *						PlaneEq;
-	ShareBufferClass<uint32> *							VertexShadeIdx;
-	ShareBufferClass<uint16> *							VertexBoneLink;
+	ShareBufferClass<uint32> *						VertexShadeIdx;
+	ShareBufferClass<uint16> *						VertexBoneLink;
 	ShareBufferClass<uint8> *							PolySurfaceType;
 
 	Vector3													BoundBoxMin;

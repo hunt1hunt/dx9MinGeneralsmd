@@ -23,6 +23,8 @@
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "GameClient/Drawable.h"
+#include "GameLogic/Object.h"
+#include "Common/GlobalData.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "WW3D2/texture.h"
 #include "WW3D2/ww3dformat.h"
@@ -286,14 +288,28 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 			verts[vi].nz = vi < (int)meshData.normals.size() ? meshData.normals[vi].Z : 0;
 			verts[vi].u = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].U : 0;
 			verts[vi].v = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
+			// DIAG: dump a few vertices from the first submesh to verify data
+			if (si == 0 && vi < 4) {
+				DEBUG_LOG(("[W3X_P6]   vert[%d] pos=(%.2f,%.2f,%.2f) nrm=(%.2f,%.2f,%.2f) uv=(%.3f,%.3f) bone=(%.0f,%.2f)\n",
+					vi, verts[vi].x, verts[vi].y, verts[vi].z,
+					verts[vi].nx, verts[vi].ny, verts[vi].nz,
+					verts[vi].u, verts[vi].v,
+					verts[vi].boneIdx, verts[vi].boneWeight));
+			}
 			verts[vi].tx = vi < (int)meshData.tangents.size() ? meshData.tangents[vi].X : 0;
 			verts[vi].ty = vi < (int)meshData.tangents.size() ? meshData.tangents[vi].Y : 0;
 			verts[vi].tz = vi < (int)meshData.tangents.size() ? meshData.tangents[vi].Z : 0;
 			verts[vi].bx = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].X : 0;
 			verts[vi].by = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Y : 0;
 			verts[vi].bz = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Z : 0;
+			// RA3 shader: int BoneIndex = floor(blendindices.x * 2); WorldBones
+			// is laid out 2 float4 per bone ([2i]=quat, [2i+1]=offset), so the
+			// raw bone index b must be stored AS-IS: floor(b*2)=2b points to the
+			// bone's quat slot. Do NOT divide by 2.
 			verts[vi].boneIdx = hasBones ? (float)meshData.boneIndices[vi] : 0;
 			verts[vi].boneWeight = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
+			verts[vi].color = 0xFFFFFFFF;	// white vertex color (RA3 shader reads VertexColor)
+			verts[vi].u2 = 0; verts[vi].v2 = 0;	// TEXCOORD1 (RA3 texcoordNEW: zero)
 		}
 
 		// Build index array
@@ -341,12 +357,15 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		// that sub-parts use when they should render with the standard pipeline)
 		if (!meshData.fxShaderName.isEmpty() && outData.fxShaderName.isEmpty()
 			&& strcmp(meshData.fxShaderName.str(), "defaultw3d.fx") != 0) {
-			// Use the real RA3 shader. The W3X data references shaders by bare
-			// name, but the .fx files live under Shaders\RA3\; prepend the path
-			// so the file factory can resolve them.
-			// (w3x_diag.fx was a TEMP override to isolate pipeline issues.)
-			outData.fxShaderName = "Shaders\\RA3\\";
-			outData.fxShaderName.concat(meshData.fxShaderName);
+			// REAL RA3 PBR shader via SAS-free override (w3x_soviet.fx compiles
+			// VS_H_11skin + PS_H_ARPBR directly; objectssoviet.fx itself uses
+			// VS_H_Array[VSchooserExpr()] SAS dynamic selection which this D3DX9
+			// build rejects with X3116).
+			// (w3x_rastest.fx was the TEMP isolation test that proved the skinned
+			// VS + geometry + bones work — red model appeared, turret correct.)
+			outData.fxShaderName = "Shaders\\RA3\\w3x_soviet.fx";
+			//outData.fxShaderName = "Shaders\\RA3\\";
+			//outData.fxShaderName.concat(meshData.fxShaderName);
 			outData.techniqueIndex = meshData.techniqueIndex;
 			outData.constants = meshData.constants;
 		}
@@ -392,6 +411,8 @@ static IDirect3DVertexDeclaration9 *GetW3XVertexDecl(IDirect3DDevice9 *dev)
 			{0, 44, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 0},
 			{0, 56, D3DDECLTYPE_FLOAT1, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BLENDINDICES, 0},
 			{0, 60, D3DDECLTYPE_FLOAT1, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BLENDWEIGHT, 0},
+			{0, 64, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+			{0, 68, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
 			D3DDECL_END()
 		};
 		dev->CreateVertexDeclaration(decl, &s_w3xVertexDecl);
@@ -513,9 +534,17 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 	}
 
 	// Update the scene render object's transform every frame
-	if (m_renderObj && transformMtx) {
-		m_renderObj->SetWorldTransform(*transformMtx);
-		m_renderObj->Set_Transform(*transformMtx);
+	if (m_renderObj) {
+		if (transformMtx) {
+			m_renderObj->SetWorldTransform(*transformMtx);
+			m_renderObj->Set_Transform(*transformMtx);
+		}
+		// Faction/team color for RA3 RecolorColor (same source as W3DModelDraw).
+		// NOTE: uses day indicator color; could branch on TIME_OF_DAY_NIGHT.
+		Object *obj = draw->getObject();
+		if (obj) {
+			m_renderObj->SetRecolorColor((unsigned int)obj->getIndicatorColor());
+		}
 	}
 }
 

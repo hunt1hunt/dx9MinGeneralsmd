@@ -139,6 +139,8 @@ MeshGeometryClass::MeshGeometryClass(void) :
 	PlaneEq(NULL),
 	VertexShadeIdx(NULL),
 	VertexBoneLink(NULL),
+		Tangent(NULL),
+		Binormal(NULL),
 	BoundBoxMin(0,0,0),
 	BoundBoxMax(1,1,1),
 	BoundSphereCenter(0,0,0),
@@ -281,6 +283,8 @@ void MeshGeometryClass::Reset_Geometry(int polycount,int vertcount)
 	REF_PTR_RELEASE(PlaneEq);
 	REF_PTR_RELEASE(VertexShadeIdx);
 	REF_PTR_RELEASE(VertexBoneLink);
+	REF_PTR_RELEASE(Tangent);
+	REF_PTR_RELEASE(Binormal);
 	REF_PTR_RELEASE(CullTree);
 
 	PolyCount = polycount;
@@ -1447,10 +1451,84 @@ const Vector3 * MeshGeometryClass::Get_Vertex_Normal_Array(void)
 	if (Get_Flag(DIRTY_VNORMALS)) {
 		Compute_Vertex_Normals(get_vert_normals());
 	}
-	return get_vert_normals(); 
+	return get_vert_normals();
 #endif
 }
 
+
+/***********************************************************************************************
+ * MeshGeometryClass::Get_Vertex_Normal_Array -- returns writable normal array (for W3X loader)  *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   30/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+Vector3 * MeshGeometryClass::Get_Vertex_Normal_Array(bool forWrite)
+{
+#if (OPTIMIZE_VNORM_RAM)
+	_VNormArray.Uninitialised_Grow(VertexCount);
+	return &(_VNormArray[0]);
+#else
+	WWASSERT(VertexNorm);
+	if (Get_Flag(DIRTY_VNORMALS)) {
+		Compute_Vertex_Normals(get_vert_normals());
+	}
+	return get_vert_normals();
+#endif
+}
+
+
+/***********************************************************************************************
+ * MeshGeometryClass::Get_Tangent_Array -- returns tangent array                                 *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+const Vector3 * MeshGeometryClass::Get_Tangent_Array(void) const
+{
+	return Tangent ? Tangent->Get_Array() : NULL;
+}
+
+
+/***********************************************************************************************
+ * MeshGeometryClass::Get_Binormal_Array -- returns binormal array                               *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+const Vector3 * MeshGeometryClass::Get_Binormal_Array(void) const
+{
+	return Binormal ? Binormal->Get_Array() : NULL;
+}
+
+
+/***********************************************************************************************
+ * MeshGeometryClass::Set_Tangent_Array -- sets tangent array from external source               *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+void MeshGeometryClass::Set_Tangent_Array(Vector3 *tan, int count)
+{
+	if (Tangent) REF_PTR_RELEASE(Tangent);
+	Tangent = NEW_REF(ShareBufferClass<Vector3>, (count, "MeshGeometryClass::Tangent"));
+	Vector3 *dst = Tangent->Get_Array();
+	for (int i = 0; i < count; i++) dst[i] = tan[i];
+}
+
+
+/***********************************************************************************************
+ * MeshGeometryClass::Set_Binormal_Array -- sets binormal array from external source             *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+void MeshGeometryClass::Set_Binormal_Array(Vector3 *bin, int count)
+{
+	if (Binormal) REF_PTR_RELEASE(Binormal);
+	Binormal = NEW_REF(ShareBufferClass<Vector3>, (count, "MeshGeometryClass::Binormal"));
+	Vector3 *dst = Binormal->Get_Array();
+	for (int i = 0; i < count; i++) dst[i] = bin[i];
+}
 
 
 /***********************************************************************************************
@@ -1754,6 +1832,13 @@ WW3DErrorType MeshGeometryClass::read_chunks(ChunkLoadClass & cload)
 			case W3D_CHUNK_AABTREE:
 					read_aabtree(cload);
 					break;
+			case W3D_CHUNK_TANGENTS:
+					error = read_tangents(cload);
+					break;
+
+			case W3D_CHUNK_BINORMALS:
+					error = read_tangents(cload);
+					break;
 
 			default:
 					break;
@@ -1954,6 +2039,56 @@ WW3DErrorType MeshGeometryClass::read_vertex_influences(ChunkLoadClass & cload)
 
 
 /***********************************************************************************************
+ * MeshGeometryClass::read_tangents -- read the tangent/binormal chunk from a w3d file          *
+ *                                                                                             *
+ * INPUT:                                                                                      *
+ *                                                                                             *
+ * OUTPUT:                                                                                     *
+ *                                                                                             *
+ * WARNINGS:                                                                                   *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+WW3DErrorType MeshGeometryClass::read_tangents(ChunkLoadClass & cload)
+{
+	uint32 chunkType = cload.Cur_Chunk_ID();
+	int count = cload.Cur_Chunk_Length() / sizeof(W3dVectorStruct);
+
+	if (count != Get_Vertex_Count()) {
+		DEBUG_CRASH(("Tangent count (%d) != vertex count (%d)", count, Get_Vertex_Count()));
+		return WW3D_ERROR_LOAD_FAILED;
+	}
+
+	ShareBufferClass<Vector3> *array = NEW_REF(ShareBufferClass<Vector3>, (count, "MeshGeometryClass::Tangent"));
+	Vector3 *data = array->Get_Array();
+
+	for (int i = 0; i < count; i++) {
+		W3dVectorStruct buf;
+		if (cload.Read(&buf, sizeof(W3dVectorStruct)) != sizeof(W3dVectorStruct)) {
+			REF_PTR_RELEASE(array);
+			return WW3D_ERROR_LOAD_FAILED;
+		}
+		data[i].X = buf.X;
+		data[i].Y = buf.Y;
+		data[i].Z = buf.Z;
+	}
+
+	if (chunkType == W3D_CHUNK_TANGENTS) {
+		if (Tangent) REF_PTR_RELEASE(Tangent);
+		Tangent = array;
+	} else {
+		if (Binormal) REF_PTR_RELEASE(Binormal);
+		Binormal = array;
+	}
+
+	DEBUG_LOG(("[W3X_P1] read_tangents: %s chunk, %d vectors loaded\n",
+		chunkType == W3D_CHUNK_TANGENTS ? "TANGENTS" : "BINORMALS", count));
+	return WW3D_ERROR_OK;
+}
+
+
+/***********************************************************************************************
  * MeshGeometryClass::read_vertex_shade_indices -- read the vertex shade indices chunk         *
  *                                                                                             *
  * INPUT:                                                                                      *
@@ -2128,4 +2263,40 @@ void MeshGeometryClass::get_deformed_screenspace_vertices(Vector4 *dst_vert,cons
 			prj,
 			vertex_count);
 	}
+}
+
+
+/***********************************************************************************************
+ * MeshGeometryClass::Compute_Tangents_Lengyel -- compute tangents using Lengyel algorithm       *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+void MeshGeometryClass::Compute_Tangents_Lengyel(void)
+{
+#if 0
+	// TODO: Full Lengyel tangent computation from vertex positions, UVs, and normals.
+	// Reference: max2w3d w3dexport.cpp:5212 Compute_Tangents_Binormals()
+	// For now, this is a placeholder that sets tangents to a default basis.
+#endif
+	DEBUG_LOG(("[W3X_P1] Compute_Tangents_Lengyel: stub called (%d verts)\n", VertexCount));
+	Set_Flag(DIRTY_TANGENTS, false);
+}
+
+
+/***********************************************************************************************
+ * MeshGeometryClass::Compute_Tangents_MikkTSpace -- compute tangents using MikkTSpace algorithm *
+ *                                                                                             *
+ * HISTORY:                                                                                    *
+ *   29/7/2026  hzc : Created.                                                                 *
+ *=============================================================================================*/
+void MeshGeometryClass::Compute_Tangents_MikkTSpace(void)
+{
+#if 0
+	// TODO: Full MikkTSpace tangent computation.
+	// Reference: max2w3d w3dexport.cpp:5309 Compute_MikkTSpace_Tangents_Binormals()
+	// Requires MikkTSpace library integration.
+#endif
+	DEBUG_LOG(("[W3X_P1] Compute_Tangents_MikkTSpace: stub called (%d verts)\n", VertexCount));
+	Set_Flag(DIRTY_TANGENTS, false);
 }

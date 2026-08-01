@@ -63,6 +63,12 @@
 #include <d3dx9effect.h>
 #include <d3dx9shader.h>
 
+// The VC6-era D3DX9 SDK headers may not define D3DXSHADER_USE_SAS even though
+// the runtime supports it (the RA3 shaders rely on SAS). Define it explicitly.
+#ifndef D3DXSHADER_USE_SAS
+#define D3DXSHADER_USE_SAS 0x40000000
+#endif
+
 //=============================================================================
 // Statics
 //=============================================================================
@@ -135,6 +141,18 @@ static const EngineConstantBinding s_bindings[] =
 	// View inverse (group 13)
 	{ "ViewInverse",		13 },
 	{ "MAXviewinv",			13 },	// RA3 shader (semantic ViewInverse)
+	// DirectionalLight struct array (group 14) - RA3 sun + skybox accents
+	{ "DirectionalLight",	14 },
+	// NoCloudMultiplier (group 15) - RA3 sky/cloud light multiplier (must be 1 for sunlight)
+	{ "NoCloudMultiplier",	15 },
+	// TintColor (group 16) - output multiplier; 0 would black the result
+	{ "TintColor",			16 },
+	// OpacityOverride (group 17) - 1 = opaque, <0.985 enables alpha blend
+	{ "OpacityOverride",	17 },
+	// RecolorColor (group 18) - faction color, default white
+	{ "RecolorColor",		18 },
+	// NumPointLights (group 19) - 0 disables point light loop
+	{ "NumPointLights",		19 },
 	{ NULL, 0 }	// terminator
 };
 
@@ -188,12 +206,20 @@ static void GetCameraProjectionMatrix(Matrix4x4 &projOut)
 // W3XEffectManager::W3XEffectManager
 //=============================================================================
 W3XEffectManager::W3XEffectManager(void) :
-	m_cacheSize(0)
+	m_cacheSize(0),
+	m_prevCleanupHook(NULL)
 {
 	for (int i = 0; i < W3X_EFFECT_CACHE_MAX; i++) {
 		m_cache[i].effect = NULL;
 		m_cache[i].refCount = 0;
 	}
+
+	// Register as the device cleanup hook (chained with any existing hook) so
+	// cached effects get OnLostDevice/OnResetDevice across device resets.
+	m_prevCleanupHook = DX8Wrapper::GetCleanupHook();
+	DX8Wrapper::SetCleanupHook(this);
+	DEBUG_LOG(("[W3X_P3] W3XEffectManager registered as device cleanup hook (prev=%p)\n",
+		(void*)m_prevCleanupHook));
 }
 
 
@@ -202,6 +228,11 @@ W3XEffectManager::W3XEffectManager(void) :
 //=============================================================================
 W3XEffectManager::~W3XEffectManager()
 {
+	// Restore the previous cleanup hook if we are still registered
+	if (DX8Wrapper::GetCleanupHook() == this) {
+		DX8Wrapper::SetCleanupHook(m_prevCleanupHook);
+	}
+
 	// Release all cached effects
 	for (int i = 0; i < m_cacheSize; i++) {
 		if (m_cache[i].effect) {
@@ -211,6 +242,32 @@ W3XEffectManager::~W3XEffectManager()
 	}
 	m_cacheSize = 0;
 	m_instance = NULL;
+}
+
+
+//=============================================================================
+// W3XEffectManager::ReleaseResources
+// Device lost: release effect device resources, then chain to previous hook.
+//=============================================================================
+void W3XEffectManager::ReleaseResources(void)
+{
+	OnLostDevice();
+	if (m_prevCleanupHook) {
+		m_prevCleanupHook->ReleaseResources();
+	}
+}
+
+
+//=============================================================================
+// W3XEffectManager::ReAcquireResources
+// Device restored: re-acquire effect device resources, then chain to previous.
+//=============================================================================
+void W3XEffectManager::ReAcquireResources(void)
+{
+	OnResetDevice();
+	if (m_prevCleanupHook) {
+		m_prevCleanupHook->ReAcquireResources();
+	}
 }
 
 
@@ -298,7 +355,11 @@ ID3DXEffect *W3XEffectManager::GetEffect(const char *fxPath)
 	}
 	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev8);
 
-	// Create the effect from memory
+	// Create the effect from memory.
+	// NOTE: this D3DX9 build does NOT support the SAS flag (D3DXSHADER_USE_SAS,
+	// 0x40000000) — it fails with X3116 "Flags parameter is invalid". So the
+	// RA3 shaders' VS_H_Array[VSchooserExpr()] dynamic VS selection cannot be
+	// used; the model must use a technique that compiles the VS directly.
 	ID3DXEffect *effect = NULL;
 	ID3DXBuffer *errors = NULL;
 	HRESULT hr = D3DXCreateEffect(dev9, fxBuffer, (UINT)bytesRead,
@@ -405,6 +466,7 @@ void W3XEffectManager::BindEngineConstants(ID3DXEffect *effect,
 
 	int totalParams = 0;
 	int boundParams = 0;
+	static Bool boundDiagLogged = FALSE;	// DIAG: log bound param names on first call
 
 	// Enumerate all parameters
 	D3DXHANDLE hParam = NULL;
@@ -435,6 +497,9 @@ void W3XEffectManager::BindEngineConstants(ID3DXEffect *effect,
 		// Try to bind by name
 		if (BindParameter(effect, (void*)hParam, paramName, rinfo)) {
 			boundParams++;
+			if (!boundDiagLogged) {
+				DEBUG_LOG(("[W3X_P3]   BOUND: '%s' (sem='%s')\n", paramName, desc.Semantic ? desc.Semantic : "(none)"));
+			}
 		}
 	}
 
@@ -447,6 +512,7 @@ void W3XEffectManager::BindEngineConstants(ID3DXEffect *effect,
 			diagOnce = TRUE;
 		}
 	}
+	boundDiagLogged = TRUE;	// done logging bound param names for this process
 }
 
 
@@ -605,6 +671,93 @@ bool W3XEffectManager::BindParameter(ID3DXEffect *effect,
 					GetCameraViewMatrix(view);
 					Matrix4x4 viewInv = view.Inverse();
 					effect->SetMatrix(param, (const D3DXMATRIX*)&viewInv);
+					return true;
+				}
+
+				case 14: // DirectionalLight[3] {Color, Direction} - RA3 sun + skybox accents
+				{
+					// 3 lights x (Color.xyz + Direction.xyz) = 18 floats, tight-packed
+					float dl[18];
+					// [0] = sun
+					{
+						float sunC[3] = { 1, 1, 1 };
+						float sunD[3] = { 0, 0, 1 };
+						if (TheGlobalData) {
+							sunC[0] = TheGlobalData->m_terrainDiffuse[0].red;
+							sunC[1] = TheGlobalData->m_terrainDiffuse[0].green;
+							sunC[2] = TheGlobalData->m_terrainDiffuse[0].blue;
+							sunD[0] = -TheGlobalData->m_terrainLightPos[0].x;
+							sunD[1] = -TheGlobalData->m_terrainLightPos[0].y;
+							sunD[2] = -TheGlobalData->m_terrainLightPos[0].z;
+							float len = (float)sqrt(sunD[0]*sunD[0] + sunD[1]*sunD[1] + sunD[2]*sunD[2]);
+							if (len > 0.001f) { sunD[0] /= len; sunD[1] /= len; sunD[2] /= len; }
+						}
+						dl[0]=sunC[0]; dl[1]=sunC[1]; dl[2]=sunC[2];
+						dl[3]=sunD[0]; dl[4]=sunD[1]; dl[5]=sunD[2];
+
+						// DIAG: dump sun direction/color + ambient values once
+						static Bool sunDiag = FALSE;
+						if (!sunDiag) {
+							if (TheGlobalData) {
+								DEBUG_LOG(("[W3X_P7] SUN lightPos[0](raw)=%.2f,%.2f,%.2f\n",
+									(float)TheGlobalData->m_terrainLightPos[0].x,
+									(float)TheGlobalData->m_terrainLightPos[0].y,
+									(float)TheGlobalData->m_terrainLightPos[0].z));
+								DEBUG_LOG(("[W3X_P7] SUN diffuse=%.2f,%.2f,%.2f  dir(->light)=%.2f,%.2f,%.2f\n",
+									(float)TheGlobalData->m_terrainDiffuse[0].red,
+									(float)TheGlobalData->m_terrainDiffuse[0].green,
+									(float)TheGlobalData->m_terrainDiffuse[0].blue,
+									sunD[0], sunD[1], sunD[2]));
+								DEBUG_LOG(("[W3X_P7] AMB ambient=%.2f,%.2f,%.2f\n",
+									(float)TheGlobalData->m_terrainAmbient[0].red,
+									(float)TheGlobalData->m_terrainAmbient[0].green,
+									(float)TheGlobalData->m_terrainAmbient[0].blue));
+							} else {
+								DEBUG_LOG(("[W3X_P7] SUN/AMB: TheGlobalData == NULL\n"));
+							}
+							sunDiag = TRUE;
+						}
+					}
+					// [1] = skybox accent 1 (hemisphere up)
+					dl[6]=0.40f; dl[7]=0.50f; dl[8]=0.60f;
+					dl[9]=0.0f;  dl[10]=1.0f; dl[11]=0.0f;
+					// [2] = skybox accent 2
+					dl[12]=0.30f; dl[13]=0.20f; dl[14]=0.10f;
+					dl[15]=1.0f;  dl[16]=0.0f;  dl[17]=0.0f;
+					effect->SetValue(param, dl, sizeof(dl));
+					return true;
+				}
+
+				case 15: // NoCloudMultiplier (float3) - declared unmanaged, must set to 1
+				{
+					float ncm[4] = { 1, 1, 1, 1 };
+					effect->SetVector(param, (const D3DXVECTOR4*)ncm);
+					return true;
+				}
+
+				case 16: // TintColor (float4) - output multiplier; default white
+				{
+					float tc[4] = { 1, 1, 1, 1 };
+					effect->SetVector(param, (const D3DXVECTOR4*)tc);
+					return true;
+				}
+
+				case 17: // OpacityOverride (float) - 1 = opaque
+				{
+					effect->SetFloat(param, 1.0f);
+					return true;
+				}
+
+				case 18: // RecolorColor (float4) - faction color; default white
+				{
+					float rc[4] = { 1, 1, 1, 1 };
+					effect->SetVector(param, (const D3DXVECTOR4*)rc);
+					return true;
+				}
+
+				case 19: // NumPointLights (int) - 0 disables point light loop
+				{
+					effect->SetInt(param, 0);
 					return true;
 				}
 			}

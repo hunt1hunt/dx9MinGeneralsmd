@@ -44,6 +44,7 @@
 
 #include "always.h"
 #include "Common/AsciiString.h"
+#include "WW3D2/dx8wrapper.h"
 
 struct ID3DXEffect;
 class RenderInfoClass;
@@ -56,11 +57,16 @@ class RenderInfoClass;
 // ----------------------------------------------------------------------------
 #define W3X_EFFECT_CACHE_MAX	64
 
-class W3XEffectManager
+class W3XEffectManager : public DX8_CleanupHook
 {
 public:
 	// Singleton access
 	static W3XEffectManager *Instance(void);
+
+	// DX8_CleanupHook: called by the engine before/after a D3D device reset.
+	// ReleaseResources -> OnLostDevice, ReAcquireResources -> OnResetDevice.
+	virtual void ReleaseResources(void);
+	virtual void ReAcquireResources(void);
 
 	// Get or create an effect (cached by file path, ref-counted)
 	// Returns NULL on failure (missing file, compile error, etc.)
@@ -110,6 +116,9 @@ private:
 	// Fixed-size cache (simple array avoids STL hash_map issues with VC6)
 	EffectEntry m_cache[W3X_EFFECT_CACHE_MAX];
 	int m_cacheSize;
+
+	// Chained device cleanup hook (previous registered hook, if any)
+	DX8_CleanupHook *m_prevCleanupHook;
 };
 
 

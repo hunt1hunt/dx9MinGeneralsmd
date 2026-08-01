@@ -48,6 +48,7 @@
 #include "W3DDevice/GameClient/Module/W3DTracerDraw.h"
 #include "W3DDevice/GameClient/Module/W3DTreeDraw.h"
 #include "W3DDevice/GameClient/Module/W3DPropDraw.h"
+#include "W3DDevice/GameClient/Module/W3XModelDraw.h"
 
 //-------------------------------------------------------------------------------------------------
 /** Initialize method */
@@ -77,6 +78,7 @@ void W3DModuleFactory::init( void )
 	addModule( W3DTracerDraw );
 	addModule( W3DTankTruckDraw );
 	addModule( W3DTreeDraw );
+	addModule( W3XModelDraw );
 	addModule( W3DPropDraw );
 
 }  // end init

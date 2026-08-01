@@ -43,6 +43,8 @@ struct W3XVertex
 	float bx, by, bz;		// 44 BINORMAL
 	float boneIdx;		// 56 BLENDINDICES (0 = no bone)
 	float boneWeight;	// 60 BLENDWEIGHT (1.0 for rigid)
+	unsigned int color;	// 64 COLOR (0xAARRGGBB; white for RA3 VertexColor)
+	float u2, v2;		// 68 TEXCOORD1 (RA3 texcoordNEW; zero = no damage UV)
 };
 
 struct W3XConditionInfo

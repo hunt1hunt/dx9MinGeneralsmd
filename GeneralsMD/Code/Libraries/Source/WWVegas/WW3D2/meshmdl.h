@@ -198,6 +198,9 @@ public:
 	VertexMaterialClass *	Peek_Single_Material(int pass=0) const										{ return CurMatDesc->Peek_Single_Material(pass); }
 	TextureClass *				Peek_Single_Texture(int pass=0,int stage=0) const						{ return CurMatDesc->Peek_Single_Texture(pass,stage); }
 
+	// W3X loader support: install UV array into the default material description
+	void							Install_UV_Array(int pass,int stage,Vector2 *uvs,int count)			{ DefMatDesc->Install_UV_Array(pass,stage,uvs,count); }
+
 	void							Set_Material(int vidx,VertexMaterialClass * vmat,int pass=0)		{ CurMatDesc->Set_Material(vidx,vmat,pass); }
 	void							Set_Shader(int pidx,ShaderClass shader,int pass=0)						{ CurMatDesc->Set_Shader(pidx,shader,pass); }
 	void							Set_Texture(int pidx,TextureClass * tex,int pass=0,int stage=0)	{ CurMatDesc->Set_Texture(pidx,tex,pass,stage); }

@@ -802,11 +802,15 @@ AsciiString W3XLoader::ResolveTextureDDS(const char *texName)
 		xmlBuffer = ReadFileContent(xmlPath, fileSize);
 	}
 	if (!xmlBuffer) {
-		// Try direct DDS paths
-		sprintf(xmlPath, "Art/Textures/%s.dds", texName);
-		DEBUG_LOG(("[W3X_P2] ResolveTextureDDS: no XML for '%s', trying direct: %s\n",
-			texName, xmlPath));
-		return AsciiString(xmlPath);
+		// Try direct DDS paths. NOTE: the engine's file system prepends
+		// "Art/Textures/" (TGA_DIR_PATH) for image files, so return the bare
+		// filename only — otherwise the path gets double-prefixed and the
+		// file is not found (which produces the magenta missing-texture).
+		char ddsOnly[512];
+		sprintf(ddsOnly, "%s.dds", texName);
+		DEBUG_LOG(("[W3X_P2] ResolveTextureDDS: no XML for '%s', using: %s\n",
+			texName, ddsOnly));
+		return AsciiString(ddsOnly);
 	}
 
 	// Parse the texture XML
@@ -837,14 +841,11 @@ AsciiString W3XLoader::ResolveTextureDDS(const char *texName)
 
 	AsciiString resultPath;
 	if (ddsFile && ddsFile[0]) {
-		// Check if it needs a path prefix
-		if (strchr(ddsFile, '/') == NULL && strchr(ddsFile, '\\') == NULL) {
-			char ddsPath[512];
-			sprintf(ddsPath, "Art/Textures/%s", ddsFile);
-			resultPath = ddsPath;
-		} else {
-			resultPath = ddsFile;
-		}
+		// NOTE: the engine's file system prepends "Art/Textures/" (TGA_DIR_PATH)
+		// for image files, so return the bare filename (or the XML's relative
+		// subpath) — do NOT prepend Art/Textures/ ourselves or the file is
+		// double-prefixed and not found (magenta missing-texture).
+		resultPath = ddsFile;
 		DEBUG_LOG(("[W3X_P2] ResolveTextureDDS: '%s' -> '%s'\n", texName, resultPath.str()));
 	}
 

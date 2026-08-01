@@ -62,6 +62,7 @@ public:
 	void SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants);
 	void SetBones(float *bones, int boneCount);
 	void SetBounds(const Vector3 &min, const Vector3 &max);
+	void SetRecolorColor(unsigned int hexColor) { m_recolorHex = hexColor; }	// 0xFFRRGGBB faction color
 	void Clear(void);
 
 	// World transform for rendering (kept separately; also in RenderObjClass base)
@@ -88,6 +89,7 @@ private:
 	int m_boneCount;
 	Vector3 m_bmin;
 	Vector3 m_bmax;
+	unsigned int m_recolorHex;	// 0xFFRRGGBB faction color (0 = none -> white)
 	Matrix3D m_worldTransform;
 	bool m_valid;
 };

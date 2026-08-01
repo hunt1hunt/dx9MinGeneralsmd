@@ -127,6 +127,7 @@ IDirect3DSurface8 *W3DShaderManager::m_oldDepthSurface=NULL;	///<previous depth 
 
 // PBR texture pipeline static data (Phase 3+)
 W3DShaderManager::PBRTextureMap *W3DShaderManager::m_pbrTextureMap = NULL;
+W3DShaderManager::NormalMapMap *W3DShaderManager::m_normalMapMap = NULL;
 W3DShaderManager::LegacyPBRParamsMap *W3DShaderManager::m_legacyPBRParamsMap = NULL;
 
 // Phase 4: Extern globals for unit PBR shader handles (accessed from dx8renderer.cpp)
@@ -3627,6 +3628,21 @@ Int W3DPBRShader::set(Int pass)
 		DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
 	}
 
+	// Set up texture stage 1 (Normal Map) from shader texture slot (Phase 5)
+	{
+		TextureClass *normalTex = W3DShaderManager::getShaderTexture(1);
+		if (normalTex && normalTex->Peek_D3D_Texture()) {
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, normalTex->Peek_D3D_Texture());
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXCOORDINDEX, 0);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		}
+	}
+
 	// Set up texture stage 2 (PBR) from shader texture slot
 	if (pbrTex && pbrTex->Peek_D3D_Texture()) {
 		DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, pbrTex->Peek_D3D_Texture());
@@ -4669,6 +4685,31 @@ Bool W3DShaderManager::hasPBRTexture(const char *albedoName)
 extern "C" bool PBR_HasTexture(const char *albedoName)
 {
 	return (W3DShaderManager::hasPBRTexture(albedoName) != 0);
+}
+
+
+//=============================================================================
+// Normal map registration (Phase 5)
+//=============================================================================
+void W3DShaderManager::registerNormalMap(const char *albedoName, TextureClass *normalTex)
+{
+	if (!m_normalMapMap) {
+		m_normalMapMap = NEW NormalMapMap;
+	}
+	AsciiString key(albedoName);
+	(*m_normalMapMap)[key] = normalTex;
+	DEBUG_LOG(("[W3X_P5] registered normal map for %s\n", albedoName));
+}
+
+TextureClass *W3DShaderManager::getNormalMapTexture(const char *albedoName)
+{
+	if (!m_normalMapMap) return NULL;
+	AsciiString key(albedoName);
+	NormalMapMap::iterator it = m_normalMapMap->find(key);
+	if (it != m_normalMapMap->end()) {
+		return it->second;
+	}
+	return NULL;
 }
 
 // C-linkage IBL texture binding for cross-library access from dx8renderer.cpp

@@ -211,6 +211,12 @@ TextureClass *	W3DAssetManager::Get_Texture
 			strcat(pbrName, "_n.dds");
 			if (TheFileSystem && TheFileSystem->doesFileExist(pbrName)) {
 				DEBUG_LOG(("PBR: detected normal map %s for %s\n", pbrName, filename));
+				// Phase 5: actually load the normal map and register it
+				TextureClass *normalTex = WW3DAssetManager::Get_Texture(pbrName, mip_level_count, texture_format, allow_compression, type, allow_reduction);
+				if (normalTex) {
+					W3DShaderManager::registerNormalMap(filename, normalTex);
+					DEBUG_LOG(("[W3X_P5] loaded and registered normal map %s\n", pbrName));
+				}
 			}
 		}
 	}

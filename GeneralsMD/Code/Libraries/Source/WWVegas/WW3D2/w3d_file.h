@@ -375,6 +375,14 @@ enum {
 				W3D_CHUNK_DIG								=0x0000003C,	// per-vertex diffuse illumination values (array of W3dRGBStruct's)
 				W3D_CHUNK_SCG								=0x0000003E,	// per-vertex specular color values (array of W3dRGBStruct's)
 
+				W3D_CHUNK_FX_SHADERS						=0x00000050,	// wrapper for FX shader definitions
+				W3D_CHUNK_FX_SHADER						=0x00000051,	// individual FX shader definition
+				W3D_CHUNK_FX_SHADER_INFO					=0x00000052,	// FX shader header (W3dFXShaderStruct)
+				W3D_CHUNK_FX_SHADER_CONSTANT				=0x00000053,	// FX shader constant parameter
+
+				W3D_CHUNK_TANGENTS						=0x00000060,	// per-vertex tangent vectors (array of W3dVectorStruct)
+				W3D_CHUNK_BINORMALS						=0x00000061,	// per-vertex binormal vectors (array of W3dVectorStruct)
+
 				W3D_CHUNK_TEXTURE_STAGE					=0x00000048,	// wrapper around a texture stage.
 					W3D_CHUNK_TEXTURE_IDS				=0x00000049,	// single or per-tri array of uint32 texture indices (check chunk size)
 					W3D_CHUNK_STAGE_TEXCOORDS			=0x0000004A,	// per-vertex texture coordinates (array of W3dTexCoordStruct's)
@@ -1188,6 +1196,8 @@ const char * const SURFACE_TYPE_STRINGS[SURFACE_TYPE_MAX] =
 #define W3D_VERTEX_CHANNEL_TEXCOORD		0x00000004	// texture coordinate
 #define W3D_VERTEX_CHANNEL_COLOR			0x00000008	// vertex color
 #define W3D_VERTEX_CHANNEL_BONEID		0x00000010	// per-vertex bone id for skins
+#define W3D_VERTEX_CHANNEL_TANGENT		0x00000020	// per-vertex tangent vector for normal mapping
+#define W3D_VERTEX_CHANNEL_BINORMAL		0x00000040	// per-vertex binormal vector for normal mapping
 
 #define W3D_FACE_CHANNEL_FACE				0x00000001	// basic face info, W3dTriStruct...
 

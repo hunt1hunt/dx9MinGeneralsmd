@@ -141,6 +141,10 @@ public:
 	static void registerPBRTexture(const char *albedoName, const char *pbrName);
 	static Bool hasPBRTexture(const char *albedoName);
 
+	// Normal map registration (Phase 5)
+	static void registerNormalMap(const char *albedoName, TextureClass *normalTex);
+	static TextureClass *getNormalMapTexture(const char *albedoName);
+
 protected:
 	static TextureClass *m_Textures[8];	///textures assigned to each of the possible stages
 	static ChipsetType m_currentChipset;	///<last video card chipset that was detected.
@@ -159,8 +163,10 @@ protected:
 
 	// PBR texture pipeline data (Phase 3+)
 	typedef std::hash_map<AsciiString, Bool, rts::hash<AsciiString>, rts::equal_to<AsciiString> > PBRTextureMap;
+	typedef std::hash_map<AsciiString, TextureClass*, rts::hash<AsciiString>, rts::equal_to<AsciiString> > NormalMapMap;
 	typedef std::hash_map<AsciiString, LegacyPBRParams, rts::hash<AsciiString>, rts::equal_to<AsciiString> > LegacyPBRParamsMap;
 	static PBRTextureMap *m_pbrTextureMap;
+	static NormalMapMap *m_normalMapMap;
 	static LegacyPBRParamsMap *m_legacyPBRParamsMap;
 
 };
