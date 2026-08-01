@@ -245,6 +245,10 @@ SOURCE=.\Source\W3DDevice\GameClient\Drawable\Draw\W3DTreeDraw.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\Source\W3DDevice\GameClient\Drawable\Draw\W3XModelDraw.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\Source\W3DDevice\GameClient\Drawable\Draw\W3DTruckDraw.cpp
 # End Source File
 # End Group
@@ -1089,6 +1093,23 @@ SOURCE=.\Source\W3DDevice\GameClient\W3DShaderManager.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\Source\W3DDevice\GameClient\W3XEffectManager.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\Source\W3DDevice\GameClient\w3x_loader.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\Source\W3DDevice\GameClient\W3XRenderObj.cpp
+# End Source File
+
+# Begin Source File
+
+SOURCE=.\Source\W3DDevice\GameClient\pugixml.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\Source\W3DDevice\GameClient\W3DShroud.cpp
 # End Source File
 # Begin Source File
@@ -1336,6 +1357,10 @@ SOURCE=.\Include\W3DDevice\GameClient\Module\W3DTreeDraw.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\Include\W3DDevice\GameClient\Module\W3XModelDraw.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\Include\W3DDevice\GameClient\Module\W3DTruckDraw.h
 # End Source File
 # End Group
@@ -1482,6 +1507,26 @@ SOURCE=.\Include\W3DDevice\GameClient\W3DDeferredRenderer.h
 # Begin Source File
 
 SOURCE=.\Include\W3DDevice\GameClient\W3DShaderManager.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\W3DDevice\GameClient\w3x_loader.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\W3DDevice\GameClient\W3XRenderObj.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\W3DDevice\GameClient\W3XEffectManager.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Source\W3DDevice\GameClient\pugixml.hpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\Source\W3DDevice\GameClient\pugiconfig.hpp
 # End Source File
 # Begin Source File
 
