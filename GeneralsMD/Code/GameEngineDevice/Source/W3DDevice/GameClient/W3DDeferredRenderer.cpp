@@ -32,6 +32,7 @@
 #include "WW3D2/ww3d.h"
 #include "WW3D2/DX8Caps.h"
 #include "Common/GlobalData.h"
+#include "Common/Debug.h"
 #include "WW3D2/formconv.h"
 #include <vector>
 
@@ -187,6 +188,7 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_hdrAvailable(false),
 	m_toneMapPS(NULL),
 	m_shadowDepthRT(NULL),
+	m_shadowDepthSampler(NULL),
 	m_shadowMapAvailable(false),
 	m_sunLightShadowPS(NULL),
 	m_shadowDepthStencilTex(NULL),
@@ -1426,6 +1428,10 @@ bool W3DDeferredRenderer::createShadowResources()
 {
 	const int SM_SIZE = 2048;
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	// The shadow map is a COLOR RT that stores the sun-space depth as color.
+	// Original (pre-W3X) values: A8R8G8B8, 2048, D24X8 — reverted so the deferred
+	// lighting's SunLightShadow PS (buildings/units) samples the same format it
+	// was authored for.
 	m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
 		SM_SIZE, SM_SIZE, WW3D_FORMAT_A8R8G8B8, true);
 	if (!m_shadowDepthRT) {
@@ -1448,6 +1454,27 @@ bool W3DDeferredRenderer::createShadowResources()
 			DIAG_LOG(("W3DDeferredRenderer: shadow DS texture creation failed (hr=0x%08x). Acceptable, no depth.\n", hr));
 		}
 	}
+	// Create a plain sampler copy of the shadow map. The depth is rendered into
+	// m_shadowDepthRT, then StretchRect'd into this texture each frame so the main
+	// pass samples a resolved copy (reliable RT->SRV under dgVoodoo2) instead of
+	// sampling a texture that was a render target earlier in the same frame.
+	m_shadowDepthSampler = NULL;
+	if (dev) {
+		IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev);
+		D3DFORMAT fmt = D3DFMT_A8R8G8B8;
+		IDirect3DTexture9 *rtTex = (IDirect3DTexture9*)m_shadowDepthRT->Peek_D3D_Texture();
+		if (rtTex) {
+			IDirect3DSurface9 *s = NULL;
+			if (SUCCEEDED(rtTex->GetSurfaceLevel(0, &s)) && s) {
+				D3DSURFACE_DESC d; s->GetDesc(&d); fmt = d.Format; s->Release();
+			}
+		}
+		HRESULT hr = D3DXCreateTexture(dev9, SM_SIZE, SM_SIZE, 1, D3DUSAGE_RENDERTARGET,
+			fmt, D3DPOOL_DEFAULT, &m_shadowDepthSampler);
+		if (FAILED(hr) || !m_shadowDepthSampler) {
+			DIAG_LOG(("W3DDeferredRenderer: shadow sampler texture creation failed (hr=0x%08x).\n", hr));
+		}
+	}
 	m_shadowMapAvailable = true;
 	DIAG_LOG(("W3DDeferredRenderer: shadow map resources created (%dx%d).\n", SM_SIZE, SM_SIZE));
 	return true;
@@ -1459,6 +1486,10 @@ bool W3DDeferredRenderer::createShadowResources()
 void W3DDeferredRenderer::releaseShadowResources()
 {
 	REF_PTR_RELEASE(m_shadowDepthRT);
+	if (m_shadowDepthSampler) {
+		m_shadowDepthSampler->Release();
+		m_shadowDepthSampler = NULL;
+	}
 	if (m_shadowDepthStencilTex) {
 		m_shadowDepthStencilTex->Release();
 		m_shadowDepthStencilTex = NULL;
@@ -1471,7 +1502,7 @@ void W3DDeferredRenderer::releaseShadowResources()
 // W3DDeferredRenderer::beginShadowMapPass
 // ============================================================================
 bool W3DDeferredRenderer::beginShadowMapPass(
-	const Vector3 &sunDir, const Matrix4x4 &camView)
+	const Vector3 &sunDir, const Matrix4x4 &camView, const Vector3 &camPos)
 {
 	// Save main camera view/proj before overriding for shadow rendering.
 	DX8Wrapper::Get_Transform(D3DTS_VIEW, m_savedView);
@@ -1494,10 +1525,13 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		if (m_shadowDepthStencilAvailable && m_shadowDepthStencilTex) {
 			IDirect3DSurface9 *ds = NULL;
 			m_shadowDepthStencilTex->GetSurfaceLevel(0, &ds);
-			if (ds) { d9->SetDepthStencilSurface(ds); DIAG_LOG(("W3DDeferredRenderer: shadow DS bound (D24X8).\n")); ds->Release(); }
+			if (ds) { d9->SetDepthStencilSurface(ds); DIAG_LOG(("W3DDeferredRenderer: shadow DS bound (D16).\n")); ds->Release(); }
 		} else {
 			d9->SetDepthStencilSurface(NULL);
 		}
+		// Clear the shadow map to (1,1,1) = depth 1.0 (far). The deferred lighting's
+		// SunLightShadow PS samples this for the W3D building/unit shadows, so the
+		// clear value MUST be 1.0 (a wrong value corrupts every object's shadow).
 		DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
 		D3DVIEWPORT9 vp2 = { 0, 0, 2048, 2048, 0.0f, 1.0f };
 		DX8CALL(SetViewport(&vp2));
@@ -1505,18 +1539,47 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		DIAG_LOG(("W3DDeferredRenderer: shadow pass started (D24X8 depth).\n"));
 	}
 
-	Vector3 target(0, 0, 0);
+	// Center the shadow camera on the player camera (RA3-style): the shadow
+	// map covers the visible area, not just the world origin.
+	// Guard: a zero sunDir makes D3DXMatrixLookAtLH degenerate (row0 all zeros,
+	// row3=(0,0,0,1)), collapsing every vertex into the origin and emptying the
+	// shadow map. Normalize so the eye distance below is a true 500-unit offset.
+	Vector3 lightDir = sunDir;
+	if (lightDir.Length2() < 1e-6f) { lightDir.Set(0, 0, -1); }
+	lightDir.Normalize();
+	Vector3 target(camPos.X, camPos.Y, 0);
 	Vector3 up(0, 0, 1);
-	if (fabsf(sunDir.Z) > 0.99f) { up.Set(0, 1, 0); }
-	Vector3 eye = target - sunDir * 500.0f;
+	if (fabsf(lightDir.Z) > 0.99f) { up.Set(0, 1, 0); }
+	Vector3 eye = target - lightDir * 500.0f;
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
-	D3DXMatrixOrthoLH(&d3dP, 300.0f, 300.0f, 0.1f, 1000.0f);
+	D3DXMatrixOrthoLH(&d3dP, 1000.0f, 1000.0f, 0.1f, 2000.0f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
 	m_shadowProj = *(Matrix4x4*)&d3dP;
+
+	// DIAG (one-shot): verify the sun LookAt inputs and resulting view matrix
+	// (row0 must be a non-zero unit "right" vector, else the depth pass is empty).
+	// Written to BOTH logs: DIAG_LOG (deferred RT log, [NEW] marker makes it
+	// unambiguous this build has the sunDir fix) and DEBUG_LOG (DebugLogFileI).
+	// If the next deferred RT log still shows the OLD 'W3DDeferredRenderer: sunDir='
+	// line WITHOUT '[NEW]', the deployed DLL is still the old build.
+	static bool s_sunDiag = false;
+	if (!s_sunDiag) {
+		s_sunDiag = true;
+		DIAG_LOG(("W3DDeferredRenderer: [NEW] sunDir(raw)=%.3f,%.3f,%.3f lightDir=%.3f,%.3f,%.3f camPos=(%.1f,%.1f,%.1f)\n",
+			sunDir.X, sunDir.Y, sunDir.Z, lightDir.X, lightDir.Y, lightDir.Z, camPos.X, camPos.Y, camPos.Z));
+		DIAG_LOG(("W3DDeferredRenderer: [NEW] shadowView r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
+			m_shadowView[0].X, m_shadowView[0].Y, m_shadowView[0].Z, m_shadowView[0].W,
+			m_shadowView[3].X, m_shadowView[3].Y, m_shadowView[3].Z, m_shadowView[3].W));
+		DEBUG_LOG(("[W3X_DIAG] shadow sunDir(raw)=%.3f,%.3f,%.3f lightDir=%.3f,%.3f,%.3f\n",
+			sunDir.X, sunDir.Y, sunDir.Z, lightDir.X, lightDir.Y, lightDir.Z));
+		DEBUG_LOG(("[W3X_DIAG] shadowView r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
+			m_shadowView[0].X, m_shadowView[0].Y, m_shadowView[0].Z, m_shadowView[0].W,
+			m_shadowView[3].X, m_shadowView[3].Y, m_shadowView[3].Z, m_shadowView[3].W));
+	}
 
 	// Set shadow view/proj as active transforms so scene depth is
 	// written from the light's perspective, not the main camera's.
@@ -1524,6 +1587,111 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	DX8Wrapper::Set_Transform(D3DTS_PROJECTION, m_shadowProj);
 
 	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::getShadowMapTexture
+// ============================================================================
+IDirect3DTexture9 *W3DDeferredRenderer::getShadowMapTexture() const
+{
+	// Prefer the resolved sampler copy (reliable RT->SRV under dgVoodoo2); fall
+	// back to the RT texture itself if the sampler wasn't created.
+	if (m_shadowDepthSampler) return m_shadowDepthSampler;
+	return m_shadowDepthRT ? (IDirect3DTexture9*)m_shadowDepthRT->Peek_D3D_Texture() : NULL;
+}
+
+IDirect3DSurface9 *W3DDeferredRenderer::getShadowRTSurface() const
+{
+	// Returns a NEW reference (caller Releases). Used by the W3X shadow pass to
+	// re-bind the shadow color RT right before its own draw, so that even if a
+	// previously-rendered object changed the device render target, the depth pass
+	// still writes into the shadow map. NOTE: this must be the RENDER TARGET
+	// (m_shadowDepthRT), NOT the sampler copy — getShadowMapTexture() now returns
+	// the sampler.
+	IDirect3DTexture9 *tex = m_shadowDepthRT
+		? (IDirect3DTexture9*)m_shadowDepthRT->Peek_D3D_Texture() : NULL;
+	IDirect3DSurface9 *surf = NULL;
+	if (tex) tex->GetSurfaceLevel(0, &surf);
+	return surf;
+}
+
+// ----------------------------------------------------------------------------
+// Half-float -> float (for reading back the A16B16G16R16F shadow color RT).
+// ----------------------------------------------------------------------------
+static float HalfToFloat(unsigned short h)
+{
+	unsigned int sign = (h & 0x8000u) << 16;
+	unsigned int exp  = (h >> 10) & 0x1Fu;
+	unsigned int mant = h & 0x3FFu;
+	if (exp == 0) {
+		// Denormal: mant * 2^-24
+		return (float)mant * (1.0f / 16777216.0f);
+	}
+	if (exp == 31) return 1.0e30f;	// inf/nan -> clamp to "far"
+	unsigned int fbits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+	float f;
+	memcpy(&f, &fbits, sizeof(f));
+	return f;
+}
+
+// ----------------------------------------------------------------------------
+// One-shot: read back the shadow-map COLOR RT and report the red-channel
+// (stored sun-space depth) statistics. Empty shadow map (clear color 1,1,1)
+// has min == max == mean == 1.0; any content shows min < 1.0. This splits
+// "depth not written into the map" from "map has depth but sampling fails".
+// ----------------------------------------------------------------------------
+static void DebugDumpShadowMap(IDirect3DDevice9 *d9, TextureClass *rt)
+{
+	// Fire once on a LATER shadow pass (~2s at 30fps) so the scene/humvee is in
+	// the shadow map — frame-1 sampling often runs before units are placed and
+	// would falsely report an empty map.
+	static int s_count = 0;
+	static bool s_dumped = false;
+	if (!d9 || !rt || s_dumped || ++s_count < 60) return;
+	s_dumped = true;
+
+	IDirect3DTexture9 *tex = (IDirect3DTexture9*)rt->Peek_D3D_Texture();
+	if (!tex) { DIAG_LOG(("SHADOWDBG: no shadow color RT texture\n")); return; }
+	IDirect3DSurface9 *src = NULL;
+	if (FAILED(tex->GetSurfaceLevel(0, &src))) { DIAG_LOG(("SHADOWDBG: GetSurfaceLevel failed\n")); return; }
+	D3DSURFACE_DESC desc;
+	src->GetDesc(&desc);
+
+	IDirect3DSurface9 *sys = NULL;
+	if (FAILED(d9->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &sys, NULL))) {
+		DIAG_LOG(("SHADOWDBG: CreateOffscreenPlainSurface failed\n")); src->Release(); return;
+	}
+	if (FAILED(d9->GetRenderTargetData(src, sys))) {
+		DIAG_LOG(("SHADOWDBG: GetRenderTargetData failed\n")); sys->Release(); src->Release(); return;
+	}
+	D3DLOCKED_RECT lr;
+	if (FAILED(sys->LockRect(&lr, NULL, D3DLOCK_READONLY))) {
+		DIAG_LOG(("SHADOWDBG: LockRect failed\n")); sys->Release(); src->Release(); return;
+	}
+
+	const int step = 16;
+	float mn = 1e9f, mx = -1e9f, sum = 0; int n = 0;
+	for (int y = 0; y < (int)desc.Height; y += step) {
+		const unsigned char *row = (const unsigned char*)lr.pBits + (size_t)y * lr.Pitch;
+		for (int x = 0; x < (int)desc.Width; x += step) {
+			float v;
+			if (desc.Format == D3DFMT_A16B16G16R16F) {
+				const unsigned short *p = (const unsigned short*)(row + (size_t)x * 8);
+				v = HalfToFloat(p[2]);		// A16B16G16R16F: R is the 3rd u16
+			} else {
+				const unsigned char *p = row + (size_t)x * 4;
+				v = p[2] / 255.0f;			// A8R8G8B8: R at byte 2
+			}
+			if (v < mn) mn = v;
+			if (v > mx) mx = v;
+			sum += v; n++;
+		}
+	}
+	sys->UnlockRect();
+	sys->Release();
+	src->Release();
+	DIAG_LOG(("SHADOWDBG: shadow map %dx%d fmt=0x%X R-min=%.4f R-max=%.4f R-mean=%.4f samples=%d (empty iff min>=0.99)\n",
+		(int)desc.Width, (int)desc.Height, (unsigned)desc.Format, mn, mx, sum / n, n));
 }
 
 // ============================================================================
@@ -1543,7 +1711,24 @@ void W3DDeferredRenderer::endShadowMapPass()
 		m_savedDS->Release();
 		m_savedDS = NULL;
 	}
+	// Copy the shadow depth RT into the plain sampler texture so the main pass
+	// samples a resolved copy (reliable RT->SRV under dgVoodoo2). Do this while the
+	// shadow RT is still bound; StretchRect from an active render target is the
+	// most reliable path.
+	if (dev && m_shadowDepthRT && m_shadowDepthSampler) {
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+		IDirect3DSurface9 *src = getShadowRTSurface();
+		IDirect3DSurface9 *dst = NULL;
+		if (src && SUCCEEDED(m_shadowDepthSampler->GetSurfaceLevel(0, &dst))) {
+			d9->StretchRect(src, NULL, dst, NULL, D3DTEXF_NONE);
+			dst->Release();
+		}
+		if (src) src->Release();
+	}
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+
+	// One-shot diagnostic: does the shadow-map color RT actually contain depth?
+	DebugDumpShadowMap(static_cast<IDirect3DDevice9*>(dev), m_shadowDepthRT);
 
 	// Restore main camera view/proj transforms.
 	DX8Wrapper::Set_Transform(D3DTS_VIEW, m_savedView);

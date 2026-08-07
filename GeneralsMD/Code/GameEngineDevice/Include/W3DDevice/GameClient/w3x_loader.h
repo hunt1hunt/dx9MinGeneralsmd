@@ -194,6 +194,11 @@ private:
 	static bool ParseTriangles(pugi::xml_node &node, W3XMeshData &data);
 	static bool ParseBoneInfluences(pugi::xml_node &node, W3XMeshData &data);
 	static bool ParseConstants(pugi::xml_node &node, W3XMeshData &data);
+
+	// Internal: compute tangent/binormal when the .w3x file provides none
+	// (Lengyel method over position+texcoord+triangle index). Needed so the
+	// RA3 PBR shader's bump-normal perturbation has a TBN to work with.
+	static void ComputeFallbackTangents(W3XMeshData &data);
 };
 
 

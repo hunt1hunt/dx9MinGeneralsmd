@@ -59,6 +59,8 @@
 #include "GameLogic/TerrainLogic.h"
 #include "WW3D2/DX8Caps.h"
 #include "GameClient/Drawable.h"
+#include <d3d9.h>
+#include "W3DDevice/GameClient/W3XRenderObj.h"
 
 #ifdef _INTERNAL
 // for occasional debugging...
@@ -368,6 +370,7 @@ protected:
 	Int m_numPolyNeighbors;  // length of m_polyNeighbors and the number of polygons
 							 // in our current geometry.
 	W3DShadowGeometry *m_parentGeometry; // mesh hierarchy containing this mesh.
+	bool m_ownsShadowArrays;		// true when initFromW3X allocated m_verts/m_polygons
 
 };	//end of meshInfo
 
@@ -600,6 +603,7 @@ class W3DShadowGeometry : public RefCountClass, public	HashableClass
 		Int init (RenderObjClass *robj);
 		Int initFromHLOD (RenderObjClass *robj);	///<initialize the geometry from a W3D HLOD object.
 		Int initFromMesh (RenderObjClass *robj);///<initialize the geometry from a W3D Mesh object.
+	Int initFromW3X (RenderObjClass *robj);///<initialize the geometry from a W3X render object (volumetric shadow).
 
 		const char *		Get_Name(void) const	{ return m_namebuf;}
 		void				Set_Name(const char *name)
@@ -769,6 +773,96 @@ Int W3DShadowGeometry::initFromMesh(RenderObjClass *robj)
 	return TRUE;
 }
 
+Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
+{
+	W3XRenderObjClass *w3x = (W3XRenderObjClass *)robj;
+	// W3DShadowGeometry ctor is empty; m_meshCount is NOT zero-initialized
+	// (NEW does not zero), so reset it or &m_meshList[m_meshCount] is OOB.
+	m_meshCount = 0;
+	m_numTotalsVerts = 0;
+	Int built = 0;
+
+	int subMeshCount = w3x->GetSubMeshCount();
+	for (int si = 0; si < subMeshCount; si++)
+	{
+		IDirect3DVertexBuffer9 *vb = w3x->GetSubMeshVB(si);
+		IDirect3DIndexBuffer9 *ib = w3x->GetSubMeshIB(si);
+		int vcount = w3x->GetSubMeshVertexCount(si);
+		int tcount = w3x->GetSubMeshTriangleCount(si);
+		if (!vb || !ib || vcount <= 0 || tcount <= 0 || vcount > MAX_SHADOW_VOLUME_VERTS)
+			continue;
+
+		// Read positions from the (D3DPOOL_MANAGED) vertex buffer. W3XVertex
+		// layout: position = 3 floats at offset 0, stride 76 bytes.
+		Vector3 *verts = NEW Vector3[vcount];
+		{
+			void *ptr = NULL;
+			if (FAILED(vb->Lock(0, 0, &ptr, D3DLOCK_READONLY))) { delete[] verts; continue; }
+			char *base = (char *)ptr;
+			for (int v = 0; v < vcount; v++)
+			{
+				float *p = (float *)(base + v * 76);
+				verts[v].Set(p[0], p[1], p[2]);
+			}
+			vb->Unlock();
+		}
+
+		// Read triangle indices (16-bit).
+		int icount = tcount * 3;
+		unsigned short *idx = NEW unsigned short[icount];
+		{
+			void *ptr = NULL;
+			if (FAILED(ib->Lock(0, 0, &ptr, D3DLOCK_READONLY))) { delete[] verts; delete[] idx; continue; }
+			unsigned short *src = (unsigned short *)ptr;
+			for (int i = 0; i < icount; i++) idx[i] = src[i];
+			ib->Unlock();
+		}
+
+		// Deduplicate vertices exactly like initFromMesh.
+		UnsignedShort *vertParent = NEW UnsignedShort[vcount];
+		for (int i = 0; i < vcount; i++) vertParent[i] = 0xffff;
+		int newVertexCount = vcount;
+		for (int j = 0; j < vcount; j++)
+		{
+			if (vertParent[j] != 0xffff) continue;
+			const Vector3 *v_curr = &verts[j];
+			for (int k = j + 1; k < vcount; k++)
+			{
+				Vector3 len(*v_curr - verts[k]);
+				if (len.Length2() == 0) { vertParent[k] = j; newVertexCount--; }
+			}
+			vertParent[j] = j;
+		}
+
+		// Build the triangle array.
+		TriIndex *polys = NEW TriIndex[tcount];
+		for (int ti = 0; ti < tcount; ti++)
+		{
+			polys[ti].I = (unsigned short)idx[ti * 3 + 0];
+			polys[ti].J = (unsigned short)idx[ti * 3 + 1];
+			polys[ti].K = (unsigned short)idx[ti * 3 + 2];
+		}
+		delete[] idx;
+
+		W3DShadowGeometryMesh *geomMesh = &m_meshList[m_meshCount];
+		geomMesh->m_mesh = (MeshClass *)robj;	// Get_Transform/Get_Bounding_Box are
+		geomMesh->m_meshRobjIndex = -1;			// inline base RenderObjClass readers
+		geomMesh->m_verts = verts;
+		geomMesh->m_numVerts = newVertexCount;
+		geomMesh->m_polygons = polys;
+		geomMesh->m_numPolygons = tcount;
+		geomMesh->m_parentVerts = vertParent;
+		geomMesh->m_parentGeometry = this;
+		geomMesh->m_ownsShadowArrays = true;
+
+		m_meshCount++;
+		m_numTotalsVerts += newVertexCount;
+		built++;
+	}
+
+	return built != 0;
+}
+
 Int W3DShadowGeometry::init(RenderObjClass *robj)
 {
 	return TRUE;
@@ -824,6 +918,7 @@ W3DShadowGeometryMesh::W3DShadowGeometryMesh( void )
 	m_numPolyNeighbors = 0;
 	m_parentVerts = NULL;
 	m_polygonNormals = NULL;
+	m_ownsShadowArrays = false;
 }  // end W3DShadowGeometry
 
 // ~W3DShadowGeometry ============================================================
@@ -837,6 +932,10 @@ W3DShadowGeometryMesh::~W3DShadowGeometryMesh( void )
 	}
 	if (m_polygonNormals)
 		delete [] m_polygonNormals;
+	if (m_ownsShadowArrays) {
+		delete [] const_cast<Vector3*>(m_verts);
+		delete [] const_cast<TriIndex*>(m_polygons);
+	}
 
 }  // end ~W3DShadowGeometry
 
@@ -1717,7 +1816,7 @@ void W3DVolumetricShadow::SetGeometry( W3DShadowGeometry *geometry )
 		{
 
 			deleteSilhouette(i);
-			if( allocateSilhouette(i, numNewVertices ) == FALSE )
+			if( allocateSilhouette(i, numNewVertices, geometry->getMesh(i)->GetNumPolygon() ) == FALSE )
 				return;
 
 		}  // end if
@@ -3248,9 +3347,12 @@ void W3DVolumetricShadow::resetShadowVolume( Int volumeIndex, Int meshIndex )
 // accomodate that as a series of disjoint edge pairs, otherwise known
 // as numVertices * 2
 // ============================================================================
-Bool W3DVolumetricShadow::allocateSilhouette(Int meshIndex, Int numVertices )
+Bool W3DVolumetricShadow::allocateSilhouette(Int meshIndex, Int numVertices, Int numPolygons )
 {
-	Int numEntries = numVertices * 5;	///@todo: HACK, HACK... Should be 2!
+	// Open meshes (e.g. W3X sub-mesh parts) can have up to 6*numPolygons
+	// silhouette indices (every edge is a boundary edge); the old 5*numVertices
+	// under-sizes that and overflows the buffer -> memory corruption.
+	Int numEntries = __max(numVertices * 5, numPolygons * 6);
 
 	// sanity
 	assert( m_silhouetteIndex[meshIndex] == NULL && 
@@ -4267,6 +4369,9 @@ int W3DShadowGeometryManager::Load_Geom(RenderObjClass *robj, const char *name)
 			break;
 		case RenderObjClass::CLASSID_MESH:
 			res=newgeom->initFromMesh(robj);
+			break;
+		case W3XRenderObjClass::CLASSID_W3X:
+			res=newgeom->initFromW3X(robj);
 			break;
 		default:
 			break;	//unknown render object type

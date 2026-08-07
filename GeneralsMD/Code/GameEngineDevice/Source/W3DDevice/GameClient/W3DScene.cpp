@@ -37,6 +37,7 @@
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Lib/BaseType.h"
 #include "Common/GlobalData.h"
+#include "Common/Debug.h"
 #include "Common/PerfTimer.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -1068,8 +1069,29 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				&& !ShaderClass::Is_Backface_Culling_Inverted())
 			{
 				Vector3 sunDir(0,0,-1), sunColor(1,1,1), ambient(0.1f,0.1f,0.15f);
+				// Sun direction for the shadow camera. Use the SAME source the W3X
+				// PBR shader lights with (m_terrainLightPos[0], see W3XEffectManager
+				// DirectionalLight binding) so shadows fall along the rendered light
+				// rays. m_globalLight[0]->Get_Position() is NOT usable here: setTimeOfDay
+				// stores the light direction in the transform's Z basis and leaves the
+				// translation (what Get_Position() reads) at (0,0,0) — a zero sunDir
+				// collapsed the shadow LookAt to a zero matrix and emptied the map.
+				// NOTE: negate light position, exactly like the engine's other sunDir
+				// bindings (W3DScene.cpp PBR c0, HeightMap.cpp, W3XEffectManager
+				// DirectionalLight). m_terrainLightPos is the LIGHT POSITION; the light
+				// RAY direction is -lightPos. Missing the sign here pointed the shadow
+				// camera 180deg off-axis and scattered the deferred shadows around.
+				if (TheGlobalData) {
+					sunDir.Set((float)-TheGlobalData->m_terrainLightPos[0].x,
+						(float)-TheGlobalData->m_terrainLightPos[0].y,
+						(float)-TheGlobalData->m_terrainLightPos[0].z);
+				}
+				if (sunDir.Length2() < 1e-6f && m_globalLight[0]) {
+					sunDir = m_globalLight[0]->Get_Transform().Get_Z_Vector();
+				}
+				DEBUG_LOG(("[W3X_DIAG] shadow sunDir=%.3f,%.3f,%.3f len=%.3f\n",
+					sunDir.X, sunDir.Y, sunDir.Z, sunDir.Length()));
 				if (m_globalLight[0]) {
-					sunDir=m_globalLight[0]->Get_Position();
 					m_globalLight[0]->Get_Diffuse(&sunColor);
 					m_globalLight[0]->Get_Ambient(&ambient);
 					float intens=m_globalLight[0]->Get_Intensity();
@@ -1092,7 +1114,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				{
 					DIAG_LOG(("PIPELINE: === Shadow Map Pass ===\n"));
 					LARGE_INTEGER shS,shE; QueryPerformanceCounter(&shS);
-					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix)) {
+					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,camPos)) {
 						RefRenderObjListIterator si(&RenderList);
 						for (si.First(); !si.Is_Done(); si.Next()) {
 						RenderObjClass *r=si.Peek_Obj();

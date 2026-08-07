@@ -86,7 +86,7 @@ protected:
 		W3DVolumetricShadowRenderTask *m_dynamicShadowVolumesToRender;
 		W3DShadowGeometryManager *m_W3DShadowGeometryManager;
 		//
-// ---- ÐÂÔö£ºsoft shadow render target ----  		
+// ---- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½soft shadow render target ----  		
 IDirect3DTexture8  *m_softShadowRT;  		
 IDirect3DSurface8  *m_softShadowSurface;
 		//
@@ -148,7 +148,7 @@ class W3DVolumetricShadow	: public Shadow
 		void addSilhouetteEdge(Int meshIndex, PolyNeighbor *visible, PolyNeighbor *hidden );
 		void addNeighborlessEdges(Int meshIndex, PolyNeighbor *us );
 		void addSilhouetteIndices(Int meshIndex, Short edgeStart, Short edgeEnd );
-		Bool allocateSilhouette(Int meshIndex, Int numVertices );  // allocate memory for sil
+		Bool allocateSilhouette(Int meshIndex, Int numVertices, Int numPolygons );  // allocate memory for silhouette
 		void deleteSilhouette(Int meshIndex );  // resets and frees silhouette memory
 		void resetSilhouette( Int meshIndex );  // reset silhouette to empty
 

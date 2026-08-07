@@ -134,7 +134,7 @@ public:
 
 	/// Bind the shadow map RT, set orthographic camera from sun direction.
 	/// Returns true if shadow map is available and pass started.
-	bool beginShadowMapPass(const Vector3 &sunDir, const Matrix4x4 &camView);
+	bool beginShadowMapPass(const Vector3 &sunDir, const Matrix4x4 &camView, const Vector3 &camPos);
 
 	/// Restore default RT after shadow map rendering.
 	void endShadowMapPass();
@@ -146,6 +146,16 @@ public:
 	const Matrix4x4& getShadowViewProj() const { return m_shadowViewProj; }
 	const Matrix4x4& getShadowView() const { return m_shadowView; }
 	const Matrix4x4& getShadowProj() const { return m_shadowProj; }
+
+	/// Access the shadow-map texture (for W3X forward-pass sampling). This is the
+	/// COLOR render target that stores the sun-space depth as color — D16 depth
+	/// textures are not reliably sampleable under dgVoodoo2.
+	IDirect3DTexture9 *getShadowMapTexture() const;
+
+	/// Returns a NEW reference to the shadow-map color RT surface (caller must
+	/// Release). Used by the W3X shadow pass to re-bind the RT right before its
+	/// draw, in case another renderable changed the active render target mid-pass.
+	IDirect3DSurface9 *getShadowRTSurface() const;
 
 	/// Whether shadow map is ready (D24X8 depth-stencil must be available).
 	bool isShadowMapAvailable() const { return m_shadowMapAvailable && m_shadowDepthStencilAvailable; }
@@ -230,7 +240,8 @@ private:
 	bool createShadowResources();
 	void releaseShadowResources();
 
-	TextureClass *m_shadowDepthRT;			///< Shadow map depth RT (2048x2048).
+	TextureClass *m_shadowDepthRT;			///< Shadow map depth RT (1024x1024 color RT).
+	IDirect3DTexture9 *m_shadowDepthSampler; ///< Plain sampler copy of the shadow map (StretchRect'd each frame, reliable RT->SRV under dgVoodoo2).
 	bool m_shadowMapAvailable;				///< Shadow map resources OK.
 	Matrix4x4 m_shadowViewProj;				///< Sun's view-projection matrix (for shader).
 	Matrix4x4 m_shadowView;					///< Sun's view matrix (shadow camera).

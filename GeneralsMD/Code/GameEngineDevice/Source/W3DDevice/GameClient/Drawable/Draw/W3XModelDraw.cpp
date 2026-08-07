@@ -22,9 +22,12 @@
 #include "W3DDevice/GameClient/W3XRenderObj.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
+#include "W3DDevice/GameClient/W3DShadow.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/Shadow.h"
 #include "GameLogic/Object.h"
 #include "Common/GlobalData.h"
+#include "Common/ThingTemplate.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "WW3D2/texture.h"
 #include "WW3D2/ww3dformat.h"
@@ -36,6 +39,7 @@
 #include "refcount.h"
 #include "wwdebug.h"
 #include "wwmemlog.h"
+#include <string.h>
 #include <d3d9.h>
 #include <d3dx9effect.h>
 
@@ -85,15 +89,71 @@ void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void 
 
 W3XModelDraw::W3XModelDraw(Thing *thing, const ModuleData *moduleData) :
 	DrawModule(thing, moduleData), m_curState(NULL), m_fullyObscuredByShroud(false),
-	m_renderObj(NULL)
+	m_renderObj(NULL), m_shadowEnabled(TRUE), m_shadow(NULL)
 {
 	m_loadedModel.boneMatrixArray = NULL;
 	m_loadedModel.valid = false;
 	DEBUG_LOG(("[W3X_P5] W3XModelDraw created\n"));
 }
 
+//-----------------------------------------------------------------------------
+// Shadow support (mirrors W3DModelDraw): W3X objects cast the same projected
+// ground shadow via TheW3DShadowManager. The three virtuals are invoked by
+// Drawable::allocateShadows/releaseShadows/setShadowsEnabled (Options screen).
+//-----------------------------------------------------------------------------
+void W3XModelDraw::setShadowsEnabled(Bool enable)
+{
+	if (m_shadow) m_shadow->enableShadowRender(enable);
+	m_shadowEnabled = enable;
+}
+
+void W3XModelDraw::releaseShadows(void)
+{
+	if (m_shadow) m_shadow->release();
+	m_shadow = NULL;
+}
+
+void W3XModelDraw::allocateShadows(void)
+{
+	// SWITCHED to the engine's W3D soft (projected) shadow path: the deferred
+	// shadow-map could not rasterize the W3X into the shadow color RT under
+	// dgVoodoo2 (0 pixels), so use the same projected ground-blob shadow the
+	// standard W3D units use, driven by the template's Shadow type
+	// (SHADOW_PROJECTION). NOT volumetric (its open sub-mesh parts overflow the
+	// shadow buffers), but a projected blob from the object bounds.
+	const ThingTemplate *tmplate = getDrawable() ? getDrawable()->getTemplate() : NULL;
+	if (m_shadow == NULL && m_renderObj && TheW3DShadowManager
+		&& tmplate && tmplate->getShadowType() != SHADOW_NONE) {
+		Shadow::ShadowTypeInfo shadowInfo;
+		strcpy(shadowInfo.m_ShadowName, tmplate->getShadowTextureName().str());
+		shadowInfo.allowUpdates    = FALSE;
+		shadowInfo.allowWorldAlign = TRUE;
+		shadowInfo.m_type          = (ShadowType)tmplate->getShadowType();
+		shadowInfo.m_sizeX         = tmplate->getShadowSizeX();
+		shadowInfo.m_sizeY         = tmplate->getShadowSizeY();
+		shadowInfo.m_offsetX       = tmplate->getShadowOffsetX();
+		shadowInfo.m_offsetY       = tmplate->getShadowOffsetY();
+		m_shadow = TheW3DShadowManager->addShadow(m_renderObj, &shadowInfo);
+		if (m_shadow) {
+			m_shadow->enableShadowInvisible(m_fullyObscuredByShroud);
+			if (m_renderObj->Is_Hidden() || !m_shadowEnabled)
+				m_shadow->enableShadowRender(FALSE);
+		}
+		DEBUG_LOG(("[W3X_DIAG] W3X '%s' W3D soft shadow: shadow=%p type=%d size=(%.1f,%.1f) tex='%s'\n",
+			tmplate->getName().str(), (void*)m_shadow, (int)tmplate->getShadowType(),
+			tmplate->getShadowSizeX(), tmplate->getShadowSizeY(),
+			tmplate->getShadowTextureName().str()));
+	} else {
+		DEBUG_LOG(("[W3X_DIAG] W3X '%s' shadow skipped (m_shadow=%p robj=%p mgr=%p type=%d)\n",
+			tmplate ? tmplate->getName().str() : "?",
+			(void*)m_shadow, (void*)m_renderObj, (void*)TheW3DShadowManager,
+			tmplate ? (int)tmplate->getShadowType() : -1));
+	}
+}
+
 W3XModelDraw::~W3XModelDraw()
 {
+	releaseShadows();
 	removeRenderObject();
 	releaseModelData(m_loadedModel);
 }
@@ -290,7 +350,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 			verts[vi].v = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
 			// DIAG: dump a few vertices from the first submesh to verify data
 			if (si == 0 && vi < 4) {
-				DEBUG_LOG(("[W3X_P6]   vert[%d] pos=(%.2f,%.2f,%.2f) nrm=(%.2f,%.2f,%.2f) uv=(%.3f,%.3f) bone=(%.0f,%.2f)\n",
+				DEBUG_LOG(("[W3X_P5]   vert[%d] pos=(%.2f,%.2f,%.2f) nrm=(%.2f,%.2f,%.2f) uv=(%.3f,%.3f) bone=(%.0f,%.2f)\n",
 					vi, verts[vi].x, verts[vi].y, verts[vi].z,
 					verts[vi].nx, verts[vi].ny, verts[vi].nz,
 					verts[vi].u, verts[vi].v,
@@ -348,10 +408,25 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		subBuf.vertexCount = vertCount;
 		subBuf.triangleCount = triCount;
 		subBuf.hasBones = hasBones;
+		subBuf.name = sub.renderObjectName;
+		subBuf.hasTangents = ((int)meshData.tangents.size() >= vertCount);
+		subBuf.hasBinormals = ((int)meshData.binormals.size() >= vertCount);
+		subBuf.origShader = meshData.fxShaderName;
+		subBuf.constants = meshData.constants;
+		// Carry the real local-space AABB from the .w3x <BoundingBox> node so
+		// createRenderObject can build a correct model box (scene culling + the
+		// projected ground shadow both depend on it).
+		subBuf.boundMin[0] = meshData.boundMin[0];
+		subBuf.boundMin[1] = meshData.boundMin[1];
+		subBuf.boundMin[2] = meshData.boundMin[2];
+		subBuf.boundMax[0] = meshData.boundMax[0];
+		subBuf.boundMax[1] = meshData.boundMax[1];
+		subBuf.boundMax[2] = meshData.boundMax[2];
 		outData.subMeshes.push_back(subBuf);
 
-		DEBUG_LOG(("[W3X_P5]   Sub-mesh '%s': %d verts, %d tris, bones=%d\n",
-			sub.renderObjectName.str(), vertCount, triCount, hasBones ? (int)meshData.boneIndices.size() : 0));
+		DEBUG_LOG(("[W3X_P5]   Sub-mesh '%s': %d verts, %d tris, bones=%d, tangents=%d, shader=%s\n",
+			sub.renderObjectName.str(), vertCount, triCount, hasBones ? (int)meshData.boneIndices.size() : 0,
+			(int)meshData.tangents.size(), meshData.fxShaderName.str()));
 
 		// Use the first non-defaultw3d FX shader (defaultw3d.fx is a placeholder
 		// that sub-parts use when they should render with the standard pipeline)
@@ -462,6 +537,15 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	for (size_t i = 0; i < data.subMeshes.size(); i++) {
 		SubMeshBuffer &sm = data.subMeshes[i];
 		robj->AddSubMesh(sm.vertexBuffer, sm.indexBuffer, sm.vertexCount, sm.triangleCount);
+		robj->SetSubMeshTangent((int)i, sm.hasTangents, sm.hasBinormals);
+		// Per-sub-mesh shader override: sub-meshes authored for the RA3 tread
+		// shader keep their scrolling-tread effect via the SAS-free override
+		// w3x_tread.fx instead of being forced onto the shared soviet shader.
+		if (!sm.origShader.isEmpty()
+			&& (strcmp(sm.origShader.str(), "objectsalliedtread.fx") == 0
+				|| strstr(sm.origShader.str(), "tread") != NULL)) {
+			robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_tread.fx", 0, sm.constants);
+		}
 		sm.vertexBuffer = NULL;
 		sm.indexBuffer = NULL;
 	}
@@ -474,9 +558,29 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 		robj->SetBones(data.boneMatrixArray, data.boneCount);
 	}
 
-	// Bounds (approximate from model - use generous box)
-	Vector3 bmin(-100, -100, -100), bmax(100, 100, 100);
+	// Bounds: union of the per-sub-mesh AABBs parsed from each .w3x <BoundingBox>.
+	// The scene uses these for frustum culling AND the projected ground shadow
+	// (W3DProjectedShadow::updateBounds projects this box to compute the shadow
+	// footprint). Hardcoding a big box here made the projected shadow cover most
+	// of the map, overflow the 4096-vertex shadow buffer and render nothing.
+	Vector3 bmin(1e30f, 1e30f, 1e30f), bmax(-1e30f, -1e30f, -1e30f);
+	for (size_t bi = 0; bi < data.subMeshes.size(); bi++) {
+		const SubMeshBuffer &sm = data.subMeshes[bi];
+		for (int k = 0; k < 3; k++) {
+			if (sm.boundMin[k] < bmin[k]) bmin[k] = sm.boundMin[k];
+			if (sm.boundMax[k] > bmax[k]) bmax[k] = sm.boundMax[k];
+		}
+	}
+	// Degenerate (mesh missing <BoundingBox> / parse failed) -> fall back so
+	// culling and shadows still function.
+	if (bmin.X >= bmax.X || bmin.Y >= bmax.Y || bmin.Z >= bmax.Z) {
+		bmin.Set(-100, -100, -100);
+		bmax.Set(100, 100, 100);
+		DEBUG_LOG(("[W3X_DIAG] W3X '%s' bounds MISSING -> FALLBACK box\n", m_loadedModelName.str()));
+	}
 	robj->SetBounds(bmin, bmax);
+	DEBUG_LOG(("[W3X_DIAG] W3X '%s' bounds min=(%.1f,%.1f,%.1f) max=(%.1f,%.1f,%.1f)\n",
+		m_loadedModelName.str(), bmin.X, bmin.Y, bmin.Z, bmax.X, bmax.Y, bmax.Z));
 
 	// Add to scene
 	W3DDisplay::m_3DScene->Add_Render_Object(robj);
@@ -484,6 +588,36 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 
 	DEBUG_LOG(("[W3X_P5]   W3XRenderObj added to scene: %d sub-meshes, fx=%s\n",
 		(int)data.subMeshes.size(), data.fxShaderName.str()));
+
+	// =====================================================================
+	// SHADER-EFFECT DIAGNOSTICS (one-shot per model load)
+	// Verifies whether each sub-mesh can actually produce PBR / bump-normal
+	// output under the model-wide shared shader.
+	//   - bump normals need native TANGENT+BINORMAL per vertex (else N stays
+	//     unperturbed and the normal-map has no visible effect on that mesh)
+	//   - a sub-mesh authored with a different FX (e.g. objectsalliedtread.fx)
+	//     is overridden by the shared w3x_soviet.fx, losing its special
+	//     features (e.g. tread scrolling UV animation)
+	// =====================================================================
+	{
+		DEBUG_LOG(("[W3X_DIAG] W3X '%s' renders ALL %d sub-meshes with SHARED shader '%s' (technique %d)\n",
+			m_loadedModelName.str(), (int)data.subMeshes.size(), data.fxShaderName.str(), data.techniqueIndex));
+		for (size_t di = 0; di < data.subMeshes.size(); di++) {
+			const SubMeshBuffer &d = data.subMeshes[di];
+			const char *overrideMark = "";
+			if (d.origShader.isNotEmpty() && strcmp(d.origShader.str(), "defaultw3d.fx") != 0
+				&& strcmp(d.origShader.str(), data.fxShaderName.str()) != 0) {
+				overrideMark = " <-- OVERRIDDEN from orig";
+			}
+			DEBUG_LOG(("[W3X_DIAG]   [%d] %-28s tangents=%d binormals=%d bones=%d origShader='%s'%s\n",
+				(int)di, d.name.str(),
+				d.hasTangents ? 1 : 0, d.hasBinormals ? 1 : 0,
+				d.hasBones ? 1 : 0, d.origShader.str(), overrideMark));
+			DEBUG_LOG(("[W3X_DIAG]     bump-normal: %s | PBR-shader: %s\n",
+				(d.hasTangents && d.hasBinormals) ? "YES (tangent data present)" : "NO (tangent data missing -> normal map has no effect)",
+				(d.origShader.isEmpty() || strcmp(d.origShader.str(), "defaultw3d.fx") == 0) ? "sub-mesh authored w/o PBR shader (defaultw3d placeholder)" : "YES (real PBR shader path)"));
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -528,6 +662,12 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 			}
 			// Build scene render object from the freshly loaded data
 			createRenderObject(m_loadedModel);
+			// Name the render object with the model name so the volumetric shadow
+			// geometry is cached per-model (not shared as "UNNAMED").
+			if (m_renderObj) m_renderObj->Set_Name(targetModel);
+			// (Re)allocate the volumetric shadow now that the render object exists.
+			// Drawable::allocateShadows() may have run before the model was built.
+			if (m_shadow == NULL) allocateShadows();
 		}
 		// Mark as attempted regardless of success
 		m_loadedModelName = targetModel;
@@ -551,6 +691,7 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 void W3XModelDraw::setFullyObscuredByShroud(Bool fullyObscured)
 {
 	m_fullyObscuredByShroud = (fullyObscured != FALSE);
+	if (m_shadow) m_shadow->enableShadowInvisible(m_fullyObscuredByShroud);
 }
 
 Bool W3XModelDraw::isVisible() const

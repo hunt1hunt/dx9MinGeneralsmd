@@ -4712,6 +4712,28 @@ TextureClass *W3DShaderManager::getNormalMapTexture(const char *albedoName)
 	return NULL;
 }
 
+// C-linkage normal-map query for cross-library access from dx8renderer.cpp.
+// Returns true if a _n.dds normal map was registered for this albedo texture.
+extern "C" bool PBR_HasNormalMap(const char *albedoName)
+{
+	if (!albedoName || !albedoName[0]) return false;
+	return (W3DShaderManager::getNormalMapTexture(albedoName) != NULL);
+}
+
+// C-linkage normal-map binding for cross-library access from dx8renderer.cpp.
+// Binds the registered _n.dds to texture stage 1 (s1 in the PBR unit shader).
+// Returns true if a normal map was bound, false otherwise.
+extern "C" bool PBR_BindNormalMap(const char *albedoName)
+{
+	if (!albedoName || !albedoName[0]) return false;
+	TextureClass *normalTex = W3DShaderManager::getNormalMapTexture(albedoName);
+	if (!normalTex || !normalTex->Peek_D3D_Texture()) return false;
+	IDirect3DDevice8 *pDev = DX8Wrapper::_Get_D3D_Device8();
+	if (!pDev) return false;
+	pDev->SetTexture(1, normalTex->Peek_D3D_Texture());
+	return true;
+}
+
 // C-linkage IBL texture binding for cross-library access from dx8renderer.cpp
 // Called after selecting a PBR unit shader to bind CubeMap environment textures
 // to stages 3 (irradiance), 4 (prefiltered), 5 (BRDF LUT).

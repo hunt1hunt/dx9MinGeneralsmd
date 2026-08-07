@@ -178,7 +178,12 @@ bool W3XLoader::ReadMeshData(const char *filename, W3XMeshData &data)
 	DEBUG_LOG(("[W3X_P2]   id=%s GeometryType=%s CastShadow=%s\n",
 		data.id.str(), data.geometryType.str(), data.castShadow ? "true" : "false"));
 
-	// BoundingBox
+	// BoundingBox — zero-init first so a mesh without this node yields a
+	// degenerate (0,0,0) box that callers can detect and fall back on, instead
+	// of uninitialized garbage / NaN leaking into culling and shadow geometry.
+	data.boundMin[0] = data.boundMin[1] = data.boundMin[2] = 0;
+	data.boundMax[0] = data.boundMax[1] = data.boundMax[2] = 0;
+	data.boundSphereRadius = 0;
 	pugi::xml_node bbox = meshNode.child("BoundingBox");
 	if (bbox) {
 		pugi::xml_node minNode = bbox.child("Min");
@@ -248,6 +253,14 @@ bool W3XLoader::ReadMeshData(const char *filename, W3XMeshData &data)
 	if (data.surfaceTypes.empty() && !data.triangles.empty()) {
 		int triCount = (int)data.triangles.size() / 3;
 		data.surfaceTypes.resize(triCount, 0);
+	}
+
+	// Phase: compute tangent/binormal fallback when the file lacks them.
+	// Without a TBN the RA3 PS_H_ARPBR bump-normal term
+	// (N += nrm.x*WorldB + nrm.y*WorldT) is inert on this mesh.
+	if ((int)data.tangents.size() < (int)data.vertices.size()
+		|| (int)data.binormals.size() < (int)data.vertices.size()) {
+		ComputeFallbackTangents(data);
 	}
 
 	LogMeshSummary(filename, data);
@@ -852,6 +865,107 @@ AsciiString W3XLoader::ResolveTextureDDS(const char *texName)
 	return resultPath;
 }
 
+
+//=============================================================================
+// W3XLoader::ComputeFallbackTangents
+// Lengyel tangent-space basis from position + texcoord + triangle indices.
+// Accumulates each triangle's tangent/binormal into its three vertices, then
+// orthogonalizes against the vertex normal. Fills data.tangents/binormals.
+//=============================================================================
+void W3XLoader::ComputeFallbackTangents(W3XMeshData &data)
+{
+	const int vCount = (int)data.vertices.size();
+	if (vCount == 0) return;
+
+	// Use provided binormals when present, else compute both.
+	bool needT = ((int)data.tangents.size() < vCount);
+	bool needB = ((int)data.binormals.size() < vCount);
+
+	if (needT) data.tangents.assign(vCount, Vector3(0, 0, 0));
+	if (needB) data.binormals.assign(vCount, Vector3(0, 0, 0));
+
+	// Sum per-triangle contributions
+	const int triCount = (int)data.triangles.size() / 3;
+	for (int t = 0; t < triCount; t++) {
+		uint32 i0 = data.triangles[t * 3 + 0];
+		uint32 i1 = data.triangles[t * 3 + 1];
+		uint32 i2 = data.triangles[t * 3 + 2];
+		if (i0 >= (uint32)vCount || i1 >= (uint32)vCount || i2 >= (uint32)vCount) continue;
+
+		const Vector3 &p0 = data.vertices[i0];
+		const Vector3 &p1 = data.vertices[i1];
+		const Vector3 &p2 = data.vertices[i2];
+
+		Vector2 uv0(0, 0), uv1(0, 0), uv2(0, 0);
+		if ((int)data.texcoords.size() > (int)i0) uv0 = data.texcoords[i0];
+		if ((int)data.texcoords.size() > (int)i1) uv1 = data.texcoords[i1];
+		if ((int)data.texcoords.size() > (int)i2) uv2 = data.texcoords[i2];
+
+		// Edge vectors
+		Vector3 e1 = p1 - p0;
+		Vector3 e2 = p2 - p0;
+		float du1 = uv1.X - uv0.X, dv1 = uv1.Y - uv0.Y;
+		float du2 = uv2.X - uv0.X, dv2 = uv2.Y - uv0.Y;
+
+		float det = du1 * dv2 - dv1 * du2;
+		if (det < 0) det = -det;			// fabs
+		if (det < 1e-8f) continue;			// degenerate UV triangle
+
+		float invDet = 1.0f / det;
+		Vector3 T = (e1 * dv2 - e2 * dv1) * invDet;	// U-axis (Lengyel tangent)
+		Vector3 B = (e2 * du1 - e1 * du2) * invDet;	// V-axis (Lengyel binormal)
+
+		// RA3 W3X stores tangent/binormal T-B-exchanged (the shader perturbs
+		// N += nrm.x*WorldB + nrm.y*WorldT, so WorldB must be the U-axis). Native
+		// data verified against SKIN_BODY01: binormal = +U, tangent = -V. Store the
+		// Lengyel axes into those slots (T -> binormals, -B -> tangents) so the
+		// fallback matches the convention the RA3 shader expects.
+		if (needT) {
+			data.tangents[i0] -= B;
+			data.tangents[i1] -= B;
+			data.tangents[i2] -= B;
+		}
+		if (needB) {
+			data.binormals[i0] += T;
+			data.binormals[i1] += T;
+			data.binormals[i2] += T;
+		}
+	}
+
+	// Orthogonalize against the vertex normal (Gram-Schmidt) + normalize
+	for (int v = 0; v < vCount; v++) {
+		Vector3 N = (v < (int)data.normals.size()) ? data.normals[v] : Vector3(0, 0, 1);
+		float nl = N.Length();
+		if (nl < 1e-8f) N.Set(0, 0, 1);
+		else { N.X /= nl; N.Y /= nl; N.Z /= nl; }
+
+		if (needT) {
+			Vector3 &T = data.tangents[v];
+			float nd = Vector3::Dot_Product(N, T);
+			T.X -= N.X * nd; T.Y -= N.Y * nd; T.Z -= N.Z * nd;	// remove normal component
+			float tl = T.Length();
+			if (tl < 1e-8f) T.Set(1, 0, 0);
+			else { T.X /= tl; T.Y /= tl; T.Z /= tl; }
+		}
+		if (needB) {
+			Vector3 &B = data.binormals[v];
+			float nd = Vector3::Dot_Product(N, B);
+			B.X -= N.X * nd; B.Y -= N.Y * nd; B.Z -= N.Z * nd;
+			float bl = B.Length();
+			if (bl < 1e-8f) {
+				// Degenerate: derive from tangent x normal. The tangent slot
+				// holds -V (RA3 convention), so (-V) x N = +U = the binormal.
+				if (needT) Vector3::Cross_Product(data.tangents[v], N, &B);
+				else B.Set(0, 1, 0);
+			} else {
+				B.X /= bl; B.Y /= bl; B.Z /= bl;
+			}
+		}
+	}
+
+	DEBUG_LOG(("[W3X_P2]   Computed fallback tangents: %d, binormals: %d (Lengyel, from position+uv)\n",
+		(int)data.tangents.size(), (int)data.binormals.size()));
+}
 
 //=============================================================================
 // W3XLoader::LogMeshSummary

@@ -30,6 +30,7 @@
 #include "WWMath/matrix3d.h"
 #include "W3DDevice/GameClient/w3x_loader.h"
 #include <vector>
+#include <string.h>
 
 struct IDirect3DVertexBuffer9;
 struct IDirect3DIndexBuffer9;
@@ -53,12 +54,17 @@ public:
 	virtual ~W3XRenderObjClass();
 
 	// RenderObjClass interface
-	virtual int Class_ID(void) const { return RenderObjClass::CLASSID_UNKNOWN; }
+	virtual int Class_ID(void) const { return CLASSID_W3X; }
 	virtual RenderObjClass *Clone(void) const { return NULL; }
 	virtual void Render(RenderInfoClass &rinfo);
 
 	// Data population
 	void AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount);
+	void SetSubMeshTangent(int subMeshIndex, bool hasTangents, bool hasBinormals);
+	// Per-sub-mesh shader override. A sub-mesh with an empty fxName uses the
+	// model-wide shader (set by SetFX). Non-empty overrides per sub-mesh.
+	void SetSubMeshShader(int subMeshIndex, const char *fxName, int technique,
+		const std::vector<W3XShaderConstant> &constants);
 	void SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants);
 	void SetBones(float *bones, int boneCount);
 	void SetBounds(const Vector3 &min, const Vector3 &max);
@@ -68,6 +74,28 @@ public:
 	// World transform for rendering (kept separately; also in RenderObjClass base)
 	void SetWorldTransform(const Matrix3D &m) { m_worldTransform = m; }
 	const Matrix3D &GetWorldTransform(void) const { return m_worldTransform; }
+
+	// Unique class id so W3DShadowGeometryManager::Load_Geom routes a W3X
+	// render object to initFromW3X (builds volumetric shadow geometry from
+	// the sub-mesh vertex/index buffers).
+	enum { CLASSID_W3X = 0x00010001 };
+
+	// Sub-mesh accessors for the volumetric shadow system (reads the D3D
+	// MANAGED buffers back to build shadow geometry).
+	int GetSubMeshCount(void) const { return (int)m_meshes.size(); }
+	IDirect3DVertexBuffer9 *GetSubMeshVB(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].vb : NULL; }
+	IDirect3DIndexBuffer9 *GetSubMeshIB(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].ib : NULL; }
+	int GetSubMeshVertexCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].vertexCount : 0; }
+	int GetSubMeshTriangleCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].triangleCount : 0; }
+
+	// Name (used as the shadow-geometry cache key by W3DShadowGeometryManager).
+	// The base RenderObjClass::Set_Name is a no-op and Get_Name returns "UNNAMED",
+	// which would make ALL W3X models share one shadow geometry. Store the real
+	// model name so each W3X model gets its own cached volumetric geometry.
+	virtual const char *Get_Name(void) const { return m_name; }
+	virtual void Set_Name(const char *name) {
+		if (name) { strncpy(m_name, name, sizeof(m_name) - 1); m_name[sizeof(m_name) - 1] = '\0'; }
+	}
 
 protected:
 	virtual void Update_Cached_Bounding_Volumes(void) const;
@@ -79,6 +107,12 @@ private:
 		IDirect3DIndexBuffer9 *ib;
 		int vertexCount;
 		int triangleCount;
+		bool hasTangents;	// native TANGENT/BINORMAL data present (bump-normal usable)
+		bool hasBinormals;
+		// Per-sub-mesh shader override (empty fxName -> use model-wide shader)
+		AsciiString fxName;
+		int technique;
+		std::vector<W3XShaderConstant> constants;
 	};
 
 	std::vector<SubMesh> m_meshes;
@@ -92,6 +126,7 @@ private:
 	unsigned int m_recolorHex;	// 0xFFRRGGBB faction color (0 = none -> white)
 	Matrix3D m_worldTransform;
 	bool m_valid;
+	char m_name[64];	// model name for shadow-geometry caching / identification
 };
 
 #endif /* W3XRENDEROBJ_H */

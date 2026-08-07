@@ -28,6 +28,7 @@
 
 class Thing;
 class RenderObjClass;
+class Shadow;
 struct ID3DXEffect;
 struct IDirect3DVertexBuffer9;
 struct IDirect3DIndexBuffer9;
@@ -79,9 +80,9 @@ public:
 	W3XModelDraw(Thing *thing, const ModuleData *moduleData);
 	virtual void preloadAssets(TimeOfDay timeOfDay);
 	virtual void doDrawModule(const Matrix3D *transformMtx);
-	virtual void setShadowsEnabled(Bool enable) { }
-	virtual void releaseShadows(void) { }
-	virtual void allocateShadows(void) { }
+	virtual void setShadowsEnabled(Bool enable);
+	virtual void releaseShadows(void);
+	virtual void allocateShadows(void);
 	virtual void setFullyObscuredByShroud(Bool fullyObscured);
 	virtual Bool isVisible() const;
 	virtual void reactToTransformChange(const Matrix3D *, const Coord3D *, Real) { }
@@ -94,6 +95,13 @@ private:
 		IDirect3DIndexBuffer9 *indexBuffer;
 		int vertexCount, triangleCount;
 		bool hasBones;
+		AsciiString name;			// sub-mesh name (for diagnostics)
+		bool hasTangents;			// true when .w3x provided native tangent data
+		bool hasBinormals;			// true when .w3x provided native binormal data
+		AsciiString origShader;		// FX shader the sub-mesh was authored with
+		std::vector<W3XShaderConstant> constants;	// this sub-mesh's shader constants
+		float boundMin[3];			// local-space AABB from .w3x <BoundingBox> (culling + projected shadow)
+		float boundMax[3];
 	};
 
 	struct LoadedModelData
@@ -120,6 +128,8 @@ private:
 	AsciiString m_loadedModelName;
 	class W3XRenderObjClass *m_renderObj;					// scene render object
 	bool m_fullyObscuredByShroud;
+	Bool m_shadowEnabled;			// cached shadow-enable state (Options screen)
+	Shadow *m_shadow;				// projected ground shadow for this object
 };
 
 #endif

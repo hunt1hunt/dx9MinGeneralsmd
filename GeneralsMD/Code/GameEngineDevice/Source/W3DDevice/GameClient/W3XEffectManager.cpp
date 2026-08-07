@@ -314,8 +314,6 @@ ID3DXEffect *W3XEffectManager::GetEffect(const char *fxPath)
 	int idx = FindCacheEntry(fxPath);
 	if (idx >= 0) {
 		m_cache[idx].refCount++;
-		DEBUG_LOG(("[W3X_P3] GetEffect('%s') cache HIT (refCount=%d)\n",
-			fxPath, m_cache[idx].refCount));
 		return m_cache[idx].effect;
 	}
 
