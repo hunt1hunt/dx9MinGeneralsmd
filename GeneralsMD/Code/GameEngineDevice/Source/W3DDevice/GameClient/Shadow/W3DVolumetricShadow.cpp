@@ -595,7 +595,9 @@ class W3DShadowGeometry : public RefCountClass, public	HashableClass
 
 	public:
 
-		W3DShadowGeometry( void ) { };
+		// NEW does not zero-init; without this, m_meshList[m_meshCount] is OOB when
+		// m_meshCount holds garbage. initFromHLOD/initFromMesh also reset it.
+		W3DShadowGeometry( void ) { m_meshCount = 0; m_numTotalsVerts = 0; };
 		~W3DShadowGeometry( void ) { };
 
 		virtual	const char * Get_Key( void )	{ return m_namebuf;	}
@@ -636,6 +638,9 @@ Int W3DShadowGeometry::initFromHLOD(RenderObjClass *robj)
 
 	Int i,j,k,newVertexCount;
 
+	// Defensive reset (matches initFromW3X): the ctor now zeroes this too, but a
+	// reused W3DShadowGeometry must not append onto stale mesh slots.
+	m_meshCount = 0;
 	Int top = hlod->Get_LOD_Count()-1;
 	W3DShadowGeometryMesh *geomMesh=&m_meshList[m_meshCount];
 
@@ -718,6 +723,10 @@ Int W3DShadowGeometry::initFromMesh(RenderObjClass *robj)
 	UnsignedShort vertParent[MAX_SHADOW_VOLUME_VERTS];
 
 	Int j,k,newVertexCount;
+
+	// Defensive reset (matches initFromW3X): see initFromHLOD.
+	m_meshCount = 0;
+	m_numTotalsVerts = 0;
 	W3DShadowGeometryMesh *geomMesh=&m_meshList[m_meshCount];
 
 	assert (m_meshCount < MAX_SHADOW_CASTER_MESHES);
@@ -912,13 +921,22 @@ Int W3DShadowGeometry::init(RenderObjClass *robj)
 // W3DShadowGeometry =============================================================
 // ============================================================================
 W3DShadowGeometryMesh::W3DShadowGeometryMesh( void )
-{	
+{
 	// init polygon neighbor information
 	m_polyNeighbors = NULL;
 	m_numPolyNeighbors = 0;
 	m_parentVerts = NULL;
 	m_polygonNormals = NULL;
 	m_ownsShadowArrays = false;
+	// Initialize the remaining fields so an unused/partially-built slot never
+	// feeds garbage silhouette geometry (SetGeometry iterates all MAX slots).
+	m_mesh = NULL;
+	m_meshRobjIndex = -1;
+	m_verts = NULL;
+	m_numVerts = 0;
+	m_numPolygons = 0;
+	m_polygons = NULL;
+	m_parentGeometry = NULL;
 }  // end W3DShadowGeometry
 
 // ~W3DShadowGeometry ============================================================
@@ -1787,39 +1805,51 @@ W3DVolumetricShadow::~W3DVolumetricShadow( void )
 void W3DVolumetricShadow::SetGeometry( W3DShadowGeometry *geometry )
 {
 
-	Short numPrevVertices = 0;
-	Short numNewVertices = 0;
-
 	//
 	// our geometry has changed, we need to allocate enough memory for the
 	// silhouette data.  If silhouette data is present it must be reallocated
 	// to accomoddate the new size if smaller
 	//
 
-	// if we had previous geometry how many vertices did it have
-
 	for (Int i=0; i<MAX_SHADOW_CASTER_MESHES; i++)
 	{
-		if( m_geometry )
-			numPrevVertices = m_geometry->getMesh(i)->GetNumVertex();
-
-		// now many vertices does our new geometry have
+		// how many vertices/polygons does our new geometry have (unused slots are
+		// 0 after the ctor zero-init, so they never trigger a reallocation)
+		Int numNewVertices = 0;
+		Int numNewPolygons = 0;
 		if( geometry )
+		{
 			numNewVertices = geometry->getMesh(i)->GetNumVertex();
+			numNewPolygons  = geometry->getMesh(i)->GetNumPolygon();
+		}
 
-		//
-		// TODO: Colin, may want to change this in the future
-		// if our new geometry requires more memory allocate it, if it requires
-		// less we'll leave it around for future switches in geometry
-		//
-		if( numNewVertices > numPrevVertices )
+		// allocateSilhouette sizes the buffer to __max(5*verts, 6*polys), so compare
+		// the REQUIRED entry count against what is currently allocated. Comparing
+		// only vertex counts under-sizes the buffer when the polygon count grows
+		// without the vertex count (e.g. switching to a more tessellated model on
+		// the same shadow instance) -> silhouette buffer overflow -> scattered
+		// shadow fragments.
+		Int required = __max(numNewVertices * 5, numNewPolygons * 6);
+		if( required > m_maxSilhouetteEntries[i] )
 		{
 
 			deleteSilhouette(i);
-			if( allocateSilhouette(i, numNewVertices, geometry->getMesh(i)->GetNumPolygon() ) == FALSE )
+			if( allocateSilhouette(i, numNewVertices, numNewPolygons ) == FALSE )
 				return;
 
 		}  // end if
+	}
+
+	// DIAG (one-shot): geometry stats for the first shadow bound. Catches an
+	// uninitialized m_meshCount (garbage mesh count feeds garbage slots) and a
+	// reused geometry appending onto stale slots.
+	{
+		static bool s_geomDiag = false;
+		if (!s_geomDiag && geometry) {
+			s_geomDiag = true;
+			DEBUG_LOG(("[W3X_SIL_DIAG] SetGeometry '%s' meshes=%d totalVerts=%d\n",
+				geometry->Get_Name(), geometry->getMeshCount(), geometry->GetNumTotalVertex()));
+		}
 	}
 
 	// assign the new geometry, possible over an old geometry
@@ -2611,7 +2641,28 @@ void W3DVolumetricShadow::buildSilhouette(Int meshIndex, Vector3 *lightPosObject
 	
 	//record number of edge indices contrinuted by this mesh
 	m_numIndicesPerMesh[meshIndex]=m_numSilhouetteIndices[meshIndex]-meshEdgeStart;
-	
+
+	// DIAG (one-shot per mesh): report the silhouette write count vs the allocated
+	// capacity. In release builds the addSilhouetteIndices asserts are compiled
+	// out, so this is the only signal for the SetGeometry under-sizing overflow
+	// that scatters building shadows (used approaching/exceeding max).
+	{
+		static bool s_silDiag[ MAX_SHADOW_CASTER_MESHES ] = { false };
+		if (meshIndex >= 0 && meshIndex < MAX_SHADOW_CASTER_MESHES && !s_silDiag[meshIndex]) {
+			s_silDiag[meshIndex] = true;
+			Int used = m_numSilhouetteIndices[meshIndex];
+			Int max  = m_maxSilhouetteEntries[meshIndex];
+			Int verts = 0, polys = 0;
+			W3DShadowGeometryMesh *gm = (m_geometry && meshIndex < m_geometry->getMeshCount()) ? m_geometry->getMesh(meshIndex) : NULL;
+			if (gm) { verts = gm->GetNumVertex(); polys = gm->GetNumPolygon(); }
+			DEBUG_LOG(("[W3X_SIL_DIAG] mesh[%d] silhouette used=%d max=%d ratio=%.2f verts=%d polys=%d%s\n",
+				meshIndex, (int)used, (int)max,
+				max > 0 ? (float)used / (float)max : 0.0f,
+				(int)verts, (int)polys,
+				(max > 0 && used > max) ? "  <-- OVERFLOW" : ""));
+		}
+	}
+
 }  // end buildSilhouette
 
 // constructVolume ============================================================
@@ -3009,9 +3060,43 @@ void W3DVolumetricShadow::constructVolumeVB( Vector3 *lightPosObject,Real shadow
 	}	//initial pass to determine vertex/polygon counts.
 	//***********************************************************************************************
 
+	// DIAG (one-shot per mesh): log the silhouette->volume counts BEFORE the
+	// buffer-slot request, so a huge/garbage polygonCount (which would overflow
+	// getSlot's size table and crash at ibSlot->m_IB) is visible.
+	{
+		static bool s_cvbDiag[ MAX_SHADOW_CASTER_MESHES ] = { false };
+		if (meshIndex >= 0 && meshIndex < MAX_SHADOW_CASTER_MESHES && !s_cvbDiag[meshIndex]) {
+			s_cvbDiag[meshIndex] = true;
+			DEBUG_LOG(("[W3X_SIL_DIAG] constructVolumeVB mesh[%d] indices=%d vertexCount=%d polygonCount=%d ibNeeded=%d\n",
+				meshIndex, (int)m_numIndicesPerMesh[meshIndex], (int)vertexCount, (int)polygonCount, polygonCount*3));
+		}
+	}
+
+	// A moving/rotating object rebuilds its shadow volume here. The previous
+	// static VB/IB slots must be returned to the pool FIRST — overwriting them
+	// without release leaks a slot per rebuild and eventually exhausts the pool
+	// (allocateSlotStorage then indexes past MAX_NUMBER_SLOTS -> crash).
+	if (m_shadowVolumeVB[ volumeIndex ][meshIndex]) {
+		TheW3DBufferManager->releaseSlot(m_shadowVolumeVB[ volumeIndex ][meshIndex]);
+		m_shadowVolumeVB[ volumeIndex ][meshIndex] = NULL;
+	}
+	if (m_shadowVolumeIB[ volumeIndex ][meshIndex]) {
+		TheW3DBufferManager->releaseSlot(m_shadowVolumeIB[ volumeIndex ][meshIndex]);
+		m_shadowVolumeIB[ volumeIndex ][meshIndex] = NULL;
+	}
+
 	DEBUG_ASSERTCRASH(m_shadowVolumeVB[ volumeIndex ][meshIndex] == NULL,("Updating Existing Static Vertex Buffer Shadow"));
 	vbSlot=m_shadowVolumeVB[ volumeIndex ][meshIndex] = TheW3DBufferManager->getSlot(W3DBufferManager::VBM_FVF_XYZ,
 		vertexCount);
+
+	// getSlot returns NULL for an oversized request (guarded in W3DBufferManager)
+	// or when the pool is exhausted — skip this mesh's volume gracefully instead
+	// of dereferencing the NULL slot in the asserts below.
+	if (vbSlot == NULL)
+	{
+		m_shadowVolumeVB[ volumeIndex ][meshIndex] = NULL;
+		return;
+	}
 
 	DEBUG_ASSERTCRASH(vbSlot != NULL, ("Can't allocate vertex buffer slot for shadow volume"));
 
@@ -3021,6 +3106,16 @@ void W3DVolumetricShadow::constructVolumeVB( Vector3 *lightPosObject,Real shadow
 
 	DEBUG_ASSERTCRASH(m_shadowVolumeIB[ volumeIndex ][meshIndex] == NULL,("Updating Existing Static Index Buffer Shadow"));
 	ibSlot=m_shadowVolumeIB[ volumeIndex ][meshIndex] = TheW3DBufferManager->getSlot(polygonCount*3);
+
+	if (ibSlot == NULL)
+	{
+		// release the vb slot we already took and skip this mesh's volume
+		if (vbSlot)
+			TheW3DBufferManager->releaseSlot(vbSlot);
+		m_shadowVolumeIB[ volumeIndex ][meshIndex] = NULL;
+		m_shadowVolumeVB[ volumeIndex ][meshIndex] = NULL;
+		return;
+	}
 
 	DEBUG_ASSERTCRASH(ibSlot != NULL, ("Can't allocate index buffer slot for shadow volume"));
 

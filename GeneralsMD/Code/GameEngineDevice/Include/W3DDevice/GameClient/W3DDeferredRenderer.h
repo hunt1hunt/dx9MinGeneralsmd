@@ -142,19 +142,9 @@ public:
 	/// Recompile the sunlight PS with shadow-map variant.
 	bool compileSunLightShadowShader();
 
-	/// Access shadow view-projection matrix.
-	const Matrix4x4& getShadowViewProj() const { return m_shadowViewProj; }
-	const Matrix4x4& getShadowView() const { return m_shadowView; }
-	const Matrix4x4& getShadowProj() const { return m_shadowProj; }
-
-	/// Access the shadow-map texture (for W3X forward-pass sampling). This is the
-	/// COLOR render target that stores the sun-space depth as color — D16 depth
-	/// textures are not reliably sampleable under dgVoodoo2.
-	IDirect3DTexture9 *getShadowMapTexture() const;
-
 	/// Returns a NEW reference to the shadow-map color RT surface (caller must
-	/// Release). Used by the W3X shadow pass to re-bind the RT right before its
-	/// draw, in case another renderable changed the active render target mid-pass.
+	/// Release). Used to re-bind the RT before a draw / to StretchRect it into the
+	/// sampler copy, in case another renderable changed the active render target.
 	IDirect3DSurface9 *getShadowRTSurface() const;
 
 	/// Whether shadow map is ready (D24X8 depth-stencil must be available).

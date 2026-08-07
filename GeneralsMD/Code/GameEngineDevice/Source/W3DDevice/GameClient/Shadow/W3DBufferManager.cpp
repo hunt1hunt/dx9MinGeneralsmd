@@ -221,6 +221,15 @@ W3DBufferManager::W3DVertexBufferSlot *W3DBufferManager::getSlot(VBM_FVF_TYPES f
 	size = (size + (MIN_SLOT_SIZE-1)) & (~(MIN_SLOT_SIZE-1));
 	Int sizeIndex = (size >> MIN_SLOT_SIZE_SHIFT)-1;
 
+	// Guard: a huge/negative size makes sizeIndex run past the
+	// m_W3DVertexBufferSlots[MAX_VB_SIZES] table -> OOB read -> garbage slot ->
+	// crash in the caller (constructVolumeVB reads vbSlot->m_VB). Return NULL so
+	// callers that check for NULL gracefully skip the oversized shadow volume.
+	if (size <= 0 || sizeIndex >= MAX_VB_SIZES) {
+		DEBUG_LOG(("[W3X_SIL_DIAG] getSlot(VB): size=%d sizeIndex=%d MAX=%d -> too large, skip\n", size, (int)sizeIndex, (int)MAX_VB_SIZES));
+		return NULL;
+	}
+
 	DEBUG_ASSERTCRASH(sizeIndex < MAX_VB_SIZES && size, ("Allocating too large vertex buffer slot"));
 
 	if ((vbSlot=m_W3DVertexBufferSlots[fvfType][sizeIndex]) != 0)
@@ -293,7 +302,12 @@ W3DBufferManager::W3DVertexBufferSlot * W3DBufferManager::allocateSlotStorage(VB
 	//Didn't find any vertex buffers with room, create a new one
 	DEBUG_ASSERTCRASH(m_numEmptyVertexBuffersAllocated < MAX_VERTEX_BUFFERS_CREATED, ("Reached Max Static VB Shadow Geometry"));
 
-	if (m_numEmptyVertexBuffersAllocated < MAX_VERTEX_BUFFERS_CREATED)
+	// GUARD: the new-buffer path below indexes m_W3DVertexBufferEmptySlots[] by
+	// m_numEmptySlotsAllocated. If slots are exhausted (a moving object's shadow
+	// rebuild leaks a slot each time), that index is out of bounds -> garbage slot
+	// -> crash. Require BOTH a free buffer AND a free slot before proceeding.
+	if (m_numEmptyVertexBuffersAllocated < MAX_VERTEX_BUFFERS_CREATED
+		&& m_numEmptySlotsAllocated < MAX_NUMBER_SLOTS)
 	{
 		m_W3DVertexBuffers[fvfType] = &m_W3DEmptyVertexBuffers[m_numEmptyVertexBuffersAllocated];
 		m_W3DVertexBuffers[fvfType]->m_nextVB=pVB;	//link to list
@@ -334,6 +348,15 @@ W3DBufferManager::W3DIndexBufferSlot *W3DBufferManager::getSlot(Int size)
 	//should help avoid fragmentation.
 	size = (size + (MIN_SLOT_SIZE-1)) & (~(MIN_SLOT_SIZE-1));
 	Int sizeIndex = (size >> MIN_SLOT_SIZE_SHIFT)-1;
+
+	// Guard: a huge/negative size makes sizeIndex run past the
+	// m_W3DIndexBufferSlots[MAX_IB_SIZES] table -> OOB read -> garbage slot ->
+	// crash in constructVolumeVB (ibSlot->m_IB). Return NULL so callers that
+	// check for NULL gracefully skip the oversized shadow volume.
+	if (size <= 0 || sizeIndex >= MAX_IB_SIZES) {
+		DEBUG_LOG(("[W3X_SIL_DIAG] getSlot(IB): size=%d sizeIndex=%d MAX=%d -> too large, skip\n", size, (int)sizeIndex, (int)MAX_IB_SIZES));
+		return NULL;
+	}
 
 	DEBUG_ASSERTCRASH(sizeIndex < MAX_IB_SIZES && size, ("Allocating too large index buffer slot"));
 
@@ -407,7 +430,12 @@ W3DBufferManager::W3DIndexBufferSlot * W3DBufferManager::allocateSlotStorage(Int
 	//Didn't find any index buffers with room, create a new one
 	DEBUG_ASSERTCRASH(m_numEmptyIndexBuffersAllocated < MAX_INDEX_BUFFERS_CREATED, ("Reached Max Static IB Shadow Geometry"));
 
-	if (m_numEmptyIndexBuffersAllocated < MAX_INDEX_BUFFERS_CREATED)
+	// GUARD: the new-buffer path below indexes m_W3DIndexBufferEmptySlots[] by
+	// m_numEmptyIndexSlotsAllocated. If slots are exhausted (a moving object's
+	// shadow rebuild leaks a slot each time), that index is out of bounds ->
+	// garbage slot -> crash. Require BOTH a free buffer AND a free slot.
+	if (m_numEmptyIndexBuffersAllocated < MAX_INDEX_BUFFERS_CREATED
+		&& m_numEmptyIndexSlotsAllocated < MAX_NUMBER_SLOTS)
 	{
 		m_W3DIndexBuffers = &m_W3DEmptyIndexBuffers[m_numEmptyIndexBuffersAllocated];
 		m_W3DIndexBuffers->m_nextIB=pIB;	//link to list

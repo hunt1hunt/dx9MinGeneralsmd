@@ -36,16 +36,21 @@
 #include "dx8vertexbuffer.h"
 #include "dx8indexbuffer.h"
 
-#define MAX_VB_SIZES 128	//number of different sized VB slots allowed.
+#define MAX_VB_SIZES 256	//number of different sized VB slots allowed (up to 8192 verts = DEFAULT_VERTEX_BUFFER_SIZE).
 #define MIN_SLOT_SIZE	32	//minimum number of vertices allocated per slot (power of 2). See also MIN_SLOT_SIZE_SHIFT.
 #define	MIN_SLOT_SIZE_SHIFT	5 //used for division by MIN_SLOT_SIZE
 #define MAX_VERTEX_BUFFERS_CREATED	32	//maximum number of D3D vertex buffers allowed to create per vertex type.
 #define DEFAULT_VERTEX_BUFFER_SIZE	8192	//this size ends up generating VB's of about 256Kbytes
 #define MAX_NUMBER_SLOTS	4096			//maximum number of slots that can be allocated.
 
-#define MAX_IB_SIZES 128 //number of different sized IB slots allowed (goes all the way up to 65536)
+// Index buffer slot size table. sizeIndex=(size>>SHIFT)-1, so 2048 entries cover
+// sizes up to 65536 (matching the historical comment). A W3X model with a large
+// volumetric shadow silhouette (e.g. the Gattling Tank, ~6240 indices) previously
+// overflowed this table (128 entries = max 4096) -> OOB -> crash. getSlot() now
+// also guards the index, so anything beyond the table is skipped gracefully.
+#define MAX_IB_SIZES 2048 //number of different sized IB slots allowed (goes all the way up to 65536)
 #define MAX_INDEX_BUFFERS_CREATED	32
-#define DEFAULT_INDEX_BUFFER_SIZE	32768	
+#define DEFAULT_INDEX_BUFFER_SIZE	32768
 
 class W3DBufferManager
 {

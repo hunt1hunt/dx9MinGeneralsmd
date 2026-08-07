@@ -1589,25 +1589,11 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	return true;
 }
 
-// ============================================================================
-// W3DDeferredRenderer::getShadowMapTexture
-// ============================================================================
-IDirect3DTexture9 *W3DDeferredRenderer::getShadowMapTexture() const
-{
-	// Prefer the resolved sampler copy (reliable RT->SRV under dgVoodoo2); fall
-	// back to the RT texture itself if the sampler wasn't created.
-	if (m_shadowDepthSampler) return m_shadowDepthSampler;
-	return m_shadowDepthRT ? (IDirect3DTexture9*)m_shadowDepthRT->Peek_D3D_Texture() : NULL;
-}
-
 IDirect3DSurface9 *W3DDeferredRenderer::getShadowRTSurface() const
 {
-	// Returns a NEW reference (caller Releases). Used by the W3X shadow pass to
-	// re-bind the shadow color RT right before its own draw, so that even if a
-	// previously-rendered object changed the device render target, the depth pass
-	// still writes into the shadow map. NOTE: this must be the RENDER TARGET
-	// (m_shadowDepthRT), NOT the sampler copy — getShadowMapTexture() now returns
-	// the sampler.
+	// Returns a NEW reference (caller Releases). This must be the RENDER TARGET
+	// (m_shadowDepthRT), NOT the sampler copy — used to StretchRect the shadow
+	// map into the sampler and to re-bind the RT if a draw changed it.
 	IDirect3DTexture9 *tex = m_shadowDepthRT
 		? (IDirect3DTexture9*)m_shadowDepthRT->Peek_D3D_Texture() : NULL;
 	IDirect3DSurface9 *surf = NULL;

@@ -1116,15 +1116,22 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					LARGE_INTEGER shS,shE; QueryPerformanceCounter(&shS);
 					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,camPos)) {
 						RefRenderObjListIterator si(&RenderList);
+						int smObjCount = 0;	// DIAG: objects actually rasterized into the shadow map
 						for (si.First(); !si.Is_Done(); si.Next()) {
 						RenderObjClass *r=si.Peek_Obj();
 						if (r->Class_ID()==RenderObjClass::CLASSID_TILEMAP) continue;
 						if (r->Is_Really_Visible()) {
 						Matrix4x4 ident(true); DX8Wrapper::Set_Transform(D3DTS_WORLD,ident);
 						r->Render(rinfo);
+						smObjCount++;
 						}
 						}
 						TheDX8MeshRenderer.Flush();
+						// DIAG (one-shot): 0 objects => the shadow map is guaranteed empty
+						// (nothing was ever rasterized), which combined with DebugDumpShadowMap
+						// splits "shadow pass empty" from "pass has content but sampling fails".
+						{ static bool s_smObjDiag=false; if (!s_smObjDiag) { s_smObjDiag=true;
+							DIAG_LOG(("SHADOW_PASS: rendered %d visible non-terrain objects into shadow map\n", smObjCount)); } }
 					}
 					g_theW3DDeferredRenderer->endShadowMapPass();
 					QueryPerformanceCounter(&shE);
