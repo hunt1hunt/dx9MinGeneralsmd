@@ -169,6 +169,8 @@ GeneralsMD/Code/GameEngine/Include/gamespy/
 *8.cpp
 *_tmp.*
 *_tmp_*
+tmp_fwd*.cpp
+备份_*/
 
 # CLAUDE session data (user-local, not committed)
 .claude/session-env/
@@ -184,6 +186,7 @@ GeneralsMD/Code/GameEngine/Include/gamespy/
 .claude/.last-cleanup
 .claude/.last-update-result.json
 .claude/history.jsonl
+.claude/checkpoints.log
 
 # Codegraph local index
 .codegraph/
