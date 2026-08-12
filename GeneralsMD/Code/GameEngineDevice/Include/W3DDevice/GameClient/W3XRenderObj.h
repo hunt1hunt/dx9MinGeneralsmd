@@ -61,12 +61,23 @@ public:
 	// Data population
 	void AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount);
 	void SetSubMeshTangent(int subMeshIndex, bool hasTangents, bool hasBinormals);
+	// Per-sub-mesh shader constants (textures/values) for the shared effect.
+	// Without this, sub-meshes using the model-wide shader inherit the first
+	// sub-mesh's textures instead of their own XML-declared ones.
+	void SetSubMeshConstants(int subMeshIndex, const std::vector<W3XShaderConstant> &constants);
 	// Per-sub-mesh shader override. A sub-mesh with an empty fxName uses the
 	// model-wide shader (set by SetFX). Non-empty overrides per sub-mesh.
 	void SetSubMeshShader(int subMeshIndex, const char *fxName, int technique,
 		const std::vector<W3XShaderConstant> &constants);
 	void SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants);
 	void SetBones(float *bones, int boneCount);
+	// Skin-bone access for the volumetric shadow system. The shadow geometry is
+	// built from the raw bind-pose sub-mesh vertices; it must be skinned with the
+	// same WorldBones (quat+offset, 2 float4 per bone) the renderer uses, or the
+	// shadow volume sits at the bind-pose position (no self-shadow on skinned
+	// parts like the turret/barrel). NULL if the model has no bones.
+	const float *GetBones(void) const { return m_bones; }
+	int GetBoneCount(void) const { return m_boneCount; }
 	void SetBounds(const Vector3 &min, const Vector3 &max);
 	void SetRecolorColor(unsigned int hexColor) { m_recolorHex = hexColor; }	// 0xFFRRGGBB faction color
 	void Clear(void);

@@ -782,6 +782,23 @@ Int W3DShadowGeometry::initFromMesh(RenderObjClass *robj)
 	return TRUE;
 }
 
+// Quaternion helper for W3X shadow-volume skinning. The W3X sub-mesh vertices
+// are stored in BIND pose; the volumetric shadow geometry must be built from the
+// SKINNED pose or the shadow volume sits at the bind-pose location and never
+// reaches the skinned surface (missing self-shadow on turret/barrel etc). This
+// mirrors W3XQuatRotateVector in W3XRenderObj.cpp.
+static void W3XSh_QuatRotateVector(float *out, const float *q, const float *v)
+{
+	// out = rotate v by quaternion q
+	float t[3];
+	t[0] = 2.0f * (q[1]*v[2] - q[2]*v[1]);
+	t[1] = 2.0f * (q[2]*v[0] - q[0]*v[2]);
+	t[2] = 2.0f * (q[0]*v[1] - q[1]*v[0]);
+	out[0] = v[0] + q[3]*t[0] + (q[1]*t[2] - q[2]*t[1]);
+	out[1] = v[1] + q[3]*t[1] + (q[2]*t[0] - q[0]*t[2]);
+	out[2] = v[2] + q[3]*t[2] + (q[0]*t[1] - q[1]*t[0]);
+}
+
 Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 {
 	W3XRenderObjClass *w3x = (W3XRenderObjClass *)robj;
@@ -791,7 +808,43 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 	m_numTotalsVerts = 0;
 	Int built = 0;
 
+	// Compose the OBJECT-SPACE bones once (same as W3XRenderObjClass::Render's
+	// geometry probe: bind-pose vertex skinned by the object-local world bone ->
+	// object-space skinned position). The volumetric shadow pipeline builds the
+	// silhouette/volume in OBJECT space (lightPosObject = inverse(objWorld) *
+	// lightPosWorld; see updateMeshVolume), so the vertices MUST also be object
+	// space. The object-local bone array already concatenates parent chains
+	// (W3XModelDraw::loadHierarchy: world = parent_world * local) WITHOUT the
+	// object's world transform, so use it directly - do NOT compose
+	// GetWorldTransform() here or the volume lands in world space and double-
+	// transforms against the object matrix in updateMeshVolume.
+	static const int kMaxShadowBones = 128;
+	float wbBones[kMaxShadowBones * 8];
+	int wbBoneCount = 0;
+	const float *skBones = w3x->GetBones();
+	int skBoneCount = w3x->GetBoneCount();
+	{
+		int maxB = skBoneCount < kMaxShadowBones ? skBoneCount : kMaxShadowBones;
+		for (int bi = 0; bi < maxB; bi++) {
+			for (int c = 0; c < 8; c++) wbBones[bi*8 + c] = skBones[bi*8 + c];
+		}
+		wbBoneCount = maxB;
+	}
+
 	int subMeshCount = w3x->GetSubMeshCount();
+	// DIAG (per model): log the sub-mesh shadow-inclusion for the tank so we can
+	// confirm the barrel (UP04) is part of the volumetric shadow geometry (it
+	// must be, for its shadow volume to reach the hull = self-shadowing).
+	{
+		static bool s_w3xGeomDiag = false;
+		static bool s_w3xGeomDiagTank = false;
+		const char *w3xName = w3x->Get_Name();
+		bool isTank = w3xName && strstr(w3xName, "APATAVGATT") != NULL;
+		if (w3xName && ((!s_w3xGeomDiag && !isTank) || (isTank && !s_w3xGeomDiagTank))) {
+			if (isTank) s_w3xGeomDiagTank = true; else s_w3xGeomDiag = true;
+			DEBUG_LOG(("[W3X_SIL_DIAG] initFromW3X '%s' submeshes=%d\n", w3xName, subMeshCount));
+		}
+	}
 	for (int si = 0; si < subMeshCount; si++)
 	{
 		IDirect3DVertexBuffer9 *vb = w3x->GetSubMeshVB(si);
@@ -800,9 +853,16 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 		int tcount = w3x->GetSubMeshTriangleCount(si);
 		if (!vb || !ib || vcount <= 0 || tcount <= 0 || vcount > MAX_SHADOW_VOLUME_VERTS)
 			continue;
+		if (w3x->Get_Name() && strstr(w3x->Get_Name(), "APATAVGATT") != NULL) {
+			DEBUG_LOG(("[W3X_SIL_DIAG]   shadow submesh[%d] verts=%d tris=%d\n", si, vcount, tcount));
+		}
 
-		// Read positions from the (D3DPOOL_MANAGED) vertex buffer. W3XVertex
-		// layout: position = 3 floats at offset 0, stride 76 bytes.
+		// Read positions from the (D3DPOOL_MANAGED) vertex buffer and SKIN them
+		// with the composed world bones. W3XVertex layout: position = 3 floats at
+		// offset 0, bone index at float[14], stride 76 bytes (19 floats). The raw
+		// bind-pose position would build the volume in the wrong place for skinned
+		// sub-meshes (turret/barrel) -> no self-shadow, so transform each vertex:
+		// worldPos = rotate(pos, worldBone) + worldBoneOffset.
 		Vector3 *verts = NEW Vector3[vcount];
 		{
 			void *ptr = NULL;
@@ -810,8 +870,14 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 			char *base = (char *)ptr;
 			for (int v = 0; v < vcount; v++)
 			{
-				float *p = (float *)(base + v * 76);
-				verts[v].Set(p[0], p[1], p[2]);
+				const float *p = (const float *)(base + v * 76);
+				int bi = (int)p[14];	// bone index (float 14 of 19)
+				if (bi < 0 || bi >= wbBoneCount) bi = 0;
+				const float *bk = &wbBones[bi * 8];
+				float wp[3];
+				W3XSh_QuatRotateVector(wp, &bk[0], p);
+				wp[0] += bk[4]; wp[1] += bk[5]; wp[2] += bk[6];
+				verts[v].Set(wp[0], wp[1], wp[2]);
 			}
 			vb->Unlock();
 		}
@@ -1845,8 +1911,11 @@ void W3DVolumetricShadow::SetGeometry( W3DShadowGeometry *geometry )
 	// reused geometry appending onto stale slots.
 	{
 		static bool s_geomDiag = false;
-		if (!s_geomDiag && geometry) {
-			s_geomDiag = true;
+		static bool s_geomDiagTank = false;
+		const char *gname = geometry ? geometry->Get_Name() : NULL;
+		bool isTank = gname && strstr(gname, "APATAVGATT") != NULL;
+		if (geometry && ((!s_geomDiag && !isTank) || (isTank && !s_geomDiagTank))) {
+			if (isTank) s_geomDiagTank = true; else s_geomDiag = true;
 			DEBUG_LOG(("[W3X_SIL_DIAG] SetGeometry '%s' meshes=%d totalVerts=%d\n",
 				geometry->Get_Name(), geometry->getMeshCount(), geometry->GetNumTotalVertex()));
 		}
@@ -1871,7 +1940,17 @@ void W3DVolumetricShadow::Update()
 
 	// sanity
 	if( m_geometry == NULL)
+	{
+		// DIAG (one-shot): confirm the tank's shadow even has geometry bound.
+		{
+			static bool s_diag = false;
+			if (!s_diag && m_robj && m_robj->Get_Name() && strstr(m_robj->Get_Name(), "APATAVGATT")) {
+				s_diag = true;
+				DEBUG_LOG(("[W3X_SIL_DIAG] Update: TANK '%s' geometry==NULL (volume never builds)\n", m_robj->Get_Name()));
+			}
+		}
 		return;
+	}
 
 	//
 	// for now we will just rebuild a shadow volume every so often, this
@@ -1886,6 +1965,14 @@ void W3DVolumetricShadow::Update()
 		if (pos == originCompareVector)
 		{	//the transform on this object was never set so we can't make any determination
 			//if it's visible or what the shadow looks like.
+			// DIAG (one-shot): transform never set on the tank shadow.
+			{
+				static bool s_diag = false;
+				if (!s_diag && m_robj && m_robj->Get_Name() && strstr(m_robj->Get_Name(), "APATAVGATT")) {
+					s_diag = true;
+					DEBUG_LOG(("[W3X_SIL_DIAG] Update: TANK '%s' pos==(0,0,0) transform never set -> early return\n", m_robj->Get_Name()));
+				}
+			}
 			return;
 		}
 		//Check if this is a "flying" unit.  Flying units are defined as anything that moves more than
@@ -2660,6 +2747,7 @@ void W3DVolumetricShadow::buildSilhouette(Int meshIndex, Vector3 *lightPosObject
 				max > 0 ? (float)used / (float)max : 0.0f,
 				(int)verts, (int)polys,
 				(max > 0 && used > max) ? "  <-- OVERFLOW" : ""));
+			(void)used; (void)max; (void)verts; (void)polys;	// keep C4189 quiet when DEBUG_LOG is compiled out
 		}
 	}
 
@@ -3929,6 +4017,36 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 					//dynamic shadow columes don't need to wait in queue since they
 					//all use the same vertex buffer.  Flush them ASAP.
 					shadow->RenderVolume(shadowDynamicTask->m_meshIndex,shadowDynamicTask->m_lightIndex);
+					// DIAG: is the tank's shadow volume actually being rendered?
+					{
+						static bool s_tankShadowDiag = false;
+						if (!s_tankShadowDiag && shadow->m_robj && shadow->m_robj->Get_Name()
+							&& strstr(shadow->m_robj->Get_Name(), "APATAVGATT") != NULL) {
+							s_tankShadowDiag = true;
+							DEBUG_LOG(("[W3X_SIL_DIAG] renderShadows: TANK volume rendered meshIdx=%d (numRenderedShadows=%d)\n",
+								shadowDynamicTask->m_meshIndex, numRenderedShadows));
+							// DIAG: which DS does the shadow volume pass test against?
+							// Compare this pointer with the [W3X_DRAW] DS= pointer. If they
+							// differ, the hull depth never reaches the shadow volume ->
+							// root cause of missing self-shadow.
+							{
+								IDirect3DSurface8 *shadowDS = NULL;
+								IDirect3DSurface8 *shadowRT = NULL;
+								if (SUCCEEDED(m_pDev->GetDepthStencilSurface(&shadowDS)) && shadowDS) {
+									D3DSURFACE_DESC dsd;
+									if (SUCCEEDED(shadowDS->GetDesc(&dsd)))
+										DEBUG_LOG(("[W3X_SIL_DIAG] renderShadows: DS=%p size=%ux%u fmt=0x%X\n", (void*)shadowDS, dsd.Width, dsd.Height, dsd.Format));
+									shadowDS->Release();
+								}
+								if (SUCCEEDED(m_pDev->GetRenderTarget(0, &shadowRT)) && shadowRT) {
+									D3DSURFACE_DESC rtd;
+									if (SUCCEEDED(shadowRT->GetDesc(&rtd)))
+										DEBUG_LOG(("[W3X_SIL_DIAG] renderShadows: RT0=%p size=%ux%u fmt=0x%X\n", (void*)shadowRT, rtd.Width, rtd.Height, rtd.Format));
+									shadowRT->Release();
+								}
+							}
+						}
+					}
 					//move to next dynamic task
 					shadowDynamicTask=(W3DVolumetricShadowRenderTask *)shadowDynamicTask->m_nextTask;
 					numRenderedShadows++;
@@ -3948,6 +4066,17 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 			while (nextTask)
 			{
 				nextTask->m_parentShadow->RenderVolume(nextTask->m_meshIndex,nextTask->m_lightIndex);
+				// DIAG: tank static volume rendered?
+				{
+					static bool s_tankStaticDiag = false;
+					if (!s_tankStaticDiag && nextTask->m_parentShadow->m_robj
+						&& nextTask->m_parentShadow->m_robj->Get_Name()
+						&& strstr(nextTask->m_parentShadow->m_robj->Get_Name(), "APATAVGATT") != NULL) {
+						s_tankStaticDiag = true;
+						DEBUG_LOG(("[W3X_SIL_DIAG] renderShadows: TANK STATIC volume rendered meshIdx=%d\n",
+							nextTask->m_meshIndex));
+					}
+				}
 				nextTask=(W3DVolumetricShadowRenderTask *)nextTask->m_nextTask;
 				numRenderedShadows++;
 			}

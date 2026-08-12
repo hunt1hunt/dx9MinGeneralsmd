@@ -109,6 +109,13 @@ void W3XRenderObjClass::SetSubMeshTangent(int subMeshIndex, bool hasTangents, bo
 	m_meshes[subMeshIndex].hasBinormals = hasBinormals;
 }
 
+void W3XRenderObjClass::SetSubMeshConstants(int subMeshIndex,
+	const std::vector<W3XShaderConstant> &constants)
+{
+	if (subMeshIndex < 0 || subMeshIndex >= (int)m_meshes.size()) return;
+	m_meshes[subMeshIndex].constants = constants;
+}
+
 void W3XRenderObjClass::SetSubMeshShader(int subMeshIndex, const char *fxName, int technique,
 	const std::vector<W3XShaderConstant> &constants)
 {
@@ -401,6 +408,88 @@ static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const
 void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 {
 	if (!m_valid || m_meshes.empty()) return;
+
+	// PASS DIAGNOSTIC (one-shot, first 8 calls): confirms the W3X is invoked
+	// from which scene passes. g_gbufferActive=1 => the deferred G-Buffer pass,
+	// g_gbufferActive=0 => the Forward pass (and any others). CWE=0 => the
+	// shadow-map pass (skipped below). This verifies the "renders twice per
+	// frame (G-Buffer + Forward), both writing the same main depth buffer"
+	// root cause of the wheel-covered-by-track depth artefact.
+	{
+		static int s_passDiag = 0;
+		if (s_passDiag < 8) {
+			s_passDiag++;
+			DWORD cwe = 0, zen = 0, zwr = 0, zfn = 0;
+			IDirect3DDevice9 *pd9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+			if (pd9) {
+				pd9->GetRenderState(D3DRS_COLORWRITEENABLE, &cwe);
+				pd9->GetRenderState(D3DRS_ZENABLE, &zen);
+				pd9->GetRenderState(D3DRS_ZWRITEENABLE, &zwr);
+				pd9->GetRenderState(D3DRS_ZFUNC, &zfn);
+			}
+			DEBUG_LOG(("[W3X_PASS] Render #%d gbuf=%d CWE=0x%08X ZEN=%u ZWR=%u ZFN=%u\n",
+				s_passDiag, g_gbufferActive ? 1 : 0, (unsigned)cwe, zen, zwr, zfn));
+		}
+	}
+
+	// SKIP the deferred G-Buffer pass. The W3X is a forward PBR renderer; drawing
+	// it in the G-Buffer pass writes its PBR color into RT0 (albedo) while RT1
+	// (normal) and RT2 (depth) stay black, AND writes its depth into the main
+	// depth buffer. The Forward pass then depth-tests (LESS) against that SAME
+	// self-written depth — equal depth fails strict LESS, so every sub-mesh is
+	// either rejected or z-fights (the track, drawn last, wins over the wheel).
+	// Rendering ONLY in the Forward pass gives the W3X a clean depth to test and
+	// write, restoring correct wheel/track occlusion. The shadow-map pass is
+	// already skipped via the COLORWRITEENABLE==0 check below.
+	if (g_gbufferActive) return;
+
+	// GEOMETRY PROBE (one-shot): report each sub-mesh's SKINNED MODEL-SPACE AABB
+	// (each vertex transformed through its bone's quat+offset — same math the
+	// RA3 skinned VS applies). This separates "the track genuinely wraps OUTSIDE
+	// the wheels (covering the wheel's outer face is geometric, not a depth bug)"
+	// from "the wheels stick out beyond the track (any covering is a depth/pass
+	// failure)". Compare sub-mesh[5]=WHEEL vs sub-mesh[6]=TREAD (this model):
+	// the OUTER-face direction is the model's Y axis. track|Y|max > wheel|Y|max
+	// => track wider, covering expected; wheel|Y|max > track|Y|max => wheel
+	// sticks out and must be visible. W3XVertex layout: x,y,z@0 (floats 0-2),
+	// ... boneIdx@56 (float index 14); stride 76 bytes = 19 floats.
+	if (m_bones && m_boneCount > 0)
+	{
+		static bool s_geomProbe = false;
+		if (!s_geomProbe) {
+			s_geomProbe = true;
+			int maxBone = m_boneCount < 64 ? m_boneCount : 64;
+			for (size_t si = 0; si < m_meshes.size(); si++) {
+				SubMesh &sm = m_meshes[si];
+				if (!sm.vb || sm.vertexCount <= 0) continue;
+				void *ptr = NULL;
+				if (FAILED(sm.vb->Lock(0, 0, &ptr, D3DLOCK_READONLY))) continue;
+				const float *f = (const float *)ptr;
+				const int stride = 19;	// 76-byte W3XVertex
+				float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f };
+				for (int vi = 0; vi < sm.vertexCount; vi++) {
+					const float *v = f + vi * stride;
+					int bi = (int)v[14];	// boneIdx
+					if (bi < 0 || bi >= maxBone) bi = 0;
+					float wp[3];
+					W3XQuatRotateVector(wp, &m_bones[bi * 8], v);
+					wp[0] += m_bones[bi * 8 + 4];
+					wp[1] += m_bones[bi * 8 + 5];
+					wp[2] += m_bones[bi * 8 + 6];
+					for (int a = 0; a < 3; a++) {
+						if (wp[a] < mn[a]) mn[a] = wp[a];
+						if (wp[a] > mx[a]) mx[a] = wp[a];
+					}
+				}
+				sm.vb->Unlock();
+				DEBUG_LOG(("[W3X_GEOM] submesh[%d] fx='%s' modelAABB X=%.2f..%.2f Y=%.2f..%.2f Z=%.2f..%.2f size=%.2fx%.2fx%.2f\n",
+					(int)si, sm.fxName.isEmpty() ? "shared" : sm.fxName.str(),
+					mn[0], mx[0], mn[1], mx[1], mn[2], mx[2],
+					mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2]));
+			}
+		}
+	}
+
 	ID3DXEffect *effect = W3XEffectManager::Instance()->GetEffect(m_fxName.str());
 	if (!effect) { DEBUG_LOG(("[W3X_P5]   No effect '%s'\n", m_fxName.str())); return; }
 
@@ -422,6 +511,7 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				D3DXHANDLE hSpc = effect->GetParameterByName(NULL, "SpecMap");
 				DEBUG_LOG(("[W3X_DIAG]   samplers: DiffuseTexture=%p NormalMap=%p SpecMap=%p\n",
 					(void*)hDiff, (void*)hNrm, (void*)hSpc));
+				(void)hDiff; (void)hNrm; (void)hSpc;	// keep C4189 quiet when DEBUG_LOG is compiled out
 			}
 			// Per-submesh tangent availability -> bump-normal viability
 			for (size_t si = 0; si < m_meshes.size(); si++) {
@@ -430,6 +520,7 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 					(int)si, sm.vertexCount, sm.triangleCount,
 					sm.hasTangents ? 1 : 0, sm.hasBinormals ? 1 : 0,
 					(sm.hasTangents && sm.hasBinormals) ? "ACTIVE" : "MISSING (normal map inert on this mesh)"));
+				(void)sm;	// keep C4189 quiet when DEBUG_LOG is compiled out
 			}
 		}
 	}
@@ -625,6 +716,7 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 					ownD ? ownD : "(inherit)", ownN ? ownN : "(inherit)", ownS ? ownS : "(inherit)",
 					hDiff ? "YES" : "NO", (void*)bound,
 					(ownD && !bound) ? "  <-- OWN TEXTURE NOT BOUND" : ""));
+				(void)ownD; (void)ownN; (void)ownS; (void)bound;	// keep C4189 quiet when DEBUG_LOG is compiled out
 			}
 		}
 
@@ -648,6 +740,45 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// so disable culling AFTER BeginPass (BeginPass re-applies the pass
 			// render states and would otherwise undo this).
 			dev9->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+			// DRAW-STATE DIAG (one-shot, first draw): the device states the pass
+			// ACTUALLY applied at the draw moment. ZEN=1 (test on) ZWR=1 (write on)
+			// ZFN=4 (LESS) CULL=1 (NONE) is the expected good state. ZEN=0/ZWR=0
+			// here means the effect's technique pass states are not reaching the
+			// device, so every sub-mesh submits in order with no depth separation —
+			// the track (drawn last) then wins over the wheel regardless of depth.
+			{
+				// DIAG: RT/DS on the first few draws. The W3X is rendered from multiple
+				// scene passes (aux reflection/env pass at 256x256, then the main
+				// Forward pass at the back-buffer size). Capturing several draws shows
+				// WHICH RT/DS each pass uses — the main-pass depth is what the
+				// volumetric shadow volume depth-tests against (self-shadow needs the
+				// hull depth in the same DS the shadow pass reads).
+				static int s_drawDiagCount = 0;
+				if (s_drawDiagCount < 6) {
+					s_drawDiagCount++;
+					DWORD zen = 0, zwr = 0, zfn = 0, cul = 0;
+					dev9->GetRenderState(D3DRS_ZENABLE, &zen);
+					dev9->GetRenderState(D3DRS_ZWRITEENABLE, &zwr);
+					dev9->GetRenderState(D3DRS_ZFUNC, &zfn);
+					dev9->GetRenderState(D3DRS_CULLMODE, &cul);
+					IDirect3DSurface9 *drawDS = NULL;
+					IDirect3DSurface9 *drawRT = NULL;
+					D3DSURFACE_DESC dsd, rtd;
+					bool hasDS = SUCCEEDED(dev9->GetDepthStencilSurface(&drawDS)) && drawDS;
+					bool hasRT = SUCCEEDED(dev9->GetRenderTarget(0, &drawRT)) && drawRT;
+					if (hasDS) { drawDS->GetDesc(&dsd); }
+					if (hasRT) { drawRT->GetDesc(&rtd); }
+					DEBUG_LOG(("[W3X_DRAW#%d] DS=%p %ux%u fmt=0x%X | RT0=%p %ux%u fmt=0x%X | gbuf=%d fx='%s' ZEN=%u ZWR=%u ZFN=%u CULL=%u\n",
+						s_drawDiagCount,
+						(void*)drawDS, hasDS ? dsd.Width : 0, hasDS ? dsd.Height : 0, hasDS ? dsd.Format : 0,
+						(void*)drawRT, hasRT ? rtd.Width : 0, hasRT ? rtd.Height : 0, hasRT ? rtd.Format : 0,
+						g_gbufferActive ? 1 : 0,
+						(drawEffect == effect) ? m_fxName.str() : sm.fxName.str(),
+						(unsigned)zen, (unsigned)zwr, (unsigned)zfn, (unsigned)cul));
+					if (drawDS) drawDS->Release();
+					if (drawRT) drawRT->Release();
+				}
+			}
 			hr = dev9->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, sm.vertexCount, 0, sm.triangleCount);
 			if (FAILED(hr)) { DEBUG_LOG(("[W3X_P5]   submesh[%d] DrawIndexedPrimitive FAILED hr=0x%08X (vc=%d tc=%d)\n", (int)si, (int)hr, sm.vertexCount, sm.triangleCount)); totalFailed++; }
 			drawEffect->EndPass();

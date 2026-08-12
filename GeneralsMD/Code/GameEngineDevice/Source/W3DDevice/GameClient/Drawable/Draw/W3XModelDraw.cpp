@@ -43,6 +43,12 @@
 #include <d3d9.h>
 #include <d3dx9effect.h>
 
+// RA3 (.w3x) assets live under Art/W3X/ (relative to the game root) so they
+// never clutter the game root or mix with the Generals' own Art/Textures.
+// .w3x is an "unknown" extension to GameFileClass, so it resolves CWD-relative
+// -> Art/W3X/<file>.w3x works directly.
+#define W3X_ASSET_DIR "Art/W3X/"
+
 //=============================================================================
 // W3XModelDrawModuleData
 //=============================================================================
@@ -208,9 +214,9 @@ bool W3XModelDraw::loadHierarchy(const char *sklName, LoadedModelData &data)
 {
 	if (!sklName || !sklName[0]) return false;
 
-	// Construct .w3x filename
+	// Construct .w3x filename (RA3 assets live under Art/W3X/)
 	char path[512];
-	sprintf(path, "%s.w3x", sklName);
+	sprintf(path, W3X_ASSET_DIR "%s.w3x", sklName);
 
 	std::vector<W3XBoneInfo> bones;
 	if (!W3XLoader::ParseHierarchy(path, bones)) {
@@ -292,7 +298,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 	AsciiString hierarchyName;
 	std::vector<W3XSubObjectInfo> subObjects;
 	char containerPath[512];
-	sprintf(containerPath, "%s.w3x", containerName);
+	sprintf(containerPath, W3X_ASSET_DIR "%s.w3x", containerName);
 	if (!W3XLoader::ParseContainer(containerPath, hierarchyName, subObjects)) {
 		DEBUG_LOG(("[W3X_P5]   Failed to parse container '%s'\n", containerPath));
 		return false;
@@ -326,7 +332,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		if (sub.isCollisionBox) continue;
 
 		char meshPath[512];
-		sprintf(meshPath, "%s.w3x", sub.renderObjectName.str());
+		sprintf(meshPath, W3X_ASSET_DIR "%s.w3x", sub.renderObjectName.str());
 
 		W3XMeshData meshData;
 		if (!W3XLoader::ReadMeshData(meshPath, meshData)) continue;
@@ -336,6 +342,15 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		if (vertCount == 0 || triCount == 0) continue;
 
 		bool hasBones = ((int)meshData.boneIndices.size() >= vertCount);
+
+		// V-flip decision (per sub-mesh, before building vertices).
+		// .w3x UV V is authored V=0-at-bottom; D3D9 samples V=0-at-top, so every
+		// sub-mesh needs v=1-v. Cluster-sampling TavBtMstr2 at the barrel's UV
+		// islands confirmed the FLIPPED mapping lands the barrel main body on the
+		// near-black metal band (33,40,33) whereas unflipped lands on warm rust
+		// (112,59,41). So flip uniformly for all sub-meshes.
+		const char *nm = sub.renderObjectName.str();
+		const bool flipV = true;
 
 		// Build vertex array
 		W3XVertex *verts = new W3XVertex[vertCount];
@@ -347,18 +362,21 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 			verts[vi].ny = vi < (int)meshData.normals.size() ? meshData.normals[vi].Y : 0;
 			verts[vi].nz = vi < (int)meshData.normals.size() ? meshData.normals[vi].Z : 0;
 			verts[vi].u = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].U : 0;
-			verts[vi].v = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
-			// DIAG: dump a few vertices from the first submesh to verify data
-			if (si == 0 && vi < 4) {
-				DEBUG_LOG(("[W3X_P5]   vert[%d] pos=(%.2f,%.2f,%.2f) nrm=(%.2f,%.2f,%.2f) uv=(%.3f,%.3f) bone=(%.0f,%.2f)\n",
-					vi, verts[vi].x, verts[vi].y, verts[vi].z,
-					verts[vi].nx, verts[vi].ny, verts[vi].nz,
-					verts[vi].u, verts[vi].v,
-					verts[vi].boneIdx, verts[vi].boneWeight));
+			float rawV = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
+			verts[vi].v = flipV ? (1.0f - rawV) : rawV;
+			// DIAG: dump raw vs stored V for the first few submeshes to verify the
+			// flip landed (WHEEL rawV<0 -> stored v>0.8; TREAD rawV~0 -> stored
+			// v~1.0; barrel flips like the rest).
+			if ((si == 0 || si == 1 || si == 4 || si == 7 || strstr(nm, "WHEEL") || strstr(nm, "TREAD")) && vi < 2) {
+				DEBUG_LOG(("[W3X_P5]   vert[%d] uv=(%.3f, rawV %.3f -> %.3f)%s mesh='%s'\n",
+					vi, verts[vi].u, rawV, verts[vi].v, flipV ? " FLIP" : " noflip", nm));
 			}
-			verts[vi].tx = vi < (int)meshData.tangents.size() ? meshData.tangents[vi].X : 0;
-			verts[vi].ty = vi < (int)meshData.tangents.size() ? meshData.tangents[vi].Y : 0;
-			verts[vi].tz = vi < (int)meshData.tangents.size() ? meshData.tangents[vi].Z : 0;
+			// The RA3 tangent slots are T-B-exchanged (binormal=+U, tangent=-V);
+			// flipping V negates the V-axis, so negate the tangent for consistency.
+			const float tsign = flipV ? -1.0f : 1.0f;
+			verts[vi].tx = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].X : 0;
+			verts[vi].ty = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Y : 0;
+			verts[vi].tz = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Z : 0;
 			verts[vi].bx = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].X : 0;
 			verts[vi].by = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Y : 0;
 			verts[vi].bz = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Z : 0;
@@ -538,6 +556,10 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 		SubMeshBuffer &sm = data.subMeshes[i];
 		robj->AddSubMesh(sm.vertexBuffer, sm.indexBuffer, sm.vertexCount, sm.triangleCount);
 		robj->SetSubMeshTangent((int)i, sm.hasTangents, sm.hasBinormals);
+		// Every sub-mesh keeps its own XML-declared textures. Without this the
+		// shared-effect sub-meshes inherit the first sub-mesh's DiffuseTexture
+		// (UP04 gun renders TavGattTank2 camo instead of TavBtMstr2 black metal).
+		robj->SetSubMeshConstants((int)i, sm.constants);
 		// Per-sub-mesh shader override: sub-meshes authored for the RA3 tread
 		// shader keep their scrolling-tread effect via the SAS-free override
 		// w3x_tread.fx instead of being forced onto the shared soviet shader.

@@ -124,6 +124,12 @@ static const EngineConstantBinding s_bindings[] =
 	{ "LightDirection",		5 },
 	{ "SunColor",			6 },
 	{ "LightColor",			6 },
+	// RA3 PS_H_ARPBR reads PV_SunlightDirection/Color DIRECTLY (bypassing the
+	// getSUNdir()/getSUNcolor() game-path helpers), overriding DirectionalLight.
+	// Bind them to the real sun so the PBR sun term (specular highlights) isn't
+	// computed with the SAS default (0,0,1) straight-down sun.
+	{ "PV_SunlightDirection", 5 },
+	{ "PV_SunlightColor",		6 },
 	// Ambient (group 7)
 	{ "AmbientColor",		7 },
 	{ "AmbientLightColor",	7 },	// RA3 shader
@@ -432,6 +438,7 @@ void W3XEffectManager::OnLostDevice(void)
 			HRESULT hr = m_cache[i].effect->OnLostDevice();
 			DEBUG_LOG(("[W3X_P3]   effect '%s' OnLostDevice hr=0x%08X\n",
 				m_cache[i].filePath.str(), (int)hr));
+			(void)hr;	// keep C4189 quiet when DEBUG_LOG is compiled out
 		}
 	}
 }
@@ -448,6 +455,7 @@ void W3XEffectManager::OnResetDevice(void)
 			HRESULT hr = m_cache[i].effect->OnResetDevice();
 			DEBUG_LOG(("[W3X_P3]   effect '%s' OnResetDevice hr=0x%08X\n",
 				m_cache[i].filePath.str(), (int)hr));
+			(void)hr;	// keep C4189 quiet when DEBUG_LOG is compiled out
 		}
 	}
 }
@@ -510,6 +518,41 @@ void W3XEffectManager::BindEngineConstants(ID3DXEffect *effect,
 			diagOnce = TRUE;
 		}
 	}
+	// PV_* sun parameters live inside the SAS "_SasGlobal" scope block, so the
+	// GetParameter(NULL, i) enumeration above never reaches them. Set them
+	// explicitly via GetParameterByName (which searches the whole effect incl.
+	// scope blocks) so the RA3 shader's direct reads of PV_SunlightDirection /
+	// PV_SunlightColor get the real sun instead of the SAS default (0,0,1)
+	// straight-down sun (which collapses the PBR specular on angled surfaces).
+	{
+		D3DXHANDLE hDir = effect->GetParameterByName(NULL, "PV_SunlightDirection");
+		if (hDir) {
+			float dir[4] = { 0, 0, 0, 0 };
+			if (TheGlobalData) {
+				dir[0] = -TheGlobalData->m_terrainLightPos[0].x;
+				dir[1] = -TheGlobalData->m_terrainLightPos[0].y;
+				dir[2] = -TheGlobalData->m_terrainLightPos[0].z;
+				float len = (float)sqrt(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+				if (len > 0.001f) { dir[0] /= len; dir[1] /= len; dir[2] /= len; }
+			}
+			effect->SetVector(hDir, (const D3DXVECTOR4*)dir);
+			DEBUG_LOG(("[W3X_P3]   BOUND: 'PV_SunlightDirection' (explicit) = %.3f,%.3f,%.3f\n",
+				dir[0], dir[1], dir[2]));
+		}
+		D3DXHANDLE hCol = effect->GetParameterByName(NULL, "PV_SunlightColor");
+		if (hCol) {
+			float color[4] = { 1, 1, 1, 0 };
+			if (TheGlobalData) {
+				color[0] = TheGlobalData->m_terrainDiffuse[0].red;
+				color[1] = TheGlobalData->m_terrainDiffuse[0].green;
+				color[2] = TheGlobalData->m_terrainDiffuse[0].blue;
+			}
+			effect->SetVector(hCol, (const D3DXVECTOR4*)color);
+			DEBUG_LOG(("[W3X_P3]   BOUND: 'PV_SunlightColor' (explicit) = %.3f,%.3f,%.3f\n",
+				color[0], color[1], color[2]));
+		}
+	}
+
 	boundDiagLogged = TRUE;	// done logging bound param names for this process
 }
 

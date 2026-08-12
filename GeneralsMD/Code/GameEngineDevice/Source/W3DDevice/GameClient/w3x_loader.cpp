@@ -805,6 +805,11 @@ AsciiString W3XLoader::ResolveTextureDDS(const char *texName)
 	int fileSize = 0;
 	char *xmlBuffer = ReadFileContent(xmlPath, fileSize);
 	if (!xmlBuffer) {
+		// RA3 asset declarations live under Art/W3X/ (with the models)
+		sprintf(xmlPath, "Art/W3X/%s.xml", texName);
+		xmlBuffer = ReadFileContent(xmlPath, fileSize);
+	}
+	if (!xmlBuffer) {
 		// Try with "Textures/" prefix
 		sprintf(xmlPath, "Textures/%s.xml", texName);
 		xmlBuffer = ReadFileContent(xmlPath, fileSize);

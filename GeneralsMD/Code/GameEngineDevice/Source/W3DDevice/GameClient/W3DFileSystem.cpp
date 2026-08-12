@@ -213,22 +213,32 @@ char const * GameFileClass::Set_Name( char const *filename )
 		// all .w3d files are in W3D_DIR_PATH, all .tga files are in TGA_DIR_PATH
 		if( fileType == FILE_TYPE_W3D )
 		{
-			
+
 			strcpy( m_filePath, W3D_DIR_PATH );
 			strcat( m_filePath, filename );
-			
+
 		}  // end if
 		else if( isImageFileType(fileType) )
 		{
-			
+
 			strcpy( m_filePath, TGA_DIR_PATH );
 			strcat( m_filePath, filename );
-			
+
 		}  // end else if
 		else
 			strcpy( m_filePath, filename );
-		
+
 		// see if the file exists
+		m_fileExists = TheFileSystem->doesFileExist( m_filePath );
+	}
+
+	// RA3 (.w3x) textures live under Art/W3X/ (with the models), so image files
+	// that aren't in the Generals Art/Textures/ land here. Names are RA3-unique
+	// (TavGattTank2, TunTrack, ...), so no collision with Generals textures.
+	if( m_fileExists == FALSE && isImageFileType(fileType) )
+	{
+		strcpy( m_filePath, "Art/W3X/" );
+		strcat( m_filePath, filename );
 		m_fileExists = TheFileSystem->doesFileExist( m_filePath );
 	}
 
