@@ -79,6 +79,28 @@ struct W3XBoneInfo
 	float fixupMatrix[16];	// column-major 4x4
 };
 
+// W3X animation channel: per-bone keyframes from a W3DAnimation.
+// One channel covers ONE pivot (bone) with a per-frame quaternion (orientation)
+// and/or a per-frame translation. Either list may be empty for that bone.
+struct W3XAnimChannel
+{
+	int pivot;					// bone index (matches W3DHierarchy Pivot order)
+	std::vector<float> quatFrames;	// 4 floats per frame (X,Y,Z,W), empty if none
+	std::vector<float> transFrames;	// 3 floats per frame, empty if none
+	W3XAnimChannel() : pivot(-1) {}
+};
+
+// W3X animation (from a W3DAnimation XML element, e.g. *_FIRE.w3x / *_IDLA.w3x).
+struct W3XAnimation
+{
+	AsciiString name;			// animation id
+	AsciiString hierarchy;		// skeleton this anim binds to (e.g. ..._SKL)
+	int numFrames;
+	int frameRate;
+	std::vector<W3XAnimChannel> channels;
+	W3XAnimation() : numFrames(0), frameRate(30) {}
+};
+
 // W3X FX shader constant type
 enum W3XConstantType
 {
@@ -175,6 +197,9 @@ public:
 	static bool ParseHierarchy(const char *filename,
 		std::vector<W3XBoneInfo> &bones);
 
+	// Parse a .w3x animation (W3DAnimation) into per-bone keyframes.
+	static bool ParseAnimation(const char *filename, W3XAnimation &anim);
+
 	// Resolve a texture name to DDS path via XML declaration file
 	static AsciiString ResolveTextureDDS(const char *texName);
 
@@ -199,6 +224,9 @@ private:
 	// (Lengyel method over position+texcoord+triangle index). Needed so the
 	// RA3 PBR shader's bump-normal perturbation has a TBN to work with.
 	static void ComputeFallbackTangents(W3XMeshData &data);
+
+	// Internal: parse one ChannelQuaternion/ChannelTranslation element's frames
+	static void ParseAnimationChannel(pugi::xml_node &node, W3XAnimation &anim, bool isQuat);
 };
 
 

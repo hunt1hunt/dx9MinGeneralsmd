@@ -78,6 +78,28 @@ public:
 	// parts like the turret/barrel). NULL if the model has no bones.
 	const float *GetBones(void) const { return m_bones; }
 	int GetBoneCount(void) const { return m_boneCount; }
+	// Bone-name interface so the Generals model/weapon code (W3DModelDraw's
+	// findSingleBone etc) can resolve WeaponFireFXBone/WeaponMuzzleFlash/
+	// WeaponLaunchBone ini names to skeleton pivots. Bone names are loaded from
+	// the .skl hierarchy and stored in m_boneNames (index-aligned with m_bones).
+	void SetBoneNames(const std::vector<AsciiString> &names);
+	virtual int Get_Num_Bones(void);
+	virtual const char *Get_Bone_Name(int bone_index);
+	virtual int Get_Bone_Index(const char *bonename);
+	virtual const Matrix3D &Get_Bone_Transform(int boneindex);
+	virtual const Matrix3D &Get_Bone_Transform(const char *bonename);
+	// Bone control for turret/barrel (game-logic driven rotation). The given
+	// transform is the bone's LOCAL rotation (e.g. Rotate_Z(turretYaw)); it is
+	// composed into the object-local WorldBones during Render. Mirrors
+	// RenderObjClass::Control_Bone so W3D turret logic can drive a W3X model.
+	virtual void Capture_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) m_boneCtrlActive[bindex] = true; }
+	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) m_boneCtrlActive[bindex] = false; }
+	virtual bool Is_Bone_Captured(int bindex) const { return (bindex >= 0 && bindex < kMaxBones) ? m_boneCtrlActive[bindex] : false; }
+	virtual void Control_Bone(int bindex, const Matrix3D &objtm, bool world_space_translation = false);
+	// Animation override: set a bone's object-local rotation quaternion directly
+	// (used by the W3X animation system for keyframe-driven bones like the
+	// barrel). Takes precedence over Control_Bone for the same bone.
+	void SetBoneAnimQuat(int bindex, const float q[4]);
 	void SetBounds(const Vector3 &min, const Vector3 &max);
 	void SetRecolorColor(unsigned int hexColor) { m_recolorHex = hexColor; }	// 0xFFRRGGBB faction color
 	void Clear(void);
@@ -126,12 +148,17 @@ private:
 		std::vector<W3XShaderConstant> constants;
 	};
 
+	enum { kMaxBones = 64 };	// must match BindW3XBones' 64-bone array
 	std::vector<SubMesh> m_meshes;
 	AsciiString m_fxName;
 	int m_technique;
 	std::vector<W3XShaderConstant> m_constants;
 	float *m_bones;		// RA3 WorldBones (quat+offset, 2 float4 per bone)
 	int m_boneCount;
+	std::vector<AsciiString> m_boneNames;	// per-bone name (index-aligned with m_bones)
+	Matrix3D m_boneTransformCache;			// Get_Bone_Transform returns a const ref
+	bool m_boneCtrlActive[kMaxBones];		// per-bone turret-control flag
+	float m_boneCtrlQuat[kMaxBones][4];		// per-bone control rotation (quat)
 	Vector3 m_bmin;
 	Vector3 m_bmax;
 	unsigned int m_recolorHex;	// 0xFFRRGGBB faction color (0 = none -> white)

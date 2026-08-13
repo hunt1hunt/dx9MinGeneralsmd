@@ -787,6 +787,101 @@ bool W3XLoader::ParseHierarchy(const char *filename,
 	return (boneCount > 0);
 }
 
+//=============================================================================
+// W3XLoader::ParseAnimation
+// Parse a .w3x W3DAnimation XML into per-bone keyframes. Each ChannelQuaternion /
+// ChannelTranslation has a Pivot (bone index) and a list of <Frame> keyframes;
+// the frame count must match W3DAnimation @NumFrames. Transforms are stored as
+// object-local quaternion (orientation) and/or translation, which is how the
+// RA3 shader expects the WorldBones array.
+//=============================================================================
+bool W3XLoader::ParseAnimation(const char *filename, W3XAnimation &anim)
+{
+	anim.channels.clear();
+	anim.numFrames = 0;
+
+	int fileSize = 0;
+	char *xmlBuffer = ReadFileContent(filename, fileSize);
+	if (!xmlBuffer) return false;
+
+	pugi::xml_document doc;
+	pugi::xml_parse_result result = doc.load_buffer(xmlBuffer, fileSize,
+		pugi::parse_default | pugi::parse_trim_pcdata);
+	delete[] xmlBuffer;
+
+	if (!result) return false;
+
+	pugi::xml_node assetDecl = doc.child("AssetDeclaration");
+	if (!assetDecl) assetDecl = doc;
+
+	pugi::xml_node animNode = assetDecl.child("W3DAnimation");
+	if (!animNode) {
+		DEBUG_LOG(("[W3X_P2] ParseAnimation: no <W3DAnimation> in '%s'\n", filename));
+		return false;
+	}
+
+	anim.name = animNode.attribute("id").value();
+	anim.hierarchy = animNode.attribute("Hierarchy").value();
+	anim.numFrames = animNode.attribute("NumFrames").as_int(0);
+	anim.frameRate = animNode.attribute("FrameRate").as_int(30);
+	if (anim.numFrames < 1) anim.numFrames = 1;
+
+	// Iterate Channels and collect quaternion / translation channels.
+	// RA3 XML nests them as <ChannelQuaternion ...><Frame .../></ChannelQuaternion>,
+	// or sometimes <Channels><Channel Type=...><ChannelQuaternion .../></Channel>.
+	pugi::xml_node channels = animNode.child("Channels");
+	pugi::xml_node chan = channels ? channels.first_child() : animNode.first_child();
+	for (; chan; chan = chan.next_sibling()) {
+		if (strcmp(chan.name(), "Channel") == 0) {
+			// Wrapper <Channel Type="..."> containing a ChannelQuaternion/etc.
+			pugi::xml_node inner = chan.first_child();
+			for (; inner; inner = inner.next_sibling()) {
+				if (!anim.channels.empty() && strcmp(inner.name(), "Frame") == 0)
+					continue;	// frames belong to the previous channel
+				if (strcmp(inner.name(), "ChannelQuaternion") == 0)
+					ParseAnimationChannel(inner, anim, true);
+				else if (strcmp(inner.name(), "ChannelTranslation") == 0)
+					ParseAnimationChannel(inner, anim, false);
+			}
+			continue;
+		}
+		if (strcmp(chan.name(), "ChannelQuaternion") == 0)
+			ParseAnimationChannel(chan, anim, true);
+		else if (strcmp(chan.name(), "ChannelTranslation") == 0)
+			ParseAnimationChannel(chan, anim, false);
+	}
+
+	DEBUG_LOG(("[W3X_P2] ParseAnimation: '%s' hierarchy='%s' frames=%d channels=%d\n",
+		anim.name.str(), anim.hierarchy.str(), anim.numFrames, (int)anim.channels.size()));
+	return (!anim.channels.empty());
+}
+
+// Helper for ParseAnimation: read one channel element's pivot + frame keyframes.
+void W3XLoader::ParseAnimationChannel(pugi::xml_node &node, W3XAnimation &anim, bool isQuat)
+{
+	W3XAnimChannel ch;
+	ch.pivot = node.attribute("Pivot").as_int(-1);
+	if (ch.pivot < 0) return;
+
+	// Collect <Frame X Y Z (W)/> children. Quat has 4 components, translation 3.
+	if (isQuat) {
+		for (pugi::xml_node f = node.child("Frame"); f; f = f.next_sibling("Frame")) {
+			ch.quatFrames.push_back(f.attribute("X").as_float());
+			ch.quatFrames.push_back(f.attribute("Y").as_float());
+			ch.quatFrames.push_back(f.attribute("Z").as_float());
+			ch.quatFrames.push_back(f.attribute("W").as_float());
+		}
+	} else {
+		for (pugi::xml_node f = node.child("Frame"); f; f = f.next_sibling("Frame")) {
+			ch.transFrames.push_back(f.attribute("X").as_float());
+			ch.transFrames.push_back(f.attribute("Y").as_float());
+			ch.transFrames.push_back(f.attribute("Z").as_float());
+		}
+	}
+	if (ch.quatFrames.empty() && ch.transFrames.empty()) return;
+	anim.channels.push_back(ch);
+}
+
 
 //=============================================================================
 // W3XLoader::ResolveTextureDDS

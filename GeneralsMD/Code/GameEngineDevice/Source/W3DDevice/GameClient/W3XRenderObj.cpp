@@ -24,6 +24,7 @@
 #include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WWMath/matrix4.h"
+#include "WWMath/quat.h"	// Quaternion for Get_Bone_Transform (Matrix3D::Set_Rotation)
 #include "WW3D2/texture.h"
 #include "WW3D2/ww3dformat.h"
 #include "WW3D2/camera.h"
@@ -31,6 +32,12 @@
 #include "wwmemlog.h"
 #include <d3d9.h>
 #include <d3dx9effect.h>
+
+// Forward decls for the RA3 WorldBones quaternion helpers (defined later in
+// this file). Needed by Get_Bone_Transform which appears before their defs.
+static void W3XQuatMultiply(float *out, const float *a, const float *b);
+static void W3XQuatRotateVector(float *out, const float *q, const float *v);
+static void W3XMatrix3DToQuat(const Matrix3D &m, float *q);
 
 //=============================================================================
 // Shared W3X vertex declaration (W3XVertex layout, 64-byte stride)
@@ -68,6 +75,11 @@ W3XRenderObjClass::W3XRenderObjClass() :
 	m_recolorHex(0),
 	m_valid(false)
 {
+	for (int i = 0; i < kMaxBones; i++) {
+		m_boneCtrlActive[i] = false;
+		m_boneCtrlQuat[i][0] = m_boneCtrlQuat[i][1] = m_boneCtrlQuat[i][2] = 0.0f;
+		m_boneCtrlQuat[i][3] = 1.0f;
+	}
 	m_bmin.Set(0, 0, 0);
 	m_bmax.Set(0, 0, 0);
 	m_worldTransform.Make_Identity();
@@ -145,6 +157,101 @@ void W3XRenderObjClass::SetBones(float *bones, int boneCount)
 	}
 }
 
+void W3XRenderObjClass::SetBoneNames(const std::vector<AsciiString> &names)
+{
+	m_boneNames = names;
+}
+
+int W3XRenderObjClass::Get_Num_Bones(void)
+{
+	return m_boneCount;
+}
+
+const char *W3XRenderObjClass::Get_Bone_Name(int bone_index)
+{
+	if (bone_index >= 0 && bone_index < (int)m_boneNames.size())
+		return m_boneNames[bone_index].str();
+	return NULL;
+}
+
+int W3XRenderObjClass::Get_Bone_Index(const char *bonename)
+{
+	if (!bonename || !bonename[0]) return 0;
+	AsciiString want(bonename);
+	want.toLower();
+	for (int i = 0; i < (int)m_boneNames.size(); i++) {
+		if (m_boneNames[i].compareNoCase(want) == 0)
+			return i;
+	}
+	return 0;	// W3D convention: 0 = not found / root bone
+}
+
+const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(int boneindex)
+{
+	// World-space bone transform: same composition the GPU path (BindW3XBones)
+	// does - worldRot = W_quat * boneQuat, worldOffset = rot(boneOffset, W_quat)
+	// + W_trans - so an FX/hud placed on this bone lands at the skinned world
+	// position (muzzle flash, launch offset).
+	m_boneTransformCache.Make_Identity();
+	if (boneindex < 0 || boneindex >= m_boneCount || !m_bones) {
+		m_boneTransformCache = m_worldTransform;
+		return m_boneTransformCache;
+	}
+	float wq[4];
+	W3XMatrix3DToQuat(m_worldTransform, wq);
+	const float *bq = &m_bones[boneindex * 8 + 0];
+	const float *bo = &m_bones[boneindex * 8 + 4];
+	float worldQuat[4];
+	float worldOffset[3];
+	W3XQuatMultiply(worldQuat, wq, bq);			// worldRot = W_quat * boneQuat
+	W3XQuatRotateVector(worldOffset, wq, bo);	// rotate offset by W_quat
+	Vector3 wtrans = m_worldTransform.Get_Translation();
+	worldOffset[0] += wtrans.X;
+	worldOffset[1] += wtrans.Y;
+	worldOffset[2] += wtrans.Z;
+	Quaternion q(worldQuat[0], worldQuat[1], worldQuat[2], worldQuat[3]);
+	m_boneTransformCache.Set_Rotation(q);
+	m_boneTransformCache.Set_Translation(Vector3(worldOffset[0], worldOffset[1], worldOffset[2]));
+	return m_boneTransformCache;
+}
+
+const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(const char *bonename)
+{
+	int idx = Get_Bone_Index(bonename);
+	if (idx == 0) {
+		// No match (or root bone). Return identity world so callers that
+		// just translate to the bone position land on the object origin.
+		m_boneTransformCache = m_worldTransform;
+		return m_boneTransformCache;
+	}
+	return Get_Bone_Transform(idx);
+}
+
+void W3XRenderObjClass::Control_Bone(int bindex, const Matrix3D &objtm, bool /*world_space_translation*/)
+{
+	// Store the bone's local rotation as a quaternion override. This mirrors the
+	// W3D HTree turret control: the turret/barrel bone rotates by the given
+	// matrix on top of its bind pose, and the composition happens in Render().
+	if (bindex < 0 || bindex >= kMaxBones) return;
+	float q[4];
+	W3XMatrix3DToQuat(objtm, q);
+	m_boneCtrlQuat[bindex][0] = q[0];
+	m_boneCtrlQuat[bindex][1] = q[1];
+	m_boneCtrlQuat[bindex][2] = q[2];
+	m_boneCtrlQuat[bindex][3] = q[3];
+	m_boneCtrlActive[bindex] = true;
+}
+
+void W3XRenderObjClass::SetBoneAnimQuat(int bindex, const float q[4])
+{
+	if (bindex < 0 || bindex >= kMaxBones) return;
+	m_boneCtrlQuat[bindex][0] = q[0];
+	m_boneCtrlQuat[bindex][1] = q[1];
+	m_boneCtrlQuat[bindex][2] = q[2];
+	m_boneCtrlQuat[bindex][3] = q[3];
+	m_boneCtrlActive[bindex] = true;
+}
+
 void W3XRenderObjClass::SetBounds(const Vector3 &min, const Vector3 &max)
 {
 	m_bmin = min;
@@ -156,6 +263,7 @@ void W3XRenderObjClass::Clear(void)
 {
 	if (m_bones) { delete[] m_bones; m_bones = NULL; }
 	m_boneCount = 0;
+	m_boneNames.clear();
 	m_meshes.clear();
 	m_constants.clear();
 	m_fxName.clear();
@@ -408,29 +516,10 @@ static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const
 void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 {
 	if (!m_valid || m_meshes.empty()) return;
+	// setHidden (ObjectDrawInterface) toggles this; skip drawing hidden W3X
+	// (e.g. units inside transports / stealthed).
+	if (Is_Hidden()) return;
 
-	// PASS DIAGNOSTIC (one-shot, first 8 calls): confirms the W3X is invoked
-	// from which scene passes. g_gbufferActive=1 => the deferred G-Buffer pass,
-	// g_gbufferActive=0 => the Forward pass (and any others). CWE=0 => the
-	// shadow-map pass (skipped below). This verifies the "renders twice per
-	// frame (G-Buffer + Forward), both writing the same main depth buffer"
-	// root cause of the wheel-covered-by-track depth artefact.
-	{
-		static int s_passDiag = 0;
-		if (s_passDiag < 8) {
-			s_passDiag++;
-			DWORD cwe = 0, zen = 0, zwr = 0, zfn = 0;
-			IDirect3DDevice9 *pd9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
-			if (pd9) {
-				pd9->GetRenderState(D3DRS_COLORWRITEENABLE, &cwe);
-				pd9->GetRenderState(D3DRS_ZENABLE, &zen);
-				pd9->GetRenderState(D3DRS_ZWRITEENABLE, &zwr);
-				pd9->GetRenderState(D3DRS_ZFUNC, &zfn);
-			}
-			DEBUG_LOG(("[W3X_PASS] Render #%d gbuf=%d CWE=0x%08X ZEN=%u ZWR=%u ZFN=%u\n",
-				s_passDiag, g_gbufferActive ? 1 : 0, (unsigned)cwe, zen, zwr, zfn));
-		}
-	}
 
 	// SKIP the deferred G-Buffer pass. The W3X is a forward PBR renderer; drawing
 	// it in the G-Buffer pass writes its PBR color into RT0 (albedo) while RT1
@@ -600,8 +689,26 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// Set per-instance constants
 	BindW3XConstants(effect, m_constants);
 
+	// Compose per-bone turret/barrel control (Control_Bone) into a temp WorldBones
+	// copy: bind pose quat replaced by the controlled rotation for captured bones.
+	// The bind pose in m_bones is preserved so Control_Bone is additive per frame.
+	float ctrlBones[kMaxBones * 8];
+	const float *srcBones = m_bones;
+	if (m_boneCount > 0 && m_bones) {
+		for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
+			for (int c = 0; c < 8; c++) ctrlBones[bi*8 + c] = m_bones[bi*8 + c];
+			if (m_boneCtrlActive[bi]) {
+				ctrlBones[bi*8 + 0] = m_boneCtrlQuat[bi][0];
+				ctrlBones[bi*8 + 1] = m_boneCtrlQuat[bi][1];
+				ctrlBones[bi*8 + 2] = m_boneCtrlQuat[bi][2];
+				ctrlBones[bi*8 + 3] = m_boneCtrlQuat[bi][3];
+			}
+		}
+		srcBones = ctrlBones;
+	}
+
 	// Upload bones (WorldBones)
-	BindW3XBones(effect, m_bones, m_boneCount, m_worldTransform);
+	BindW3XBones(effect, (float*)srcBones, m_boneCount, m_worldTransform);
 
 	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
 	if (!dev9) return;
@@ -740,45 +847,6 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// so disable culling AFTER BeginPass (BeginPass re-applies the pass
 			// render states and would otherwise undo this).
 			dev9->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-			// DRAW-STATE DIAG (one-shot, first draw): the device states the pass
-			// ACTUALLY applied at the draw moment. ZEN=1 (test on) ZWR=1 (write on)
-			// ZFN=4 (LESS) CULL=1 (NONE) is the expected good state. ZEN=0/ZWR=0
-			// here means the effect's technique pass states are not reaching the
-			// device, so every sub-mesh submits in order with no depth separation —
-			// the track (drawn last) then wins over the wheel regardless of depth.
-			{
-				// DIAG: RT/DS on the first few draws. The W3X is rendered from multiple
-				// scene passes (aux reflection/env pass at 256x256, then the main
-				// Forward pass at the back-buffer size). Capturing several draws shows
-				// WHICH RT/DS each pass uses — the main-pass depth is what the
-				// volumetric shadow volume depth-tests against (self-shadow needs the
-				// hull depth in the same DS the shadow pass reads).
-				static int s_drawDiagCount = 0;
-				if (s_drawDiagCount < 6) {
-					s_drawDiagCount++;
-					DWORD zen = 0, zwr = 0, zfn = 0, cul = 0;
-					dev9->GetRenderState(D3DRS_ZENABLE, &zen);
-					dev9->GetRenderState(D3DRS_ZWRITEENABLE, &zwr);
-					dev9->GetRenderState(D3DRS_ZFUNC, &zfn);
-					dev9->GetRenderState(D3DRS_CULLMODE, &cul);
-					IDirect3DSurface9 *drawDS = NULL;
-					IDirect3DSurface9 *drawRT = NULL;
-					D3DSURFACE_DESC dsd, rtd;
-					bool hasDS = SUCCEEDED(dev9->GetDepthStencilSurface(&drawDS)) && drawDS;
-					bool hasRT = SUCCEEDED(dev9->GetRenderTarget(0, &drawRT)) && drawRT;
-					if (hasDS) { drawDS->GetDesc(&dsd); }
-					if (hasRT) { drawRT->GetDesc(&rtd); }
-					DEBUG_LOG(("[W3X_DRAW#%d] DS=%p %ux%u fmt=0x%X | RT0=%p %ux%u fmt=0x%X | gbuf=%d fx='%s' ZEN=%u ZWR=%u ZFN=%u CULL=%u\n",
-						s_drawDiagCount,
-						(void*)drawDS, hasDS ? dsd.Width : 0, hasDS ? dsd.Height : 0, hasDS ? dsd.Format : 0,
-						(void*)drawRT, hasRT ? rtd.Width : 0, hasRT ? rtd.Height : 0, hasRT ? rtd.Format : 0,
-						g_gbufferActive ? 1 : 0,
-						(drawEffect == effect) ? m_fxName.str() : sm.fxName.str(),
-						(unsigned)zen, (unsigned)zwr, (unsigned)zfn, (unsigned)cul));
-					if (drawDS) drawDS->Release();
-					if (drawRT) drawRT->Release();
-				}
-			}
 			hr = dev9->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, sm.vertexCount, 0, sm.triangleCount);
 			if (FAILED(hr)) { DEBUG_LOG(("[W3X_P5]   submesh[%d] DrawIndexedPrimitive FAILED hr=0x%08X (vc=%d tc=%d)\n", (int)si, (int)hr, sm.vertexCount, sm.triangleCount)); totalFailed++; }
 			drawEffect->EndPass();

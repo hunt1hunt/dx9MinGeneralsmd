@@ -49,7 +49,18 @@ public:
 	Shadow* addShadow( RenderObjClass *robj,Shadow::ShadowTypeInfo *shadowInfo=NULL, Drawable *draw=NULL);	///< adds shadow caster to rendering system.
 	void removeShadow(Shadow *shadow);	///< removed shadow from rendering system and frees its resources.
 	void removeAllShadows(void); ///< Remove all shadows.
-	void setShadowColor(UnsignedInt color) { m_shadowColor=color;}	///<sets the shadow color and alpha, value in ARGB format.
+	void setShadowColor(UnsignedInt color) {
+		// Shadow depth is the RGB used as a multiply-blend factor (0xRR/0xFF =
+		// fraction of the original color kept in shadow). Clamp to a medium-dark
+		// floor (0x606060 = keep 38%) so map-provided values can't make the
+		// shadow too faint ("sunlight bleeding through the shadow").
+		UnsignedInt r = (color >> 16) & 0xFF, g = (color >> 8) & 0xFF, b = color & 0xFF;
+		const UnsignedInt kMax = 0x60;
+		if (r > kMax) r = kMax;
+		if (g > kMax) g = kMax;
+		if (b > kMax) b = kMax;
+		m_shadowColor = (color & 0xFF000000) | (r << 16) | (g << 8) | b;
+	}	///<sets the shadow color and alpha, value in ARGB format.
 	UnsignedInt getShadowColor() { return m_shadowColor;}	///<gets the shadow color and alpha, value in ARGB format.
 	void setLightPosition(Int lightIndex, Real x, Real y, Real z);	///<sets the position of a specific light source.
 	void setTimeOfDay(TimeOfDay tod);

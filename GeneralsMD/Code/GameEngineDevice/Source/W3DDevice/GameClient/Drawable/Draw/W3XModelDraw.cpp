@@ -16,6 +16,10 @@
 **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+// Must be defined before ANY include that pulls in WeaponSet.h (incl. the
+// W3XModelDraw.h header) so TheWeaponSlotTypeNames is emitted here.
+#define DEFINE_WEAPONSLOTTYPE_NAMES
+
 #include "always.h"
 #include "W3DDevice/GameClient/Module/W3XModelDraw.h"
 #include "W3DDevice/GameClient/W3XEffectManager.h"
@@ -25,7 +29,10 @@
 #include "W3DDevice/GameClient/W3DShadow.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/Shadow.h"
+#include "GameClient/FXList.h"		// FXList::doFXPos for weapon fire placement
 #include "GameLogic/Object.h"
+#include "GameLogic/GameLogic.h"		// TheGameLogic (frame counter for animation)
+#include "GameLogic/Module/AIUpdate.h"	// getTurretRotAndPitch for turret rotation
 #include "Common/GlobalData.h"
 #include "Common/ThingTemplate.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
@@ -34,6 +41,7 @@
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/rinfo.h"
 #include "WW3D2/camera.h"
+#include "WWMath/quat.h"	// Quaternion for pristine bone transforms
 #include "INI.h"
 #include "Common/Xfer.h"
 #include "refcount.h"
@@ -72,11 +80,32 @@ void W3XModelDrawModuleData::buildFieldParse(MultiIniFieldParse &p)
 	p.add(myFieldParse);
 }
 
+// Parse "WeaponFireFXBone = PRIMARY <name>" style entries into the per-slot
+// AsciiString array at 'store' (mirrors W3DModelDraw::parseWeaponBoneName).
+static void parseW3XWeaponBoneName(INI *ini, void *instance, void *store, const void *)
+{
+	W3XConditionInfo *self = (W3XConditionInfo *)instance;
+	AsciiString *arr = (AsciiString *)store;
+	WeaponSlotType wslot = (WeaponSlotType)INI::scanIndexList(ini->getNextToken(), TheWeaponSlotTypeNames);
+	arr[wslot] = ini->getNextAsciiString();
+	arr[wslot].toLower();
+	if (arr[wslot].isNone())
+		arr[wslot].clear();
+	(void)self;
+}
+
 void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void *, const void *)
 {
 	// Sub-field parse table for a ConditionState block
 	static const FieldParse myFieldParse[] = {
 		{ "Model", INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_modelName) },
+		{ "WeaponFireFXBone",  parseW3XWeaponBoneName, NULL, offsetof(W3XConditionInfo, m_weaponFireFXBoneName[0]) },
+		{ "WeaponMuzzleFlash", parseW3XWeaponBoneName, NULL, offsetof(W3XConditionInfo, m_weaponMuzzleFlashName[0]) },
+		{ "WeaponLaunchBone",  parseW3XWeaponBoneName, NULL, offsetof(W3XConditionInfo, m_weaponProjectileLaunchBoneName[0]) },
+		{ "Turret",       INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_turretAngleName) },
+		{ "TurretPitch",  INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_turretPitchName) },
+		{ "Animation",    INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_animationName) },
+		{ "IdleAnimation",INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_idleAnimationName) },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -95,7 +124,8 @@ void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void 
 
 W3XModelDraw::W3XModelDraw(Thing *thing, const ModuleData *moduleData) :
 	DrawModule(thing, moduleData), m_curState(NULL), m_fullyObscuredByShroud(false),
-	m_renderObj(NULL), m_shadowEnabled(TRUE), m_shadow(NULL)
+	m_renderObj(NULL), m_shadowEnabled(TRUE), m_shadow(NULL),
+	m_animFrame(0), m_animPrevFrame(-1), m_animLastFrame(-1), m_animValid(false)
 {
 	m_loadedModel.boneMatrixArray = NULL;
 	m_loadedModel.valid = false;
@@ -226,6 +256,17 @@ bool W3XModelDraw::loadHierarchy(const char *sklName, LoadedModelData &data)
 
 	data.boneCount = (int)bones.size();
 	DEBUG_LOG(("[W3X_P5] loadHierarchy: '%s' -> %d bones\n", path, data.boneCount));
+
+	// Keep the per-bone names (lowercased) so the render object can resolve
+	// ini WeaponFireFXBone / WeaponMuzzleFlash / WeaponLaunchBone names to
+	// skeleton pivots (W3XRenderObjClass::Get_Bone_Index etc).
+	data.boneNames.clear();
+	data.boneNames.reserve(data.boneCount);
+	for (int bi = 0; bi < data.boneCount; bi++) {
+		AsciiString n = bones[bi].name;
+		n.toLower();
+		data.boneNames.push_back(n);
+	}
 
 	// Allocate WorldBones array: 2 float4 per bone (quat + offset) = 8 floats per bone
 	if (data.boneMatrixArray) delete[] data.boneMatrixArray;
@@ -482,6 +523,7 @@ void W3XModelDraw::releaseModelData(LoadedModelData &data)
 	data.subMeshes.clear();
 	data.constants.clear();
 	data.fxShaderName.clear();
+	data.boneNames.clear();
 	if (data.boneMatrixArray) { delete[] data.boneMatrixArray; data.boneMatrixArray = NULL; }
 	data.boneCount = 0;
 	data.valid = false;
@@ -579,6 +621,8 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	if (data.boneCount > 0 && data.boneMatrixArray) {
 		robj->SetBones(data.boneMatrixArray, data.boneCount);
 	}
+	// Bone names -> render obj so ini WeaponFireFXBone etc can be resolved.
+	robj->SetBoneNames(data.boneNames);
 
 	// Bounds: union of the per-sub-mesh AABBs parsed from each .w3x <BoundingBox>.
 	// The scene uses these for frustum culling AND the projected ground shadow
@@ -668,6 +712,9 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 	const ModelConditionFlags flags = draw->getModelConditionFlags();
 	const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
 	const W3XConditionInfo *state = md->findBestConditionState(flags);
+	// Track the active condition state so weapon-fire / launch offset can find
+	// this state's barrel bones. (This was never assigned before -> fireFX dead.)
+	m_curState = state;
 	const char *targetModel = NULL;
 	if (state) targetModel = state->m_modelName.str();
 	else if (!md->m_defaultModelName.isEmpty()) targetModel = md->m_defaultModelName.str();
@@ -687,6 +734,12 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 			// Name the render object with the model name so the volumetric shadow
 			// geometry is cached per-model (not shared as "UNNAMED").
 			if (m_renderObj) m_renderObj->Set_Name(targetModel);
+			// Resolve this state's weapon barrel bones against the new skeleton.
+			validateBarrelInfo(m_curState);
+			// Resolve turret/pitch bones + load the state's animation.
+			resolveTurretBones(m_curState);
+			if (m_curState && !m_curState->m_animationName.isEmpty())
+				loadAnimation(m_curState->m_animationName.str());
 			// (Re)allocate the volumetric shadow now that the render object exists.
 			// Drawable::allocateShadows() may have run before the model was built.
 			if (m_shadow == NULL) allocateShadows();
@@ -707,6 +760,9 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 		if (obj) {
 			m_renderObj->SetRecolorColor((unsigned int)obj->getIndicatorColor());
 		}
+		// Turret rotation + skeletal animation (pure client).
+		handleClientTurretPositioning();
+		updateAnimation();
 	}
 }
 
@@ -719,4 +775,373 @@ void W3XModelDraw::setFullyObscuredByShroud(Bool fullyObscured)
 Bool W3XModelDraw::isVisible() const
 {
 	return !m_fullyObscuredByShroud;
+}
+
+//-----------------------------------------------------------------------------
+// ObjectDrawInterface implementations (mirror W3DModelDraw)
+//-----------------------------------------------------------------------------
+
+int W3XModelDraw::getBoneIndexByName(const AsciiString &boneName) const
+{
+	if (boneName.isEmpty()) return -1;
+	AsciiString want(boneName);
+	want.toLower();
+	// Prefer the render object's bone-name lookup (has the live skeleton).
+	if (m_renderObj) {
+		int idx = m_renderObj->Get_Bone_Index(want.str());
+		// Get_Bone_Index returns 0 for "not found"; bone 0 is roottransform, so
+		// a non-empty name that resolves to 0 means no real match (or root).
+		if (idx != 0) return idx;
+	}
+	// Fall back to the loaded model's bone name list (works before render obj
+	// exists, e.g. logic-side projectile launch offset).
+	for (int i = 0; i < (int)m_loadedModel.boneNames.size(); i++) {
+		if (m_loadedModel.boneNames[i].compareNoCase(want) == 0)
+			return i;
+	}
+	return -1;
+}
+
+void W3XModelDraw::validateBarrelInfo(const W3XConditionInfo *state) const
+{
+	if (!state) return;
+	for (int wslot = 0; wslot < WEAPONSLOT_COUNT; wslot++) {
+		if (state->m_barrelsValid[wslot]) continue;
+		state->m_barrelsValid[wslot] = true;
+		W3XWeaponBarrelInfoVec &vec = state->m_weaponBarrelInfoVec[wslot];
+		vec.clear();
+
+		const AsciiString &fxName  = state->m_weaponFireFXBoneName[wslot];
+		const AsciiString &mfName  = state->m_weaponMuzzleFlashName[wslot];
+		const AsciiString &lbName  = state->m_weaponProjectileLaunchBoneName[wslot];
+
+		// If no bones declared for this slot, nothing to do.
+		if (fxName.isEmpty() && mfName.isEmpty() && lbName.isEmpty())
+			continue;
+
+		// Look for barrel-suffixed bones: "%s01", "%s02", ... (like W3D).
+		char buffer[128];
+		for (int i = 1; i <= 8; i++) {
+			W3XWeaponBarrelInfo info;
+			if (!fxName.isEmpty()) {
+				sprintf(buffer, "%s%02d", fxName.str(), i);
+				info.m_fxBone = getBoneIndexByName(AsciiString(buffer));
+			}
+			if (!mfName.isEmpty()) {
+				sprintf(buffer, "%s%02d", mfName.str(), i);
+				info.m_muzzleFlashBone = getBoneIndexByName(AsciiString(buffer));
+			}
+			if (!lbName.isEmpty()) {
+				sprintf(buffer, "%s%02d", lbName.str(), i);
+				info.m_launchBone = getBoneIndexByName(AsciiString(buffer));
+			}
+			if (info.m_fxBone < 0 && info.m_muzzleFlashBone < 0 && info.m_launchBone < 0)
+				break;
+			vec.push_back(info);
+		}
+		// If no suffixed barrels matched, try the bare names once.
+		if (vec.empty()) {
+			W3XWeaponBarrelInfo info;
+			if (!fxName.isEmpty())  info.m_fxBone  = getBoneIndexByName(fxName);
+			if (!mfName.isEmpty())  info.m_muzzleFlashBone = getBoneIndexByName(mfName);
+			if (!lbName.isEmpty())  info.m_launchBone = getBoneIndexByName(lbName);
+			if (info.m_fxBone >= 0 || info.m_muzzleFlashBone >= 0 || info.m_launchBone >= 0)
+				vec.push_back(info);
+		}
+		DEBUG_LOG(("[W3X_P5] validateBarrelInfo wslot=%d barrels=%d (fx=%s mf=%s lb=%s)\n",
+			wslot, (int)vec.size(),
+			fxName.isEmpty() ? "-" : fxName.str(),
+			mfName.isEmpty() ? "-" : mfName.str(),
+			lbName.isEmpty() ? "-" : lbName.str()));
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Turret / animation (RA3 skeletal)
+//-----------------------------------------------------------------------------
+
+void W3XModelDraw::resolveTurretBones(const W3XConditionInfo *state) const
+{
+	if (!state) return;
+	state->m_turretAngleBone = state->m_turretAngleName.isEmpty() ? -1
+		: getBoneIndexByName(state->m_turretAngleName);
+	state->m_turretPitchBone = state->m_turretPitchName.isEmpty() ? -1
+		: getBoneIndexByName(state->m_turretPitchName);
+	DEBUG_LOG(("[W3X_P5] resolveTurretBones: angle=%d pitch=%d (names '%s'/'%s')\n",
+		state->m_turretAngleBone, state->m_turretPitchBone,
+		state->m_turretAngleName.str(), state->m_turretPitchName.str()));
+}
+
+void W3XModelDraw::handleClientTurretPositioning()
+{
+	// Pure-client: rotate the turret (and optionally pitch) bone to the AI's
+	// current turret/pitch angles. Must never touch GameLogic.
+	if (!m_curState || !m_renderObj) return;
+	const W3XConditionInfo *state = m_curState;
+	Object *obj = getDrawable() ? getDrawable()->getObject() : NULL;
+	if (!obj) return;
+	const AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (!ai) return;
+
+	Real turretAngle = 0, turretPitch = 0;
+	if (state->m_turretAngleBone >= 0 || state->m_turretPitchBone >= 0) {
+		ai->getTurretRotAndPitch(TURRET_MAIN, &turretAngle, &turretPitch);
+		if (state->m_turretAngleBone >= 0) {
+			Matrix3D turretXfrm(1);
+			turretXfrm.Rotate_Z(turretAngle);
+			m_renderObj->Control_Bone(state->m_turretAngleBone, turretXfrm);
+		}
+		if (state->m_turretPitchBone >= 0) {
+			Matrix3D pitchXfrm(1);
+			pitchXfrm.Rotate_Y(-turretPitch);
+			m_renderObj->Control_Bone(state->m_turretPitchBone, pitchXfrm);
+		}
+	}
+}
+
+bool W3XModelDraw::loadAnimation(const char *animName)
+{
+	if (!animName || !animName[0]) return false;
+	if (m_curAnimName.compareNoCase(animName) == 0 && m_animValid)
+		return true;	// already loaded
+
+	// RA3 animations live next to the model: Art/W3X/<name>.w3x
+	char path[512];
+	sprintf(path, W3X_ASSET_DIR "%s.w3x", animName);
+	W3XAnimation anim;
+	if (!W3XLoader::ParseAnimation(path, anim)) {
+		DEBUG_LOG(("[W3X_P5] loadAnimation: failed to parse '%s'\n", path));
+		return false;
+	}
+	m_curAnim = anim;
+	m_curAnimName = animName;
+	m_animFrame = 0;
+	m_animPrevFrame = -1;
+	m_animLastFrame = -1;	// restart timing
+	m_animValid = true;
+	DEBUG_LOG(("[W3X_P5] loadAnimation: '%s' frames=%d channels=%d\n",
+		anim.name.str(), anim.numFrames, (int)anim.channels.size()));
+	return true;
+}
+
+void W3XModelDraw::updateAnimation()
+{
+	// Advance the current animation one logic/frame step and apply its keyframes
+	// to the render object via SetBoneAnimQuat (object-local rotation override).
+	if (!m_animValid || !m_renderObj) return;
+	if (m_curAnim.numFrames < 2) return;
+
+	// Simple fixed-step playback at the animation's frame rate. Use the game
+	// frame count so playback rate matches logic frames (30 fps default).
+	// Per-instance last-frame so multiple W3X units don't share timing.
+	Int frame = TheGameLogic ? TheGameLogic->getFrame() : 0;
+	if (m_animLastFrame >= 0) {
+		m_animFrame += (float)(frame - m_animLastFrame);
+	}
+	m_animLastFrame = frame;
+
+	// Loop.
+	int totalFrames = m_curAnim.numFrames;
+	while (m_animFrame >= totalFrames) m_animFrame -= (float)totalFrames;
+	if (m_animFrame < 0) m_animFrame = 0;
+
+	int f0 = (int)m_animFrame;
+	float t = m_animFrame - (float)f0;
+
+	for (size_t ci = 0; ci < m_curAnim.channels.size(); ci++) {
+		const W3XAnimChannel &ch = m_curAnim.channels[ci];
+		if (ch.quatFrames.empty()) continue;
+		// 4 floats per frame; index into per-bone quat array.
+		// Guard against a frame-count mismatch (quatFrames.size() < numFrames*4).
+		int stride = 4;
+		int nFrames = (int)ch.quatFrames.size() / stride;
+		if (nFrames < 1) continue;
+		int ff0 = f0 % nFrames;
+		int ff1 = (ff0 + 1) % nFrames;
+		const float *q0 = &ch.quatFrames[ff0 * stride];
+		const float *q1 = &ch.quatFrames[ff1 * stride];
+		float outQ[4];
+		Quaternion a(q0[0], q0[1], q0[2], q0[3]);
+		Quaternion b(q1[0], q1[1], q1[2], q1[3]);
+		Quaternion r;
+		Slerp(r, a, b, t);
+		outQ[0] = r.X; outQ[1] = r.Y; outQ[2] = r.Z; outQ[3] = r.W;
+		m_renderObj->SetBoneAnimQuat(ch.pivot, outQ);
+	}
+}
+
+Bool W3XModelDraw::clientOnly_getRenderObjInfo(Coord3D *pos, Real *boundingSphereRadius, Matrix3D *transform) const
+{
+	if (!m_renderObj || !pos || !boundingSphereRadius || !transform) return false;
+	Vector3 objPos = m_renderObj->Get_Position();
+	pos->x = objPos.X; pos->y = objPos.Y; pos->z = objPos.Z;
+	*transform = m_renderObj->Get_Transform();
+	*boundingSphereRadius = m_renderObj->Get_Bounding_Sphere().Radius;
+	return true;
+}
+
+Bool W3XModelDraw::clientOnly_getRenderObjBoundBox(OBBoxClass *boundbox) const
+{
+	// Not needed for W3X rendering; return false so callers fall back.
+	return false;
+}
+
+Bool W3XModelDraw::clientOnly_getRenderObjBoneTransform(const AsciiString &boneName, Matrix3D *set_tm) const
+{
+	if (!m_renderObj || !set_tm) return false;
+	int idx = getBoneIndexByName(boneName);
+	if (idx < 0) return false;
+	*set_tm = m_renderObj->Get_Bone_Transform(idx);
+	return true;
+}
+
+Int W3XModelDraw::getPristineBonePositionsForConditionState(
+	const ModelConditionFlags &condition, const char *boneNamePrefix, Int startIndex,
+	Coord3D *positions, Matrix3D *transforms, Int maxBones) const
+{
+	// Return the model-space bone transforms for the matching condition state.
+	// Positions/transforms here are "pristine" (model space at origin) - the
+	// caller concatenates the object transform.
+	const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
+	const W3XConditionInfo *state = md ? md->findBestConditionState(condition) : NULL;
+	if (!state || !positions) return 0;
+
+	Int count = 0;
+	for (Int i = startIndex; i < startIndex + maxBones && i < (Int)m_loadedModel.boneNames.size(); i++) {
+		// Match bone name prefix (suffix digits allowed, like W3D).
+		if (boneNamePrefix && boneNamePrefix[0]) {
+			if (strncmp(m_loadedModel.boneNames[i].str(), boneNamePrefix, strlen(boneNamePrefix)) != 0)
+				continue;
+		}
+		const float *bq = &m_loadedModel.boneMatrixArray[i * 8 + 0];
+		const float *bo = &m_loadedModel.boneMatrixArray[i * 8 + 4];
+		if (transforms) {
+			// Model-space bone transform: use the base-pose (quat+offset) only,
+			// no object world transform (pristine = at origin).
+			Matrix3D mtx;
+			mtx.Make_Identity();
+			Quaternion q(bq[0], bq[1], bq[2], bq[3]);
+			mtx.Set_Rotation(q);
+			mtx.Set_Translation(Vector3(bo[0], bo[1], bo[2]));
+			transforms[count] = mtx;
+		}
+		if (positions) {
+			positions[count].x = bo[0];
+			positions[count].y = bo[1];
+			positions[count].z = bo[2];
+		}
+		count++;
+	}
+	return count;
+}
+
+Int W3XModelDraw::getCurrentBonePositions(
+	const char *boneNamePrefix, Int startIndex,
+	Coord3D *positions, Matrix3D *transforms, Int maxBones) const
+{
+	// No skeletal animation yet -> current == pristine. Reuse the pristine path
+	// but without a condition (uses whatever model is currently loaded).
+	if (!positions) return 0;
+	Int count = 0;
+	for (Int i = startIndex; i < startIndex + maxBones && i < (Int)m_loadedModel.boneNames.size(); i++) {
+		const AsciiString &boneName = m_loadedModel.boneNames[i];
+		if (boneNamePrefix && boneNamePrefix[0]) {
+			if (strncmp(boneName.str(), boneNamePrefix, strlen(boneNamePrefix)) != 0)
+				continue;
+		}
+		const float *bq = &m_loadedModel.boneMatrixArray[i * 8 + 0];
+		const float *bo = &m_loadedModel.boneMatrixArray[i * 8 + 4];
+		if (transforms) {
+			Matrix3D mtx;
+			mtx.Make_Identity();
+			Quaternion q(bq[0], bq[1], bq[2], bq[3]);
+			mtx.Set_Rotation(q);
+			mtx.Set_Translation(Vector3(bo[0], bo[1], bo[2]));
+			transforms[count] = mtx;
+		}
+		positions[count].x = bo[0];
+		positions[count].y = bo[1];
+		positions[count].z = bo[2];
+		count++;
+	}
+	return count;
+}
+
+Bool W3XModelDraw::getCurrentWorldspaceClientBonePositions(const char *boneName, Matrix3D &transform) const
+{
+	if (!m_renderObj) return false;
+	int idx = getBoneIndexByName(AsciiString(boneName));
+	if (idx < 0) return false;
+	transform = m_renderObj->Get_Bone_Transform(idx);
+	return true;
+}
+
+Bool W3XModelDraw::getProjectileLaunchOffset(
+	const ModelConditionFlags &condition, WeaponSlotType wslot, Int specificBarrelToUse,
+	Matrix3D *launchPos, WhichTurretType tur, Coord3D *turretRotPos, Coord3D *turretPitchPos) const
+{
+	// CRITICAL: once getObjectDrawInterface() returns this, the logic's weapon
+	// code routes launch offsets through here. Returning false triggers a
+	// DEBUG_CRASH (Weapon.cpp), so always return true when a state exists and
+	// fall back to the unit-center matrix when no launch bone is defined.
+	const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
+	const W3XConditionInfo *state = md ? md->findBestConditionState(condition) : NULL;
+	if (!state) return false;
+	validateBarrelInfo(state);
+	const W3XWeaponBarrelInfoVec &vec = state->m_weaponBarrelInfoVec[wslot];
+	if (launchPos) {
+		if (!vec.empty()) {
+			int bi = (specificBarrelToUse < 0 || specificBarrelToUse >= (Int)vec.size()) ? 0 : specificBarrelToUse;
+			if (vec[bi].m_launchBone >= 0)
+				*launchPos = vec[bi].m_projectileOffsetMtx;
+			else
+				launchPos->Make_Identity();	// no launch bone -> unit center
+		} else {
+			launchPos->Make_Identity();
+		}
+	}
+	if (turretRotPos) turretRotPos->zero();
+	if (turretPitchPos) turretPitchPos->zero();
+	return true;
+}
+
+Bool W3XModelDraw::handleWeaponFireFX(
+	WeaponSlotType wslot, Int specificBarrelToUse, const FXList *fxl,
+	Real weaponSpeed, const Coord3D *victimPos, Real damageRadius)
+{
+	if (!m_curState || !m_renderObj) return false;
+	validateBarrelInfo(m_curState);
+	W3XWeaponBarrelInfoVec &vec = m_curState->m_weaponBarrelInfoVec[wslot];
+	if (vec.empty()) return false;
+	int bi = (specificBarrelToUse < 0 || specificBarrelToUse >= (Int)vec.size()) ? 0 : specificBarrelToUse;
+	const W3XWeaponBarrelInfo &info = vec[bi];
+	if (fxl && info.m_fxBone >= 0) {
+		if (!m_renderObj->Is_Hidden()) {
+			Matrix3D mtx = m_renderObj->Get_Bone_Transform(info.m_fxBone);
+			Coord3D pos;
+			pos.x = mtx.Get_X_Translation();
+			pos.y = mtx.Get_Y_Translation();
+			pos.z = mtx.Get_Z_Translation();
+			FXList::doFXPos(fxl, &pos, &mtx, weaponSpeed, victimPos, damageRadius);
+			return true;
+		}
+	}
+	return false;	// caller falls back to unit position
+}
+
+Int W3XModelDraw::getBarrelCount(WeaponSlotType wslot) const
+{
+	if (!m_curState) return 0;
+	validateBarrelInfo(m_curState);
+	return (Int)m_curState->m_weaponBarrelInfoVec[wslot].size();
+}
+
+void W3XModelDraw::setHidden(Bool h)
+{
+	if (m_renderObj) m_renderObj->Set_Hidden(h != FALSE);
+}
+
+void W3XModelDraw::replaceIndicatorColor(Color color)
+{
+	if (m_renderObj) m_renderObj->SetRecolorColor((unsigned int)color);
 }
