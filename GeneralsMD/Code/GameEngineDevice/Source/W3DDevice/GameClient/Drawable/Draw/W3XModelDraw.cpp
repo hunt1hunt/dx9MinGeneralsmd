@@ -94,6 +94,31 @@ static void parseW3XWeaponBoneName(INI *ini, void *instance, void *store, const 
 	(void)self;
 }
 
+
+// Parse "ParticleSysBone = <bone> <system>" into the current condition state.
+// Bone name is lowercased to match the loader's lowercase skeleton names
+// (RA3 attaches smoke to fx_smoke01 / fx_smoke02). Mirrors W3DModelDraw.
+static void parseParticleSysBone(INI* ini, void *instance, void *store, const void * /*userData*/)
+{
+	W3XParticleSysBoneInfo info;
+	info.boneName = ini->getNextAsciiString();
+	info.boneName.toLower();
+	ini->parseParticleSystemTemplate(ini, instance, &(info.particleSystemTemplate), NULL);
+	W3XConditionInfo *self = (W3XConditionInfo *)instance;
+	self->m_particleSysBones.push_back(info);
+}
+
+// Animation playback mode names (must match W3XAnimMode order).
+static const char *TheW3XAnimModeNames[] = { "LOOP", "ONCE", "ONCE_BACKWARDS", "MANUAL", NULL };
+
+// Parse "AnimationMode = ONCE/ONCE_BACKWARDS/..." into the condition state's mode.
+static void parseW3XAnimationMode(INI* ini, void *instance, void *store, const void * /*userData*/)
+{
+	int *mode = (int *)store;
+	*mode = INI::scanIndexList(ini->getNextToken(), TheW3XAnimModeNames);
+	(void)instance;
+}
+
 void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void *, const void *)
 {
 	// Sub-field parse table for a ConditionState block
@@ -106,6 +131,8 @@ void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void 
 		{ "TurretPitch",  INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_turretPitchName) },
 		{ "Animation",    INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_animationName) },
 		{ "IdleAnimation",INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_idleAnimationName) },
+		{ "ParticleSysBone", parseParticleSysBone, NULL, offsetof(W3XConditionInfo, m_particleSysBones) },
+		{ "AnimationMode", parseW3XAnimationMode, NULL, offsetof(W3XConditionInfo, m_animationMode) },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -125,7 +152,8 @@ void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void 
 W3XModelDraw::W3XModelDraw(Thing *thing, const ModuleData *moduleData) :
 	DrawModule(thing, moduleData), m_curState(NULL), m_fullyObscuredByShroud(false),
 	m_renderObj(NULL), m_shadowEnabled(TRUE), m_shadow(NULL),
-	m_animFrame(0), m_animPrevFrame(-1), m_animLastFrame(-1), m_animValid(false)
+	m_animFrame(0), m_animPrevFrame(-1), m_animLastFrame(-1), m_animValid(false),
+	m_animMode(W3X_ANIM_LOOP), m_needRecalcBoneParticleSystems(true)
 {
 	m_loadedModel.boneMatrixArray = NULL;
 	m_loadedModel.valid = false;
@@ -189,6 +217,7 @@ void W3XModelDraw::allocateShadows(void)
 
 W3XModelDraw::~W3XModelDraw()
 {
+	stopClientParticleSystems();
 	releaseShadows();
 	removeRenderObject();
 	releaseModelData(m_loadedModel);
@@ -433,7 +462,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 			// is laid out 2 float4 per bone ([2i]=quat, [2i+1]=offset), so the
 			// raw bone index b must be stored AS-IS: floor(b*2)=2b points to the
 			// bone's quat slot. Do NOT divide by 2.
-			verts[vi].boneIdx = hasBones ? (float)meshData.boneIndices[vi] : 0;
+			verts[vi].boneIdx = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
 			verts[vi].boneWeight = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
 			verts[vi].color = 0xFFFFFFFF;	// white vertex color (RA3 shader reads VertexColor)
 			verts[vi].u2 = 0; verts[vi].v2 = 0;	// TEXCOORD1 (RA3 texcoordNEW: zero)
@@ -725,7 +754,31 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 	const W3XConditionInfo *state = md->findBestConditionState(flags);
 	// Track the active condition state so weapon-fire / launch offset can find
 	// this state's barrel bones. (This was never assigned before -> fireFX dead.)
-	m_curState = state;
+	if (m_curState != state) {
+		stopClientParticleSystems();
+		m_curState = state;
+		m_needRecalcBoneParticleSystems = true;
+		// Switch animation playback mode and (re)load this state's animation.
+		// A fresh load starts from the closed frame; ONCE_BACKWARDS (door close)
+		// starts from the open frame so the door closes back down.
+		bool prevAnimValid = m_animValid;
+		m_animMode = state ? state->m_animationMode : W3X_ANIM_LOOP;
+		if (state && !state->m_animationName.isEmpty()) {
+			bool fresh = !prevAnimValid;
+			if (prevAnimValid && m_curAnimName.compareNoCase(state->m_animationName.str()) != 0)
+				fresh = true;
+			loadAnimation(state->m_animationName.str());
+			if (fresh && m_animValid)
+				m_animFrame = (m_animMode == W3X_ANIM_ONCE_BACKWARDS) ? (float)(m_curAnim.numFrames - 1) : 0.0f;
+		} else {
+			// No animation in this state: return the skeleton to its bind pose so
+			// the door renders closed (Release_Bone clears the animation override).
+			m_animValid = false;
+			if (m_renderObj) {
+				for (int bi = 0; bi < m_renderObj->GetBoneCount(); bi++) m_renderObj->Release_Bone(bi);
+			}
+		}
+	}
 	const char *targetModel = NULL;
 	if (state) targetModel = state->m_modelName.str();
 	else if (!md->m_defaultModelName.isEmpty()) targetModel = md->m_defaultModelName.str();
@@ -756,6 +809,8 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 			if (m_shadow == NULL) allocateShadows();
 		}
 		// Mark as attempted regardless of success
+		stopClientParticleSystems();
+		m_needRecalcBoneParticleSystems = true;
 		m_loadedModelName = targetModel;
 	}
 
@@ -774,6 +829,10 @@ void W3XModelDraw::doDrawModule(const Matrix3D *transformMtx)
 		// Turret rotation + skeletal animation (pure client).
 		handleClientTurretPositioning();
 		updateAnimation();
+		// Particle systems (ParticleSysBone): recreate on state/model change,
+		// reposition at their bones every frame.
+		recalcBonesForClientParticleSystems();
+		updateBonesForClientParticleSystems();
 	}
 }
 
@@ -937,24 +996,34 @@ bool W3XModelDraw::loadAnimation(const char *animName)
 
 void W3XModelDraw::updateAnimation()
 {
-	// Advance the current animation one logic/frame step and apply its keyframes
-	// to the render object via SetBoneAnimQuat (object-local rotation override).
 	if (!m_animValid || !m_renderObj) return;
 	if (m_curAnim.numFrames < 2) return;
 
-	// Simple fixed-step playback at the animation's frame rate. Use the game
-	// frame count so playback rate matches logic frames (30 fps default).
-	// Per-instance last-frame so multiple W3X units don't share timing.
+	// Advance one logic/frame step; ONCE_BACKWARDS plays in reverse.
 	Int frame = TheGameLogic ? TheGameLogic->getFrame() : 0;
 	if (m_animLastFrame >= 0) {
-		m_animFrame += (float)(frame - m_animLastFrame);
+		float d = (float)(frame - m_animLastFrame);
+		if (m_animMode == W3X_ANIM_ONCE_BACKWARDS) m_animFrame -= d;
+		else m_animFrame += d;
 	}
 	m_animLastFrame = frame;
 
-	// Loop.
 	int totalFrames = m_curAnim.numFrames;
-	while (m_animFrame >= totalFrames) m_animFrame -= (float)totalFrames;
-	if (m_animFrame < 0) m_animFrame = 0;
+	int lastIdx = totalFrames - 1;
+
+	// Playback mode: ONCE holds at the last frame, ONCE_BACKWARDS at the first,
+	// LOOP wraps, MANUAL freezes in place (hold open/closed).
+	if (m_animMode == W3X_ANIM_ONCE) {
+		if (m_animFrame >= (float)lastIdx) m_animFrame = (float)lastIdx;
+		else if (m_animFrame < 0) m_animFrame = 0.0f;
+	} else if (m_animMode == W3X_ANIM_ONCE_BACKWARDS) {
+		if (m_animFrame < 0) m_animFrame = 0.0f;
+	} else if (m_animMode == W3X_ANIM_MANUAL) {
+		// hold current frame
+	} else {
+		while (m_animFrame >= (float)totalFrames) m_animFrame -= (float)totalFrames;
+		if (m_animFrame < 0) m_animFrame = 0.0f;
+	}
 
 	int f0 = (int)m_animFrame;
 	float t = m_animFrame - (float)f0;
@@ -963,12 +1032,14 @@ void W3XModelDraw::updateAnimation()
 		const W3XAnimChannel &ch = m_curAnim.channels[ci];
 		if (ch.quatFrames.empty()) continue;
 		// 4 floats per frame; index into per-bone quat array.
-		// Guard against a frame-count mismatch (quatFrames.size() < numFrames*4).
 		int stride = 4;
 		int nFrames = (int)ch.quatFrames.size() / stride;
 		if (nFrames < 1) continue;
 		int ff0 = f0 % nFrames;
 		int ff1 = (ff0 + 1) % nFrames;
+		// At the clamped end of ONCE / start of ONCE_BACKWARDS, hold the quat.
+		if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) ff1 = ff0;
+		if (m_animMode == W3X_ANIM_ONCE_BACKWARDS && f0 <= 0) ff1 = ff0;
 		const float *q0 = &ch.quatFrames[ff0 * stride];
 		const float *q1 = &ch.quatFrames[ff1 * stride];
 		float outQ[4];
@@ -1155,4 +1226,92 @@ void W3XModelDraw::setHidden(Bool h)
 void W3XModelDraw::replaceIndicatorColor(Color color)
 {
 	if (m_renderObj) m_renderObj->SetRecolorColor((unsigned int)color);
+}
+
+
+//-----------------------------------------------------------------------------
+// Particle systems (ParticleSysBone attachment)
+//-----------------------------------------------------------------------------
+
+// Recreate the particle systems for the active condition state at their bones.
+// Runs only when m_needRecalcBoneParticleSystems is set (state/model changed).
+void W3XModelDraw::recalcBonesForClientParticleSystems()
+{
+	if (!m_needRecalcBoneParticleSystems) return;
+	m_needRecalcBoneParticleSystems = false;
+
+	const Drawable *drawable = getDrawable();
+	if (!drawable || !m_curState || drawable->testDrawableStatus(DRAWABLE_STATUS_NO_STATE_PARTICLES)) return;
+
+	for (W3XParticleSysBoneInfoVector::const_iterator it = m_curState->m_particleSysBones.begin();
+		it != m_curState->m_particleSysBones.end(); ++it)
+	{
+		ParticleSystem *sys = TheParticleSystemManager->createParticleSystem(it->particleSystemTemplate);
+		if (!sys) continue;
+
+		Coord3D pos; pos.zero();
+		Real rotation = 0.0f;
+
+		int boneIndex = m_renderObj ? m_renderObj->Get_Bone_Index(it->boneName.str()) : 0;
+		if (boneIndex != 0) {
+			// Get the bone transform in model space (zero the world transform first).
+			Matrix3D originalTransform = m_renderObj->Get_Transform();
+			Matrix3D tmp(true);
+			tmp.Scale(drawable->getScale());
+			m_renderObj->Set_Transform(tmp);
+			const Matrix3D boneTransform = m_renderObj->Get_Bone_Transform(boneIndex);
+			Vector3 vpos = boneTransform.Get_Translation();
+			rotation = boneTransform.Get_Z_Rotation();
+			m_renderObj->Set_Transform(originalTransform);
+			pos.x = vpos.X; pos.y = vpos.Y; pos.z = vpos.Z;
+		}
+
+		sys->setPosition(&pos);
+		sys->rotateLocalTransformZ(rotation);
+		sys->attachToDrawable(drawable);
+		sys->setSaveable(FALSE);
+		if (drawable->isDrawableEffectivelyHidden() || m_fullyObscuredByShroud) sys->stop();
+
+		W3XParticleSysTracker tracker;
+		tracker.id = sys->getSystemID();
+		tracker.boneIndex = boneIndex;
+		m_particleSystemIDs.push_back(tracker);
+	}
+}
+
+// Per-frame: reposition the attached particle systems at their (world) bones.
+// Called by AnimatedParticleSysBoneClientUpdate / the draw update.
+Bool W3XModelDraw::updateBonesForClientParticleSystems()
+{
+	const Drawable *drawable = getDrawable();
+	if (!drawable || !m_curState || !m_renderObj) return false;
+
+	for (std::vector<W3XParticleSysTracker>::const_iterator it = m_particleSystemIDs.begin();
+		it != m_particleSystemIDs.end(); ++it)
+	{
+		ParticleSystem *sys = TheParticleSystemManager->findParticleSystem(it->id);
+		int boneIndex = it->boneIndex;
+		if (!sys || boneIndex == 0) continue;
+
+		const Matrix3D boneTransform = m_renderObj->Get_Bone_Transform(boneIndex);
+		Vector3 vpos = boneTransform.Get_Translation();
+		Coord3D pos; pos.x = vpos.X; pos.y = vpos.Y; pos.z = vpos.Z;
+		sys->setPosition(&pos);
+		sys->rotateLocalTransformZ(boneTransform.Get_Z_Rotation());
+		sys->setLocalTransform(&boneTransform);
+		sys->setSkipParentXfrm(true);
+	}
+	return true;
+}
+
+// Kill every particle system created for this draw module.
+void W3XModelDraw::stopClientParticleSystems()
+{
+	for (std::vector<W3XParticleSysTracker>::const_iterator it = m_particleSystemIDs.begin();
+		it != m_particleSystemIDs.end(); ++it)
+	{
+		ParticleSystem *sys = TheParticleSystemManager->findParticleSystem(it->id);
+		if (sys) sys->stop();
+	}
+	m_particleSystemIDs.clear();
 }

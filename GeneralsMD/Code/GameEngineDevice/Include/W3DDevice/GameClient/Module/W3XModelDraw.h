@@ -27,6 +27,7 @@
 #include "Common/GameCommon.h"		// WhichTurretType (used in getProjectileLaunchOffset decl)
 #include "WWMath/matrix3d.h"		// Matrix3D by-value in W3XWeaponBarrelInfo
 #include "W3DDevice/GameClient/w3x_loader.h"
+#include "GameClient/ParticleSys.h"
 
 class Thing;
 class RenderObjClass;
@@ -63,6 +64,32 @@ struct W3XWeaponBarrelInfo
 };
 typedef std::vector<W3XWeaponBarrelInfo> W3XWeaponBarrelInfoVec;
 
+// Particle-system-to-bone attachment (mirrors W3DModelDraw's ParticleSysBoneInfo).
+struct W3XParticleSysBoneInfo
+{
+	AsciiString boneName;
+	const ParticleSystemTemplate *particleSystemTemplate;
+};
+typedef std::vector<W3XParticleSysBoneInfo> W3XParticleSysBoneInfoVector;
+
+// One live particle system attached to a bone (id + bone index for per-frame update).
+struct W3XParticleSysTracker
+{
+	ParticleSystemID id;
+	int boneIndex;
+};
+
+
+
+// Animation playback mode for a ConditionState's Animation (mirrors W3DModelDraw).
+enum W3XAnimMode
+{
+	W3X_ANIM_LOOP = 0,
+	W3X_ANIM_ONCE,
+	W3X_ANIM_ONCE_BACKWARDS,
+	W3X_ANIM_MANUAL,
+};
+
 struct W3XConditionInfo
 {
 	std::vector<ModelConditionFlags>	m_conditionsYesVec;
@@ -82,10 +109,15 @@ struct W3XConditionInfo
 	// Animation names (like W3D Animation / IdleAnimation).
 	AsciiString							m_animationName;
 	AsciiString							m_idleAnimationName;
+	// Animation playback mode (W3X_ANIM_*).
+	int							m_animationMode;
+	// Particle systems to attach to bones in this condition state (ParticleSysBone).
+	W3XParticleSysBoneInfoVector	m_particleSysBones;
 	W3XConditionInfo()
 	{
 		for (int i = 0; i < WEAPONSLOT_COUNT; i++) m_barrelsValid[i] = false;
 		m_turretAngleBone = m_turretPitchBone = -1;
+		m_animationMode = W3X_ANIM_LOOP;
 	}
 	// Resolved turret/pitch bone indices (set at model load).
 	mutable int							m_turretAngleBone;
@@ -148,7 +180,7 @@ public:
 	virtual void setSelectable(Bool selectable) { }
 	virtual void setAnimationLoopDuration(UnsignedInt numFrames) { }
 	virtual void setAnimationCompletionTime(UnsignedInt numFrames) { }
-	virtual Bool updateBonesForClientParticleSystems() { return false; }
+	virtual Bool updateBonesForClientParticleSystems();
 	virtual void setAnimationFrame(int frame) { }
 	virtual void setPauseAnimation(Bool pauseAnim) { }
 	virtual void updateSubObjects() { }
@@ -222,6 +254,15 @@ private:
 	int m_animPrevFrame;			// previous integer frame (to detect step)
 	int m_animLastFrame;			// last TheGameLogic frame (per-instance, not static)
 	bool m_animValid;
+	int m_animMode;				// current animation playback mode (W3X_ANIM_*)
+	// --- Particle systems (ParticleSysBone attachment) ---
+	// (Re)create the particle systems for the active condition state at its bones.
+	void recalcBonesForClientParticleSystems();
+	// Kill every particle system created for this draw module.
+	void stopClientParticleSystems();
+	// Particle systems attached to bones (id + bone index for per-frame update).
+	std::vector<W3XParticleSysTracker>	m_particleSystemIDs;
+	bool				m_needRecalcBoneParticleSystems;
 };
 
 #endif
