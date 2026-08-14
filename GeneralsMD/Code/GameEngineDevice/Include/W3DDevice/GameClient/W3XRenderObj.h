@@ -83,6 +83,11 @@ public:
 	// WeaponLaunchBone ini names to skeleton pivots. Bone names are loaded from
 	// the .skl hierarchy and stored in m_boneNames (index-aligned with m_bones).
 	void SetBoneNames(const std::vector<AsciiString> &names);
+	// Parent index per bone (matches W3DHierarchy Pivot Parent). Needed so a
+	// controlled bone (turret) can cascade its rotation to children (barrel,
+	// muzzle) during Render — otherwise the barrel stays at the bind-pose
+	// orientation and doesn't follow the turret.
+	void SetBoneParents(const std::vector<int> &parents);
 	virtual int Get_Num_Bones(void);
 	virtual const char *Get_Bone_Name(int bone_index);
 	virtual int Get_Bone_Index(const char *bonename);
@@ -149,6 +154,11 @@ private:
 	};
 
 	enum { kMaxBones = 64 };	// must match BindW3XBones' 64-bone array
+	// Compose the bind pose + Control_Bone rotations + turret->barrel cascade
+	// into 'out' (kMaxBones*8 floats, quat+offset per bone). Shared by Render
+	// (which uploads it) and Get_Bone_Transform (muzzle/launch offset must follow
+	// the animated turret). 'out' may alias m_bones when nothing is controlled.
+	void composeControlledBones(float *out) const;
 	std::vector<SubMesh> m_meshes;
 	AsciiString m_fxName;
 	int m_technique;
@@ -156,6 +166,7 @@ private:
 	float *m_bones;		// RA3 WorldBones (quat+offset, 2 float4 per bone)
 	int m_boneCount;
 	std::vector<AsciiString> m_boneNames;	// per-bone name (index-aligned with m_bones)
+	std::vector<int> m_boneParents;			// per-bone parent index (-1 = root), for turret->barrel cascade
 	Matrix3D m_boneTransformCache;			// Get_Bone_Transform returns a const ref
 	bool m_boneCtrlActive[kMaxBones];		// per-bone turret-control flag
 	float m_boneCtrlQuat[kMaxBones][4];		// per-bone control rotation (quat)

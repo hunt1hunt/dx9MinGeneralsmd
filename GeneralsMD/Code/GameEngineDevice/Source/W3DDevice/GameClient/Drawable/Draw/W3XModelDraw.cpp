@@ -268,6 +268,14 @@ bool W3XModelDraw::loadHierarchy(const char *sklName, LoadedModelData &data)
 		data.boneNames.push_back(n);
 	}
 
+	// Keep the per-bone parent indices so a controlled bone (turret) can cascade
+	// its rotation to children (barrel, muzzle) during Render.
+	data.boneParents.clear();
+	data.boneParents.reserve(data.boneCount);
+	for (int pi = 0; pi < data.boneCount; pi++) {
+		data.boneParents.push_back(bones[pi].parentIndex);
+	}
+
 	// Allocate WorldBones array: 2 float4 per bone (quat + offset) = 8 floats per bone
 	if (data.boneMatrixArray) delete[] data.boneMatrixArray;
 	data.boneMatrixArray = new float[data.boneCount * 8];
@@ -524,6 +532,7 @@ void W3XModelDraw::releaseModelData(LoadedModelData &data)
 	data.constants.clear();
 	data.fxShaderName.clear();
 	data.boneNames.clear();
+	data.boneParents.clear();
 	if (data.boneMatrixArray) { delete[] data.boneMatrixArray; data.boneMatrixArray = NULL; }
 	data.boneCount = 0;
 	data.valid = false;
@@ -623,6 +632,8 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	}
 	// Bone names -> render obj so ini WeaponFireFXBone etc can be resolved.
 	robj->SetBoneNames(data.boneNames);
+	// Bone parents -> render obj so turret rotation cascades to the barrel.
+	robj->SetBoneParents(data.boneParents);
 
 	// Bounds: union of the per-sub-mesh AABBs parsed from each .w3x <BoundingBox>.
 	// The scene uses these for frustum culling AND the projected ground shadow

@@ -121,8 +121,8 @@ W3DShadowManager::W3DShadowManager( void )
 
 	// �9�5 ֱ���������޸�����Ӱ��ɫ���滻ԭ����0x7fa0a0a0��
 	// �������Ӱ��0xFF808080����ǳ�ģ�0xFFc0c0c0
-	// 0xFF606060 = medium-dark (keep 38% of the original color in shadow).
-	m_shadowColor = 0xFF606060;
+	// 0xFF404040 = dark (keep 25% of the original color in shadow).
+	m_shadowColor = 0xFF404040;
 	//m_shadowColor = 0x7fa0a0a0;
 
 	m_isShadowScene = FALSE;

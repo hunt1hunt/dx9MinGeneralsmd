@@ -183,6 +183,7 @@ private:
 		int techniqueIndex;
 		int boneCount;
 		std::vector<AsciiString> boneNames;	// per-bone name (index-aligned with boneMatrixArray)
+		std::vector<int> boneParents;		// per-bone parent index (-1 = root), for turret->barrel cascade
 		std::vector<W3XShaderConstant> constants;
 		std::vector<SubMeshBuffer> subMeshes;
 		float *boneMatrixArray;		// boneCount * 8 floats (RA3 WorldBones: quat+offset, 2 float4 per bone)

@@ -51,11 +51,11 @@ public:
 	void removeAllShadows(void); ///< Remove all shadows.
 	void setShadowColor(UnsignedInt color) {
 		// Shadow depth is the RGB used as a multiply-blend factor (0xRR/0xFF =
-		// fraction of the original color kept in shadow). Clamp to a medium-dark
-		// floor (0x606060 = keep 38%) so map-provided values can't make the
-		// shadow too faint ("sunlight bleeding through the shadow").
+		// fraction of the original color kept in shadow). Clamp to a dark floor
+		// (0x404040 = keep 25%) so map-provided values can't make the shadow too
+		// faint ("sunlight bleeding through the shadow").
 		UnsignedInt r = (color >> 16) & 0xFF, g = (color >> 8) & 0xFF, b = color & 0xFF;
-		const UnsignedInt kMax = 0x60;
+		const UnsignedInt kMax = 0x40;
 		if (r > kMax) r = kMax;
 		if (g > kMax) g = kMax;
 		if (b > kMax) b = kMax;
