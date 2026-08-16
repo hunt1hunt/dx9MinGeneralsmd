@@ -2116,7 +2116,6 @@ Int TerrainShaderPBR::init( void )
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
 			"float4 c2 : register(c2);\n"
-			"float4 diagMode : register(c3);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2153,9 +2152,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
 			"    float3 result = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    result += sunColor * specular * 0.25;\n"
-			"    float3 viz = lerp(geoN, N, saturate(diagMode.x - 1.0));\n"
-			"    float3 outCol = lerp(result, viz * 0.5 + 0.5, saturate(diagMode.x));\n"
-			"    return float4(outCol, base0.a);\n"
+			"    return float4(result, base0.a);\n"
 			"}\n";
 		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr_nm")))
 			return terrainShaderPixelShader.init();
@@ -2173,7 +2170,6 @@ Int TerrainShaderPBR::init( void )
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
 			"float4 c2 : register(c2);\n"
-			"float4 diagMode : register(c3);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2212,9 +2208,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
-			"    float3 viz = lerp(geoN, N, saturate(diagMode.x - 1.0));\n"
-			"    float3 outCol = lerp(lit, viz * 0.5 + 0.5, saturate(diagMode.x));\n"
-			"    return float4(outCol, base0.a);\n"
+			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
@@ -2231,7 +2225,6 @@ Int TerrainShaderPBR::init( void )
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
 			"float4 c2 : register(c2);\n"
-			"float4 diagMode : register(c3);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2270,9 +2263,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= lightmapTex.rgb;\n"
-			"    float3 viz = lerp(geoN, N, saturate(diagMode.x - 1.0));\n"
-			"    float3 outCol = lerp(lit, viz * 0.5 + 0.5, saturate(diagMode.x));\n"
-			"    return float4(outCol, base0.a);\n"
+			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
@@ -2290,7 +2281,6 @@ Int TerrainShaderPBR::init( void )
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
 			"float4 c2 : register(c2);\n"
-			"float4 diagMode : register(c3);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2330,9 +2320,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
-			"    float3 viz = lerp(geoN, N, saturate(diagMode.x - 1.0));\n"
-			"    float3 outCol = lerp(lit, viz * 0.5 + 0.5, saturate(diagMode.x));\n"
-			"    return float4(outCol, base0.a);\n"
+			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
@@ -2507,51 +2495,15 @@ Int TerrainShaderPBR::set(Int pass)
 		//      PBR variants. The atlas encoding is verified convex (nm.x>0 toward +U, nm.y>0
 		//      toward +V/B). Bump signs: see s_terrainBumpSignX/Y below (currently -1,-1).
 		static float s_terrainRoughness = 0.5f;
-		// Bump signs. Empirical (2026-08-17, nm_diag mode 2): blended N tilts OPPOSITE to
-		// geoN on slopes -> the screen-derivative tangent frame has det<0 (geoN=cross(B,T)
-		// is det-insensitive but the bump nx*T+ny*B is det-sensitive), so the whole bump is
-		// mirrored. Fixed by negating both axes. Verify with nm_diag mode 2 matching mode 1.
+		// Bump signs. Empirical (2026-08-17, normal-viz): blended N tilted OPPOSITE to geoN on
+		// slopes -> the screen-derivative tangent frame has det<0 (geoN=cross(B,T) is
+		// det-insensitive but the bump nx*T+ny*B is det-sensitive), so the whole bump was
+		// mirrored. Fixed by negating both axes.
 		static float s_terrainBumpSignX = -1.0f;
 		static float s_terrainBumpSignY = -1.0f;
 		float nmWeight[4] = { normalWeight, s_terrainRoughness, s_terrainBumpSignX, s_terrainBumpSignY };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, nmWeight, 1);
 
-		// DIAG: optional normal visualization, gated by E:\nm_diag.txt (checked per terrain
-		// pass so it toggles on restart, no rebuild needed). shader c3.x:
-		//   0 = normal PBR shading;  1 = show geometry normal geoN as RGB;  2 = show blended N.
-		//   Color mapping: channel 0.5 = flat/up, >0.5 tilted +, <0.5 tilted -.
-		//   With a Z-up world, UP shows as B≈1 (blue); a slope toward +X is R>0.5, toward -X R<0.5.
-		float diagMode = 0.0f;
-		{
-			FILE *df = fopen("E:\\nm_diag.txt", "r");
-			if (df) {
-				int ch = fgetc(df);
-				if (ch == '1' || ch == 'g') diagMode = 1.0f;
-				else if (ch == '2' || ch == 'n') diagMode = 2.0f;
-				fclose(df);
-			}
-			float diagV[4] = { diagMode, 0.0f, 0.0f, 0.0f };
-			DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, diagV, 1);
-		}
-
-		// DIAG: log PBR shader selection + c2 constants + stage 5/6 wiring (first call only)
-		//   c2=(x,y,z,w) = (normalWeight, roughness, bumpSignX, bumpSignY).
-		//   If the log STILL shows the old two-field format after a rebuild, the running
-		//   binary is stale (incremental build did not recompile this file).
-		{
-			static Bool pbrSetDiag = FALSE;
-			if (!pbrSetDiag) {
-				FILE *f = fopen("E:\\terrain_diag.log", "a");
-				if (f) {
-					fprintf(f, "[%d] PBR_SET: curShader=%d c2=(%.2f,%.2f,%.2f,%.2f) nmTex=%d diagMode=%.0f\n",
-						timeGetTime(), (int)curShader,
-						nmWeight[0], nmWeight[1], nmWeight[2], nmWeight[3],
-						W3DShaderManager::getShaderTexture(5) ? 1 : 0, diagMode);
-					fclose(f);
-				}
-				pbrSetDiag = TRUE;
-			}
-		}
 	// Select the correct pixel shader for this variant
 	switch (curShader) {
 		case W3DShaderManager::ST_TERRAIN_PBR:

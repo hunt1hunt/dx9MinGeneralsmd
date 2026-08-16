@@ -2186,41 +2186,6 @@ void W3DDisplay::setTimeOfDay( TimeOfDay tod )
 		TheTerrainRenderObject->setTimeOfDay(tod);
 		TheTacticalView->forceRedraw();
 	}
-
-	// DIAG: light-direction cross-check, logged AFTER the light transforms are set
-	// so m_myLight +Z is the REAL transform (not the init-time default identity).
-	// Logs on EVERY call; read the LAST block (map-load / TOD change has real values).
-	// terrain PBR c0 = -m_terrainLightPos[0]; model ray = -m_myLight[0].Z.
-	// NOTE: separate file - TerrainTex.cpp TerrainNormDiag truncates E:\terrain_diag.log.
-	{
-		FILE *f = fopen("E:\\sun_dir.log", "a");
-		if (f) {
-			fprintf(f, "[%u] SUN_DIR_END: tod=%d numGlobal=%d\n", timeGetTime(), (int)tod, (int)TheGlobalData->m_numGlobalLights);
-			for (Int di=0; di<LightEnvironmentClass::MAX_LIGHTS && di<MAX_GLOBAL_LIGHTS; di++) {
-				fprintf(f, "  L%d  terrainLighting.lightPos=(%.3f,%.3f,%.3f)\n",
-					di,
-					TheGlobalData->m_terrainLighting[tod][di].lightPos.x,
-					TheGlobalData->m_terrainLighting[tod][di].lightPos.y,
-					TheGlobalData->m_terrainLighting[tod][di].lightPos.z);
-				fprintf(f, "  L%d  objectsLighting.lightPos=(%.3f,%.3f,%.3f)\n",
-					di,
-					TheGlobalData->m_terrainObjectsLighting[tod][di].lightPos.x,
-					TheGlobalData->m_terrainObjectsLighting[tod][di].lightPos.y,
-					TheGlobalData->m_terrainObjectsLighting[tod][di].lightPos.z);
-				if (m_myLight[di]) {
-					Vector3 zv = m_myLight[di]->Get_Transform().Get_Z_Vector();
-					fprintf(f, "  L%d  myLight +Z=(%.3f,%.3f,%.3f)  modelRay=-Z=(%.3f,%.3f,%.3f)\n",
-						di, zv.X, zv.Y, zv.Z, -zv.X, -zv.Y, -zv.Z);
-				}
-				fprintf(f, "  L%d  terrainPBR.c0=-m_terrainLightPos=(%.3f,%.3f,%.3f)\n",
-					di,
-					-TheGlobalData->m_terrainLightPos[di].x,
-					-TheGlobalData->m_terrainLightPos[di].y,
-					-TheGlobalData->m_terrainLightPos[di].z);
-			}
-			fclose(f);
-		}
-	}
 }
 
 // W3DDisplay::drawLine =======================================================
