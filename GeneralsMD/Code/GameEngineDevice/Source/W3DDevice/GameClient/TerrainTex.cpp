@@ -281,13 +281,16 @@ int NormalMapTerrainTextureClass::update(WorldHeightMap *htMap)
 	Int pixelBytes = 4;	// A8R8G8B8
 
 	// Bump strength: scales the height gradient before normalising. Tunable.
-	// 8.0 = stronger than the initial 6.0 so the bump reads clearly on the terrain.
-	const float NORMAL_STRENGTH = 8.0f;
+	// 8.0 = strong (meanTilt ~34deg). 10.0 = extra strong (~42deg expected).
+	const float NORMAL_STRENGTH = 10.0f;
 
 	Int tileNdx;
 	Int tilesWritten = 0;
 	Int nonFlatPixels = 0;
 	Int flatPixels = 0;
+	double sumTiltDeg = 0.0;	// sum of per-pixel tilt (deg from flat) — ironclad bump-strength proof
+	double maxTiltDeg = 0.0;	// max tilt seen
+	double numPixels = 0.0;
 	for (tileNdx=0; tileNdx < htMap->m_numBitmapTiles; tileNdx++) {
 		TileData *pTile = htMap->getSourceTile(tileNdx);
 		if (!pTile) continue;
@@ -328,14 +331,21 @@ int NormalMapTerrainTextureClass::update(WorldHeightMap *htMap)
 				gx /= len; gy /= len;
 				float nz = 1.0f/len;
 
-				int r = (int)((gx*0.5f+0.5f)*255.0f + 0.5f);
-				int g = (int)((gy*0.5f+0.5f)*255.0f + 0.5f);
-				int b = (int)((nz*0.5f+0.5f)*255.0f + 0.5f);
+				// Octahedral hemisphere encode (nz>0 always => no fold step):
+				//   p = n.xy/(|nx|+|ny|+|nz|) -> RG; shader rebuilds nz. B/A free.
+				float invOct = 1.0f / ((float)fabs(gx) + (float)fabs(gy) + nz);
+				int r = (int)((gx*invOct*0.5f+0.5f)*255.0f + 0.5f);
+				int g = (int)((gy*invOct*0.5f+0.5f)*255.0f + 0.5f);
+				int b = 128;	// unused (octahedral needs only RG)
 				// D3DFMT_A8R8G8B8 little-endian: bytes = B,G,R,A.
 				*((UnsignedInt*)pDst) = (0xFFu<<24) | ((UnsignedInt)r<<16) | ((UnsignedInt)g<<8) | (UnsignedInt)b;
 				pDst += pixelBytes;
 
 				if (r==128 && g==128) flatPixels++; else nonFlatPixels++;
+				float tiltDeg = (nz < 1.0f) ? (float)acos(nz) * 57.29578f : 0.0f;
+				sumTiltDeg += tiltDeg;
+				if (tiltDeg > maxTiltDeg) maxTiltDeg = tiltDeg;
+				numPixels += 1.0;
 			}
 		}
 		tilesWritten++;
@@ -379,12 +389,14 @@ int NormalMapTerrainTextureClass::update(WorldHeightMap *htMap)
 		Peek_D3D_Texture()->SetLOD(TheWritableGlobalData->m_textureReductionFactor);
 	}
 
-	// DIAG: verify the normal atlas was populated.
+	// DIAG: verify the normal atlas was populated + measure bump strength.
 	char buf[256];
-	sprintf(buf, "NormalAtlas update: atlas %dx%d fmt=%d tiles=%d flatPx=%d bumpPx=%d (bumpRatio=%.2f%%)",
+	sprintf(buf, "NormalAtlas update: atlas %dx%d fmt=%d tiles=%d flatPx=%d bumpPx=%d (bumpRatio=%.2f%%) meanTilt=%.2fdeg maxTilt=%.2fdeg (NORMAL_STRENGTH=%.1f ENC=oct2)",
 		(int)surface_desc.Width, (int)surface_desc.Height, (int)surface_desc.Format,
 		tilesWritten, flatPixels, nonFlatPixels,
-		(flatPixels+nonFlatPixels)>0 ? 100.0f*nonFlatPixels/(float)(flatPixels+nonFlatPixels) : 0.0f);
+		(flatPixels+nonFlatPixels)>0 ? 100.0f*nonFlatPixels/(float)(flatPixels+nonFlatPixels) : 0.0f,
+		numPixels>0 ? (float)(sumTiltDeg/numPixels) : 0.0f,
+		(float)maxTiltDeg, (double)NORMAL_STRENGTH);
 	TerrainNormDiag(buf);
 
 	return(surface_desc.Height);
