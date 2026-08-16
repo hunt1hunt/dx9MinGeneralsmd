@@ -34,6 +34,7 @@
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////////////////////////
 #include <stdlib.h>
+#include <stdio.h>
 #include <windows.h>
 
 // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
@@ -1564,6 +1565,7 @@ void W3DView::draw( void )
 			W3DDisplay::m_3DScene->Set_Extra_Pass_Polygon_Mode(SceneClass::EXTRA_PASS_CLEAR_LINE);
 		W3DDisplay::m_3DScene->doRender( m_3DCamera );
 		W3DDisplay::m_3DScene->Set_Extra_Pass_Polygon_Mode(SceneClass::EXTRA_PASS_DISABLE);
+		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] VIEW_3D_DONE_1\n", (unsigned)GetTickCount()); fclose(f); } }
 		m_isWireFrameEnabled = m_nextWireFrameEnabled;
 	}
 
@@ -1611,6 +1613,7 @@ void W3DView::draw( void )
 		DX8Wrapper::Clear(false, true, Vector3(0.0f,0.0f,0.0f), TheWaterTransparency->m_minWaterOpacity);	// Clear z but not color
 		W3DDisplay::m_3DScene->setCustomPassMode(SCENE_PASS_DEFAULT);
 		W3DDisplay::m_3DScene->doRender( m_3DCamera );
+		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] VIEW_3D_DONE_2\n", (unsigned)GetTickCount()); fclose(f); } }
 		Coord2D deltaScroll;
 		W3DShaderManager::filterPostRender(m_viewFilter, m_viewFilterMode, deltaScroll, doExtraRender);
 	}
@@ -1775,6 +1778,7 @@ void W3DView::draw( void )
 
 	// Render 2D scene
 	W3DDisplay::m_2DScene->doRender( m_2DCamera );
+	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] VIEW_2D_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 }
 
 // ------------------------------------------------------------------------------------------------

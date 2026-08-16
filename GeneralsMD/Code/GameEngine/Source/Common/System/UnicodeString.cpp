@@ -95,7 +95,12 @@ void UnicodeString::ensureUniqueBufferOfSize(int numCharsNeeded, Bool preserveDa
 
 	int minBytes = sizeof(UnicodeStringData) + numCharsNeeded*sizeof(WideChar);
 	if (minBytes > MAX_LEN)
+	{
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_UNICODESTRING chars=%d minBytes=%d\n", (unsigned)GetTickCount(), numCharsNeeded, minBytes); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
+	}
 
 	int actualBytes = TheDynamicMemoryAllocator->getActualAllocationSize(minBytes);
 	UnicodeStringData* newData = (UnicodeStringData*)TheDynamicMemoryAllocator->allocateBytesDoNotZero(actualBytes, "STR_UnicodeString::ensureUniqueBufferOfSize");
@@ -309,8 +314,12 @@ void UnicodeString::format_va(const UnicodeString& format, va_list args)
 {
 	validate();
 	WideChar buf[MAX_FORMAT_BUF_LEN];
-  if (_vsnwprintf(buf, sizeof(buf)/sizeof(WideChar)-1, format.str(), args) < 0)
+  if (_vsnwprintf(buf, sizeof(buf)/sizeof(WideChar)-1, format.str(), args) < 0) {
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_UNICODEFORMAT len=%d\n", (unsigned)GetTickCount(), format.getLength()); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+	}
 	set(buf);
 	validate();
 }
@@ -320,8 +329,12 @@ void UnicodeString::format_va(const WideChar* format, va_list args)
 {
 	validate();
 	WideChar buf[MAX_FORMAT_BUF_LEN];
-  if (_vsnwprintf(buf, sizeof(buf)/sizeof(WideChar)-1, format, args) < 0)
+  if (_vsnwprintf(buf, sizeof(buf)/sizeof(WideChar)-1, format, args) < 0) {
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_UNICODEFORMAT format=\"%.256ls\"\n", (unsigned)GetTickCount(), format ? format : L"(null)"); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+	}
 	set(buf);
 	validate();
 }

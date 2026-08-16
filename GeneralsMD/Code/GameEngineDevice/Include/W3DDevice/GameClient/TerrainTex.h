@@ -63,6 +63,28 @@ public:
 };
 
 
+/** ***********************************************************************
+**                             NormalMapTerrainTextureClass
+***************************************************************************/
+/** A8R8G8B8 normal-map atlas sharing the EXACT tile layout of the color
+	atlas (same m_tileLocationInTexture, same 4px borders) so the terrain
+	pixel shader can reuse the base tile UVs. Normals are derived per tile
+	with a Sobel filter over the tile's diffuse data (P1; RA3 _NRM can
+	replace the source later). */
+class NormalMapTerrainTextureClass : public TextureClass
+{
+	W3DMPO_GLUE(NormalMapTerrainTextureClass)
+protected:
+	virtual void Apply(unsigned int stage);
+
+public:
+	/// Create an A8R8G8B8 normal map atlas for a height map.
+	NormalMapTerrainTextureClass(int height);
+
+	/// Generates per-tile Sobel normals, returns the actual texture height.
+	int update(WorldHeightMap *htMap);
+};
+
 class AlphaTerrainTextureClass : public TextureClass
 {
 	W3DMPO_GLUE(AlphaTerrainTextureClass)

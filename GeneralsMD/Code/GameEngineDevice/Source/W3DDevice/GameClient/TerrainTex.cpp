@@ -46,6 +46,7 @@
 //         Includes                                                      
 //-----------------------------------------------------------------------------
 #include <stdlib.h>
+#include <math.h>
 
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
@@ -53,6 +54,29 @@
 #include "common/GlobalData.h"
 #include "WW3D2/dx8wrapper.h"
 #include "d3d8compat.h"
+#include <windows.h>
+#include <mmsystem.h>	// timeGetTime (terrain normal-map diagnostics)
+
+// === TERRAIN NORMAL-MAP DIAGNOSTIC ===
+// Append-only diagnostics shared with W3DShaderManager.cpp so the whole
+// normal-map pipeline can be verified from one log file (E:\terrain_diag.log).
+static void TerrainNormDiag(const char *msg)
+{
+	static Bool init = FALSE;
+	FILE *f = fopen("E:\\terrain_diag.log", init ? "a" : "w");
+	if (f) {
+		init = TRUE;
+		fprintf(f, "[%d] NM_%s\n", timeGetTime(), msg);
+		fclose(f);
+	}
+}
+static void TerrainNormDiagI(const char *msg, int val)
+{
+	char buf[256];
+	sprintf(buf, "%s = %d", msg, val);
+	TerrainNormDiag(buf);
+}
+// === END TERRAIN NORMAL-MAP DIAGNOSTIC ===
 
 /******************************************************************************
 						TerrainTextureClass
@@ -198,6 +222,170 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 	if (TheWritableGlobalData->m_textureReductionFactor) {
 		Peek_D3D_Texture()->SetLOD(TheWritableGlobalData->m_textureReductionFactor);
 	}
+	return(surface_desc.Height);
+}
+
+/******************************************************************************
+					NormalMapTerrainTextureClass
+******************************************************************************/
+//=============================================================================
+// NormalMapTerrainTextureClass::NormalMapTerrainTextureClass
+//=============================================================================
+/** Creates an A8R8G8B8 normal-map atlas with the same tile layout as the color
+atlas, so the pixel shader can reuse the base tile UVs. */
+//=============================================================================
+NormalMapTerrainTextureClass::NormalMapTerrainTextureClass(int height) :
+	TextureClass(TEXTURE_WIDTH, height,
+		WW3D_FORMAT_A8R8G8B8, MIP_LEVELS_3 )
+{
+}
+
+//=============================================================================
+// NormalMapTerrainTextureClass::Apply
+//=============================================================================
+/** No-op. The normal atlas is sampled directly by the PBR pixel shader. */
+//=============================================================================
+void NormalMapTerrainTextureClass::Apply(unsigned int stage)
+{
+}
+
+//=============================================================================
+// NormalMapTerrainTextureClass::update
+//=============================================================================
+/** For every tile writes a per-pixel tangent-space normal derived with a Sobel
+filter over the tile's diffuse data, then duplicates the same 4px borders as
+the color atlas so filtering does not bleed between tiles. The atlas layout is
+bit-identical to TerrainTextureClass::update (same m_tileLocationInTexture). */
+//=============================================================================
+static float NM_Lum(UnsignedByte *p, Int row, Int col, Int w)
+{
+	UnsignedByte *px = p + (row*w + col)*4;	// BGRA
+	return 0.299f*px[2] + 0.587f*px[1] + 0.114f*px[0];
+}
+
+int NormalMapTerrainTextureClass::update(WorldHeightMap *htMap)
+{
+	IDirect3DSurface8 *surface_level;
+	D3DSURFACE_DESC surface_desc;
+	D3DLOCKED_RECT locked_rect;
+	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0, &surface_level));
+	DX8_ErrorCode(surface_level->GetDesc(&surface_desc));
+	if (surface_desc.Width < TEXTURE_WIDTH) {
+		surface_level->Release();
+		return 0;
+	}
+
+	DX8_ErrorCode(surface_level->LockRect(&locked_rect, NULL, 0));
+
+	Int tilePixelExtent = TILE_PIXEL_EXTENT;
+	Int pixelBytes = 4;	// A8R8G8B8
+
+	// Bump strength: scales the height gradient before normalising. Tunable.
+	const float NORMAL_STRENGTH = 6.0f;
+
+	Int tileNdx;
+	Int tilesWritten = 0;
+	Int nonFlatPixels = 0;
+	Int flatPixels = 0;
+	for (tileNdx=0; tileNdx < htMap->m_numBitmapTiles; tileNdx++) {
+		TileData *pTile = htMap->getSourceTile(tileNdx);
+		if (!pTile) continue;
+		ICoord2D position = pTile->m_tileLocationInTexture;
+		if (position.x<=0) continue; // all real tile offsets start at 2.  jba.
+
+		// Diffuse BGRA data. Row 0 of m_tileData is the BOTTOM row; the color
+		// atlas writes data row (extent-1-j) into atlas row j (inverted), so
+		// atlas row j == data row (extent-1-j). We must match that exactly.
+		UnsignedByte *pDiff = pTile->getRGBDataForWidth(tilePixelExtent);
+
+		Int i,j;
+		for (j=0; j<tilePixelExtent; j++) {
+			Int row = position.y+j;
+			UnsignedByte *pDst = ((UnsignedByte*)locked_rect.pBits) +
+						(row)*surface_desc.Width*pixelBytes + position.x*pixelBytes;
+
+			Int trow = (tilePixelExtent-1-j);	// m_tileData row for atlas row j
+
+			for (i=0; i<tilePixelExtent; i++) {
+				Int colR = (i+1 < tilePixelExtent) ? i+1 : i;
+				Int colL = (i-1 >= 0) ? i-1 : i;
+				Int rowD = (trow-1 >= 0) ? trow-1 : trow;	// +V: down texture == lower data row
+				Int rowU = (trow+1 < tilePixelExtent) ? trow+1 : trow;	// -V
+
+				float h_r = NM_Lum(pDiff, trow, colR, tilePixelExtent);
+				float h_l = NM_Lum(pDiff, trow, colL, tilePixelExtent);
+				float h_d = NM_Lum(pDiff, rowD, i, tilePixelExtent);
+				float h_u = NM_Lum(pDiff, rowU, i, tilePixelExtent);
+
+				float dHdu = (h_r - h_l) * 0.5f;	// gradient along atlas +U (column)
+				float dHdv = (h_d - h_u) * 0.5f;	// gradient along atlas +V (row, down)
+
+				// Tangent-space normal: (-dHdu, -dHdv, 1) normalised.
+				float gx = -NORMAL_STRENGTH * dHdu / 255.0f;
+				float gy = -NORMAL_STRENGTH * dHdv / 255.0f;
+				float len = (float)sqrt(gx*gx + gy*gy + 1.0f);
+				gx /= len; gy /= len;
+				float nz = 1.0f/len;
+
+				int r = (int)((gx*0.5f+0.5f)*255.0f + 0.5f);
+				int g = (int)((gy*0.5f+0.5f)*255.0f + 0.5f);
+				int b = (int)((nz*0.5f+0.5f)*255.0f + 0.5f);
+				// D3DFMT_A8R8G8B8 little-endian: bytes = B,G,R,A.
+				*((UnsignedInt*)pDst) = (0xFFu<<24) | ((UnsignedInt)r<<16) | ((UnsignedInt)g<<8) | (UnsignedInt)b;
+				pDst += pixelBytes;
+
+				if (r==128 && g==128) flatPixels++; else nonFlatPixels++;
+			}
+		}
+		tilesWritten++;
+	}
+
+	// Now duplicate the 4px border around each tile class (same as color atlas).
+	Int texClass;
+	for (texClass=0; texClass<htMap->m_numTextureClasses; texClass++) {
+		Int width = htMap->m_textureClasses[texClass].width;
+		ICoord2D origin = htMap->m_textureClasses[texClass].positionInTexture;
+		if (origin.x<=0) continue;
+		width *= TILE_PIXEL_EXTENT;
+		Int j;
+		for (j=0; j<width; j++) {
+			Int row = origin.y+j;
+			UnsignedByte *pBGRX = ((UnsignedByte*)locked_rect.pBits) +
+						(row)*surface_desc.Width*pixelBytes;
+			Int column = origin.x;
+			pBGRX += column*pixelBytes;
+			memcpy(pBGRX-(4)*pixelBytes, pBGRX+(width-4)*pixelBytes, 4*pixelBytes);
+			memcpy(pBGRX+(width*pixelBytes), pBGRX, 4*pixelBytes);
+		}
+		for (j=0; j<4; j++) {
+			Int row = origin.y-j-1;
+			UnsignedByte *pBGRX = ((UnsignedByte*)locked_rect.pBits) +
+						(row)*surface_desc.Width*pixelBytes;
+			UnsignedByte *target = pBGRX+(origin.x-4)*pixelBytes;
+			memcpy(target, target+width*surface_desc.Width*pixelBytes, (width+8)*pixelBytes);
+			row = origin.y+j;
+			pBGRX = ((UnsignedByte*)locked_rect.pBits) +
+						(row)*surface_desc.Width*pixelBytes;
+			target = pBGRX+(origin.x-4)*pixelBytes;
+			memcpy(target+width*surface_desc.Width*pixelBytes, target, (width+8)*pixelBytes);
+		}
+	}
+
+	surface_level->UnlockRect();
+	surface_level->Release();
+	DX8_ErrorCode(D3DXFilterTexture(Peek_D3D_Texture(), NULL, 0, D3DX_FILTER_BOX));
+	if (TheWritableGlobalData->m_textureReductionFactor) {
+		Peek_D3D_Texture()->SetLOD(TheWritableGlobalData->m_textureReductionFactor);
+	}
+
+	// DIAG: verify the normal atlas was populated.
+	char buf[256];
+	sprintf(buf, "NormalAtlas update: atlas %dx%d fmt=%d tiles=%d flatPx=%d bumpPx=%d (bumpRatio=%.2f%%)",
+		(int)surface_desc.Width, (int)surface_desc.Height, (int)surface_desc.Format,
+		tilesWritten, flatPixels, nonFlatPixels,
+		(flatPixels+nonFlatPixels)>0 ? 100.0f*nonFlatPixels/(float)(flatPixels+nonFlatPixels) : 0.0f);
+	TerrainNormDiag(buf);
+
 	return(surface_desc.Height);
 }
 

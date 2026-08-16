@@ -100,6 +100,7 @@ class WorldHeightMap : public RefCountClass,
 	friend class AlphaTerrainTextureClass;
 	friend class W3DCustomEdging;
 	friend class AlphaEdgeTextureClass;
+	friend class NormalMapTerrainTextureClass;
 
 #define NO_EVAL_TILING_MODES
 
@@ -168,10 +169,15 @@ protected:
 	 texture. */
 	TerrainTextureClass *m_terrainTex;
 	Int	m_terrainTexHeight; /// Height of m_terrainTex allocated.
-	/** The texture that contains the alpha edge tiles that get blended on 
+	/** The texture that contains the alpha edge tiles that get blended on
 			top of the base texture. getAlphaUVData does the mapping. */
 	AlphaTerrainTextureClass *m_alphaTerrainTex;
 	Int	m_alphaTexHeight; /// Height of m_alphaTerrainTex allocated.
+
+	/** A8R8G8B8 normal-map atlas with the same tile layout as m_terrainTex.
+			Null until getTerrainNormalTexture() is called. */
+	TextureClass *m_terrainNormalTex;
+	Int	m_terrainNormalTexHeight; /// Height of m_terrainNormalTex allocated.
 
 	/** The texture that contains custom blend edge tiles. */
 	AlphaEdgeTextureClass *m_alphaEdgeTex;
@@ -267,6 +273,7 @@ public:  // height map info.
 public:  // tile and texture info.	
 	void setTextureLOD(Int lod);	///< set maximum lod level sent to the hardware.
 	TextureClass *getTerrainTexture(void);  //< generates if needed and returns the terrain texture
+	TextureClass *getTerrainNormalTexture(void);  //< generates if needed and returns the terrain normal map atlas
 	TextureClass *getAlphaTerrainTexture(void); //< generates if needed and returns alpha terrain texture
 	TextureClass *getEdgeTerrainTexture(void); //< generates if needed and returns blend edge texture
 	/// UV mapping data for a cell to map into the terrain texture.  Returns true if the textures had to be stretched for cliffs.

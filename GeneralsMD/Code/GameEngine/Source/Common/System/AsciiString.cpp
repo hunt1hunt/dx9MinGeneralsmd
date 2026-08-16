@@ -135,7 +135,12 @@ void AsciiString::ensureUniqueBufferOfSize(int numCharsNeeded, Bool preserveData
 
 	int minBytes = sizeof(AsciiStringData) + numCharsNeeded*sizeof(char);
 	if (minBytes > MAX_LEN)
+	{
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_ASCIISTRING chars=%d minBytes=%d\n", (unsigned)GetTickCount(), numCharsNeeded, minBytes); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
+	}
 
 	int actualBytes = TheDynamicMemoryAllocator->getActualAllocationSize(minBytes);
 	AsciiStringData* newData = (AsciiStringData*)TheDynamicMemoryAllocator->allocateBytesDoNotZero(actualBytes, "STR_AsciiString::ensureUniqueBufferOfSize");
@@ -285,8 +290,12 @@ void AsciiString::format_va(const AsciiString& format, va_list args)
 {
 	validate();
 	char buf[MAX_FORMAT_BUF_LEN];
-  if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format.str(), args) < 0)
+  if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format.str(), args) < 0) {
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_ASCIIFORMAT format=\"%.256s\"\n", (unsigned)GetTickCount(), format.str()); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+	}
 	set(buf);
 	validate();
 }
@@ -296,8 +305,12 @@ void AsciiString::format_va(const char* format, va_list args)
 {
 	validate();
 	char buf[MAX_FORMAT_BUF_LEN];
-  if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format, args) < 0)
+  if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format, args) < 0) {
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_ASCIIFORMAT format=\"%.256s\"\n", (unsigned)GetTickCount(), format ? format : "(null)"); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+	}
 	set(buf);
 	validate();
 }

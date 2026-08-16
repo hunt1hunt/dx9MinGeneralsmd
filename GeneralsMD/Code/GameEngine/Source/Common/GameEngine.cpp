@@ -745,6 +745,14 @@ void GameEngine::reset( void )
 	}
 }
 
+// -----------------------------------------------------------------------------------------------
+// DIAG: crash root-cause breadcrumbs. Remove after diagnosis.
+static int g_diagFrame = 0;
+static void diagLogI(const char *msg, int v)
+{
+	FILE *f = fopen("E:\\terrain_diag.log", "a");
+	if (f) { fprintf(f, "[%u] %s %d\n", (unsigned)timeGetTime(), msg, v); fclose(f); }
+}
 /// -----------------------------------------------------------------------------------------------
 DECLARE_PERF_TIMER(GameEngine_update)
 
@@ -762,6 +770,7 @@ void GameEngine::update( void )
 			
 			// VERIFY CRC needs to be in this code block.  Please to not pull TheGameLogic->update() inside this block.
 			VERIFY_CRC
+			diagLogI("UPDATE_FRAME_START", g_diagFrame);
 
 			TheRadar->UPDATE();
 
@@ -769,6 +778,7 @@ void GameEngine::update( void )
 			
 			TheAudio->UPDATE();
 			TheGameClient->UPDATE();
+			diagLogI("UPDATE_CLIENT_DONE", g_diagFrame);
 			TheMessageStream->propagateMessages();
 
 			if (TheNetwork != NULL)
@@ -783,8 +793,10 @@ void GameEngine::update( void )
 		if ((TheNetwork == NULL && !TheGameLogic->isGamePaused()) || (TheNetwork && TheNetwork->isFrameDataReady()))
 		{
 			TheGameLogic->UPDATE();
+			diagLogI("UPDATE_LOGIC_DONE", g_diagFrame);
 		}
 
+		g_diagFrame++;
 	}	// end perfGather
 
 }
@@ -853,10 +865,26 @@ void GameEngine::execute( void )
 					else
 						RELEASE_CRASH(("Uncaught Exception in GameEngine::update"));
 				}
+				catch (ErrorCode e)
+				{
+					diagLogI("UPDATE_CRASH_ERRORCODE", (int)e);
+					RELEASE_CRASH(("Uncaught Exception in GameEngine::update"));
+				}
+				catch (SaveCode e)
+				{
+					diagLogI("UPDATE_CRASH_SAVECODE", (int)e);
+					RELEASE_CRASH(("Uncaught Exception in GameEngine::update"));
+				}
+				catch (int e)
+				{
+					diagLogI("UPDATE_CRASH_INT", e);
+					RELEASE_CRASH(("Uncaught Exception in GameEngine::update"));
+				}
 				catch (...)
 				{
+					diagLogI("UPDATE_CRASH_CATCHALL", g_diagFrame);
 					// try to save info off
-					try 
+					try
 					{
 						if (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_RECORD && TheRecorder->isMultiplayer())
 							TheRecorder->cleanUpReplayFile();

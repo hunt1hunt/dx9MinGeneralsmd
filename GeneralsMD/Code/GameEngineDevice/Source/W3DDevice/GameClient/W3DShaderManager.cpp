@@ -2114,16 +2114,27 @@ Int TerrainShaderPBR::init( void )
 			"sampler s0 : register(s0);\n"
 			"sampler s1 : register(s1);\n"
 			"sampler s4 : register(s4);\n"
+			"sampler s5 : register(s5);\n"
+			"float g_normalWeight : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
 			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
-			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 dp1 = ddx(worldPos);\n"
+			"    float3 dp2 = ddy(worldPos);\n"
+			"    float2 duv1 = ddx(tex0);\n"
+			"    float2 duv2 = ddy(tex0);\n"
+			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
+			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
+			"    float3 geoN = normalize(cross(T, B));\n"
+			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
+			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
+			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
@@ -2142,7 +2153,7 @@ Int TerrainShaderPBR::init( void )
 			"    result += sunColor * specular * 0.25;\n"
 			"    return float4(result, base0.a);\n"
 			"}\n";
-		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr")))
+		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr_nm")))
 			return terrainShaderPixelShader.init();
 	}
 
@@ -2156,9 +2167,11 @@ Int TerrainShaderPBR::init( void )
 			"sampler s1 : register(s1);\n"
 			"sampler s2 : register(s2);\n"
 			"sampler s4 : register(s4);\n"
+			"sampler s5 : register(s5);\n"
+			"float g_normalWeight : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2166,7 +2179,16 @@ Int TerrainShaderPBR::init( void )
 			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
-			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 dp1 = ddx(worldPos);\n"
+			"    float3 dp2 = ddy(worldPos);\n"
+			"    float2 duv1 = ddx(tex0);\n"
+			"    float2 duv2 = ddy(tex0);\n"
+			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
+			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
+			"    float3 geoN = normalize(cross(T, B));\n"
+			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
+			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
+			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
@@ -2186,7 +2208,7 @@ Int TerrainShaderPBR::init( void )
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
-		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise1PixelShader, "terrain_pbr_noise1"))) {
+		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
 		}
@@ -2199,9 +2221,11 @@ Int TerrainShaderPBR::init( void )
 			"sampler s1 : register(s1);\n"
 			"sampler s2 : register(s2);\n"
 			"sampler s4 : register(s4);\n"
+			"sampler s5 : register(s5);\n"
+			"float g_normalWeight : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2209,7 +2233,16 @@ Int TerrainShaderPBR::init( void )
 			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 lightmapTex = tex2D(s2, tex2);\n"
-			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 dp1 = ddx(worldPos);\n"
+			"    float3 dp2 = ddy(worldPos);\n"
+			"    float2 duv1 = ddx(tex0);\n"
+			"    float2 duv2 = ddy(tex0);\n"
+			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
+			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
+			"    float3 geoN = normalize(cross(T, B));\n"
+			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
+			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
+			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
@@ -2229,7 +2262,7 @@ Int TerrainShaderPBR::init( void )
 			"    lit *= lightmapTex.rgb;\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
-		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise2PixelShader, "terrain_pbr_noise2"))) {
+		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
 		}
@@ -2243,9 +2276,11 @@ Int TerrainShaderPBR::init( void )
 			"sampler s2 : register(s2);\n"
 			"sampler s3 : register(s3);\n"
 			"sampler s4 : register(s4);\n"
+			"sampler s5 : register(s5);\n"
+			"float g_normalWeight : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2254,7 +2289,16 @@ Int TerrainShaderPBR::init( void )
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float4 lightmapTex = tex2D(s3, tex3);\n"
-			"    float3 N = float3(0, 0, 1);\n"
+			"    float3 dp1 = ddx(worldPos);\n"
+			"    float3 dp2 = ddy(worldPos);\n"
+			"    float2 duv1 = ddx(tex0);\n"
+			"    float2 duv2 = ddy(tex0);\n"
+			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
+			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
+			"    float3 geoN = normalize(cross(T, B));\n"
+			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
+			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
+			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
@@ -2274,7 +2318,7 @@ Int TerrainShaderPBR::init( void )
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
-		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise12PixelShader, "terrain_pbr_noise12"))) {
+		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
 		}
@@ -2351,14 +2395,30 @@ Int TerrainShaderPBR::set(Int pass)
 	}
 
 
+	// Compute view + inverse view once. Stage 6 uses the inverse to rebuild
+	// world position in the pixel shader (derivative TBN); stages 2/3 reuse
+	// the view/inverse for the noise projection transforms.
+	Matrix4x4 curView;
+	DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, curView);
+	D3DXMATRIX inv;
+	float det;
+	D3DXMatrixInverse(&inv, &det, (D3DXMATRIX*)&curView);
+
+	// Stage 6: camera-space position -> world position (inverse view transform).
+	// Feeds TEXCOORD6 in the pixel shader so derivative TBN recovers
+	// tangent/bitangent per-pixel without any vertex tangent data.
+	DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
+	// Raw D3D9 call: _Set_DX8_Transform asserts transform<=D3DTS_WORLD, and
+	// stage 6 must always run (even the base variant) for the TBN world position.
+	DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE6, (D3DMATRIX*)&inv);
+	// Bind a dummy texture so the rasterizer always processes this stage.
+	if (W3DShaderManager::getShaderTexture(0)) {
+		DX8Wrapper::_Get_D3D_Device8()->SetTexture(6, W3DShaderManager::getShaderTexture(0)->Peek_D3D_Texture());
+	}
+
 	// Setup noise texture stages for variants that need them
 	if (curShader >= W3DShaderManager::ST_TERRAIN_PBR_NOISE1) {
-		Matrix4x4 curView;
-		DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, curView);
-		D3DXMATRIX inv;
-		float det;
-		D3DXMatrixInverse(&inv, &det, (D3DXMATRIX*)&curView);
-
 		// Stage 2: camera-space projected noise input
 		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
 		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
@@ -2406,13 +2466,31 @@ Int TerrainShaderPBR::set(Int pass)
 			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 		}
 
-		// DIAG: log PBR shader selection (first call only)
+		// Stage 5: terrain normal map atlas (PBR bump). Shares UV set 0 with base.
+		float normalWeight = 0.0f;
+		if (W3DShaderManager::getShaderTexture(5)) {
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(5,
+				W3DShaderManager::getShaderTexture(5)->Peek_D3D_Texture());
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_TEXCOORDINDEX, 0);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+			normalWeight = 1.0f;
+		}
+		// g_normalWeight (c2): 1.0 when a normal atlas is bound, else 0.0 (geo normal only).
+		float nmWeight[4] = { normalWeight, normalWeight, normalWeight, normalWeight };
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, nmWeight, 1);
+
+		// DIAG: log PBR shader selection + stage 5/6 wiring (first call only)
 		{
 			static Bool pbrSetDiag = FALSE;
 			if (!pbrSetDiag) {
 				FILE *f = fopen("E:\\terrain_diag.log", "a");
 				if (f) {
-					fprintf(f, "[%d] PBR_SET: curShader=%d\n", timeGetTime(), (int)curShader);
+					fprintf(f, "[%d] PBR_SET: curShader=%d normalWeight=%.1f nmTex=%d\n",
+						timeGetTime(), (int)curShader, normalWeight,
+						W3DShaderManager::getShaderTexture(5) ? 1 : 0);
 					fclose(f);
 				}
 				pbrSetDiag = TRUE;
@@ -2460,6 +2538,7 @@ void TerrainShaderPBR::reset(void)
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(3, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(5, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(6, NULL);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
@@ -2468,6 +2547,12 @@ void TerrainShaderPBR::reset(void)
 	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|2);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(3, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|3);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|4);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|5);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|6);
 }
 
 Int TerrainShaderPBR::shutdown(void)
@@ -4805,7 +4890,12 @@ extern "C" bool PBR_IsSunGlowEnabled(void)
 extern "C" void PBR_RenderSunGlow(void)
 {
 	static Bool s_firstRender = TRUE;
-	if (!w3dPBRShader.m_sunGlowEnabled || !w3dPBRShader.m_dwSunGlowShader) {
+	// Gate on PBR_IsSunGlowEnabled() so the existing disable flag actually
+	// takes effect. The sun glow has never rendered successfully (crashed at
+	// DrawPrimitiveUP — shader c0/c1 constants were never set and the device
+	// still had a PBR vertex shader bound, so the XYZRHW quad fed garbage).
+	// Skip it; re-enable by flipping PBR_IsSunGlowEnabled() to true.
+	if (!PBR_IsSunGlowEnabled() || !w3dPBRShader.m_sunGlowEnabled || !w3dPBRShader.m_dwSunGlowShader) {
 		if (s_firstRender) {
 			DEBUG_LOG(("Sun Glow: skipped (disabled)\n"));
 			TerrainDiag("sun_glow_skip_disabled");

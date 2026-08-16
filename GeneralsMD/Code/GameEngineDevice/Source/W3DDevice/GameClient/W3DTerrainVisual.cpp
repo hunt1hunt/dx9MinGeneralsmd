@@ -27,15 +27,15 @@
 // Author: Colin Day, April 2001
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-// ====================== ÐÂÔöÒÔÏÂ2ÐÐ£¬ÐÞ¸´ËùÓÐ´íÎó ======================
-//#include "W3DAssetManager.h"    // ÐÞ¸´£ºW3DAssetManager Î´¶¨Òå
-#include "W3DDevice/GameClient/W3DAssetManager.h"  // 7¼3 ÍêÕûÂ·¾¶£¬±àÒëÆ÷ÄÜÕÒµ½
-//#include "TerrainLogic.h"       // ÐÞ¸´£ºTheTerrainLogic Î´ÉùÃ÷
-#include "GameLogic/TerrainLogic.h"                // ÄãÕÒµ½µÄµØÐÎÂß¼­Í·ÎÄ¼þ
+// ====================== ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½2ï¿½Ð£ï¿½ï¿½Þ¸ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½ï¿½ ======================
+//#include "W3DAssetManager.h"    // ï¿½Þ¸ï¿½ï¿½ï¿½W3DAssetManager Î´ï¿½ï¿½ï¿½ï¿½
+#include "W3DDevice/GameClient/W3DAssetManager.h"  // ï¿½7ï¿½3 ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òµï¿½
+//#include "TerrainLogic.h"       // ï¿½Þ¸ï¿½ï¿½ï¿½TheTerrainLogic Î´ï¿½ï¿½ï¿½ï¿½
+#include "GameLogic/TerrainLogic.h"                // ï¿½ï¿½ï¿½Òµï¿½ï¿½Äµï¿½ï¿½ï¿½ï¿½ß¼ï¿½Í·ï¿½Ä¼ï¿½
 // ======================================================================
-// ====================== ¡¾ÕýÈ·¡¿ÒýÇæÔ­ÉúÍ·ÎÄ¼þ ======================
-//#include "W3DAsset.h"       // 7¼3 ÐÞ¸´£ºW3DAssetManager Î´¶¨Òå£¨ÕæÊµÍ·ÎÄ¼þ£©
-//#include "Terrain.h"        // 7¼3 ÐÞ¸´£ºTheTerrainLogic Î´ÉùÃ÷£¨ÕæÊµÍ·ÎÄ¼þ£©
+// ====================== ï¿½ï¿½ï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô­ï¿½ï¿½Í·ï¿½Ä¼ï¿½ ======================
+//#include "W3DAsset.h"       // ï¿½7ï¿½3 ï¿½Þ¸ï¿½ï¿½ï¿½W3DAssetManager Î´ï¿½ï¿½ï¿½å£¨ï¿½ï¿½ÊµÍ·ï¿½Ä¼ï¿½ï¿½ï¿½
+//#include "Terrain.h"        // ï¿½7ï¿½3 ï¿½Þ¸ï¿½ï¿½ï¿½TheTerrainLogic Î´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÊµÍ·ï¿½Ä¼ï¿½ï¿½ï¿½
 // ==================================================================
 
 #include <stdio.h>
@@ -177,13 +177,13 @@ W3DTerrainVisual::W3DTerrainVisual()
 	TheWaterRenderObj = NULL;
 	
   m_logicHeightMap   = NULL;
-  /*// >>>>>> ÐÂÔö <<<<<<  
+  /*// >>>>>> ï¿½ï¿½ï¿½ï¿½ <<<<<<  
     m_flatModelRenderObj  = NULL;  
 	m_flatModelRenderObjB  = NULL;  
 	m_flatModelRenderObjC  = NULL;  
 	m_flatModelRenderObjD  = NULL;  
 	m_flatModelRenderObjE  = NULL; */
-    // >>>>>> ÐÂÔö½áÊø <<<<<<  
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<<  
   
 #ifdef DO_SEISMIC_SIMULATIONS
   m_clientHeightMap = NULL;
@@ -364,7 +364,7 @@ void W3DTerrainVisual::reset( void )
 #ifdef DO_SEISMIC_SIMULATIONS
   m_seismicSimulationList.clear();
 #endif
- /* // >>>>>> ÐÂÔö£ºÊÍ·ÅÆ½ÃæÄ£ÐÍäÖÈ¾¶ÔÏó <<<<<<  
+ /* // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½Æ½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½È¾ï¿½ï¿½ï¿½ï¿½ <<<<<<  
     if( m_flatModelRenderObj )  
     {  
         if( m_flatModelRenderObj->Peek_Scene() != NULL )  
@@ -372,8 +372,8 @@ void W3DTerrainVisual::reset( void )
         REF_PTR_RELEASE( m_flatModelRenderObj );  
         m_flatModelRenderObj = NULL;  
     }  
-    // >>>>>> ÐÂÔö½áÊø <<<<<< 
-	// >>>>>> ÐÂÔö£ºÊÍ·ÅÆ½ÃæÄ£ÐÍäÖÈ¾¶ÔÏó <<<<<<  
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<< 
+	// >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½Æ½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½È¾ï¿½ï¿½ï¿½ï¿½ <<<<<<  
     if( m_flatModelRenderObjB )  
     {  
         if( m_flatModelRenderObjB->Peek_Scene() != NULL )  
@@ -381,8 +381,8 @@ void W3DTerrainVisual::reset( void )
         REF_PTR_RELEASE( m_flatModelRenderObjB );  
         m_flatModelRenderObjB = NULL;  
     }  
-    // >>>>>> ÐÂÔö½áÊø <<<<<< 
-	// >>>>>> ÐÂÔö£ºÊÍ·ÅÆ½ÃæÄ£ÐÍäÖÈ¾¶ÔÏó <<<<<<  
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<< 
+	// >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½Æ½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½È¾ï¿½ï¿½ï¿½ï¿½ <<<<<<  
     if( m_flatModelRenderObjC )  
 	{  
 		if( m_flatModelRenderObjC->Peek_Scene() != NULL )  
@@ -390,8 +390,8 @@ void W3DTerrainVisual::reset( void )
 		REF_PTR_RELEASE( m_flatModelRenderObjC );  
 		m_flatModelRenderObjC = NULL;  
 	}
-    // >>>>>> ÐÂÔö½áÊø <<<<<< 
-	// >>>>>> ÐÂÔö£ºÊÍ·ÅÆ½ÃæÄ£ÐÍäÖÈ¾¶ÔÏó <<<<<<  
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<< 
+	// >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½Æ½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½È¾ï¿½ï¿½ï¿½ï¿½ <<<<<<  
     if( m_flatModelRenderObjD )  
 	{  
 		if( m_flatModelRenderObjD->Peek_Scene() != NULL )  
@@ -399,8 +399,8 @@ void W3DTerrainVisual::reset( void )
 		REF_PTR_RELEASE( m_flatModelRenderObjD );  
 		m_flatModelRenderObjD = NULL;  
 	}
-    // >>>>>> ÐÂÔö½áÊø <<<<<< 
-	// >>>>>> ÐÂÔö£ºÊÍ·ÅÆ½ÃæÄ£ÐÍäÖÈ¾¶ÔÏó <<<<<<  
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<< 
+	// >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½Æ½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½ï¿½È¾ï¿½ï¿½ï¿½ï¿½ <<<<<<  
     if( m_flatModelRenderObjE )  
 	{  
 		if( m_flatModelRenderObjE->Peek_Scene() != NULL )  
@@ -408,7 +408,7 @@ void W3DTerrainVisual::reset( void )
 		REF_PTR_RELEASE( m_flatModelRenderObjE );  
 		m_flatModelRenderObjE = NULL;  
 	}
-    // >>>>>> ÐÂÔö½áÊø <<<<<< */
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<< */
 }  // end reset
 
 //-------------------------------------------------------------------------------------------------
@@ -649,12 +649,15 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 	if( m_terrainRenderObject == NULL )
 		return FALSE;
 
+	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_OPEN_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 
   ChunkInputStream *pStrm = &fileStrm;
 
   // allocate new height map data to read from file
   REF_PTR_RELEASE( m_logicHeightMap );
+	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_WORLDHM_BEGIN\n", (unsigned)GetTickCount()); fclose(f); } }
 	m_logicHeightMap = NEW WorldHeightMap(pStrm);
+	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_WORLDHM_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 
 
 
@@ -724,6 +727,7 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 																				 m_logicHeightMap,
 																				 it);
 #endif
+	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_INITHEIGHT_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 
 
 	if (it) {
@@ -770,9 +774,9 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 	{
 		m_waterRenderObject->load();
 	}
-// >>>>>> ÐÂÔö£ºÔÚµØ±íÏÂ -50 ´¦²åÈë a.w3d Æ½ÃæÄ£ÐÍÔÚµØÍ¼ÖÐÌí¼ÓW3DÄ£ÐÍ <<<<<<  
+// >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÚµØ±ï¿½ï¿½ï¿½ -50 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ a.w3d Æ½ï¿½ï¿½Ä£ï¿½ï¿½ï¿½Úµï¿½Í¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½W3DÄ£ï¿½ï¿½ <<<<<<  
     {  
-        // ÊÍ·ÅÉÏÒ»´Î¿ÉÄÜ²ÐÁôµÄ¶ÔÏó£¨µØÍ¼ÖØÔØÊ±£©  
+        // ï¿½Í·ï¿½ï¿½ï¿½Ò»ï¿½Î¿ï¿½ï¿½Ü²ï¿½ï¿½ï¿½ï¿½Ä¶ï¿½ï¿½ó£¨µï¿½Í¼ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½  
         if( m_flatModelRenderObj )  
         {  
             if( m_flatModelRenderObj->Peek_Scene() != NULL )  
@@ -781,22 +785,22 @@ Bool W3DTerrainVisual::load( AsciiString filename )
             m_flatModelRenderObj = NULL;  
         }  
   
-        // ¼ÓÔØ a.w3d£¨×Ê²ú¹ÜÀíÆ÷»áÔÚ Art/ Ä¿Â¼ÏÂ²éÕÒ a.w3d£©  
+        // ï¿½ï¿½ï¿½ï¿½ a.w3dï¿½ï¿½ï¿½Ê²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Art/ Ä¿Â¼ï¿½Â²ï¿½ï¿½ï¿½ a.w3dï¿½ï¿½  
        m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
 	//    m_flatModelRenderObjC = W3DDisplay::m_assetManager->Create_Render_Obj( "0qsnwateryy1" );
 //	 m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_S" ); // BloomBox_D
  //  m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BLOOMBOX" ); 
         if( m_flatModelRenderObj )  
         {  
-            // »ñÈ¡µØÍ¼·¶Î§£¬¼ÆËãµØÍ¼ÖÐÐÄ XY ¼°×îµÍµØ±í Z  
+            // ï¿½ï¿½È¡ï¿½ï¿½Í¼ï¿½ï¿½Î§ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¼ï¿½ï¿½ï¿½ï¿½ XY ï¿½ï¿½ï¿½ï¿½ÍµØ±ï¿½ Z  
             Region3D extent;  
             TheTerrainLogic->getExtent( &extent );  
   
             Real centerX = ( extent.lo.x + extent.hi.x ) * 0.5f;  
             Real centerY = ( extent.lo.y + extent.hi.y ) * 0.5f;  
-            Real belowZ  = extent.lo.z - 50.0f;  // µØ±í×îµÍµãÔÙÏòÏÂ 50 µ¥Î»  
+            Real belowZ  = extent.lo.z - 50.0f;  // ï¿½Ø±ï¿½ï¿½ï¿½Íµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ 50 ï¿½ï¿½Î»  
   
-            // ÉèÖÃÎ»ÖÃ±ä»»¾ØÕó  
+            // ï¿½ï¿½ï¿½ï¿½Î»ï¿½Ã±ä»»ï¿½ï¿½ï¿½ï¿½  
             Matrix3D transform;  
             transform.Make_Identity();  
             transform.Set_X_Translation( centerX );  
@@ -804,18 +808,18 @@ Bool W3DTerrainVisual::load( AsciiString filename )
             transform.Set_Z_Translation( belowZ );  
             m_flatModelRenderObj->Set_Transform( transform );  
   
-            // ¼ÓÈë 3D ³¡¾°  
+            // ï¿½ï¿½ï¿½ï¿½ 3D ï¿½ï¿½ï¿½ï¿½  
             W3DDisplay::m_3DScene->Add_Render_Object( m_flatModelRenderObj );  
-            // ×¢Òâ£º²» Release_Ref£¬ÒòÎªÎÒÃÇÐèÒª³ÖÓÐÖ¸ÕëÒÔ±ã reset Ê±ÒÆ³ý  
+            // ×¢ï¿½â£ºï¿½ï¿½ Release_Refï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½Ö¸ï¿½ï¿½ï¿½Ô±ï¿½ reset Ê±ï¿½Æ³ï¿½  
         }  
         else  
         {  
             DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load BloomBox_R.w3d\n" ));  
         }  
     }  
-    // >>>>>> ÐÂÔö½áÊø <<<<<<
-	 // ====================== ¼ÓÔØ b.w3d£¨ÐÂÔöµÚ¶þ¸öÄ£ÐÍ£© ======================
-      {    // ÊÍ·ÅÉÏÒ»´Î¿ÉÄÜ²ÐÁôµÄ b ¶ÔÏó
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<<
+	 // ====================== ï¿½ï¿½ï¿½ï¿½ b.w3dï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú¶ï¿½ï¿½ï¿½Ä£ï¿½Í£ï¿½ ======================
+      {    // ï¿½Í·ï¿½ï¿½ï¿½Ò»ï¿½Î¿ï¿½ï¿½Ü²ï¿½ï¿½ï¿½ï¿½ï¿½ b ï¿½ï¿½ï¿½ï¿½
         if( m_flatModelRenderObjB )
         {
             if( m_flatModelRenderObjB->Peek_Scene() != NULL )
@@ -824,7 +828,7 @@ Bool W3DTerrainVisual::load( AsciiString filename )
             m_flatModelRenderObjB = NULL;
         }
 
-        // ¼ÓÔØ b.w3d
+        // ï¿½ï¿½ï¿½ï¿½ b.w3d
         m_flatModelRenderObjB = W3DDisplay::m_assetManager->Create_Render_Obj( "qingwaddskybox" );
 
         if( m_flatModelRenderObjB )
@@ -834,7 +838,7 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 
             Real centerX = ( extent.lo.x + extent.hi.x ) * 0.5f;
             Real centerY = ( extent.lo.y + extent.hi.y ) * 0.5f;
-            Real belowZ  = extent.lo.z - 0.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
+            Real belowZ  = extent.lo.z - 0.0f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
 
             Matrix3D transform;
             transform.Make_Identity();
@@ -850,9 +854,9 @@ Bool W3DTerrainVisual::load( AsciiString filename )
             DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load qingwaddskybox.w3d\n" ));
         }
     }
-    // >>>>>> ÐÂÔö½áÊø <<<<<<
-	// ====================== ¼ÓÔØ 0qsnwateryy1£¨ÐÂÔöµÚÈý¸öÄ£ÐÍ£© ======================
-      {    // ÊÍ·ÅÉÏÒ»´Î¿ÉÄÜ²ÐÁôµÄ b ¶ÔÏó
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<<
+	// ====================== ï¿½ï¿½ï¿½ï¿½ 0qsnwateryy1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½Í£ï¿½ ======================
+      {    // ï¿½Í·ï¿½ï¿½ï¿½Ò»ï¿½Î¿ï¿½ï¿½Ü²ï¿½ï¿½ï¿½ï¿½ï¿½ b ï¿½ï¿½ï¿½ï¿½
         if( m_flatModelRenderObjC )
         {
             if( m_flatModelRenderObjC->Peek_Scene() != NULL )
@@ -861,7 +865,7 @@ Bool W3DTerrainVisual::load( AsciiString filename )
             m_flatModelRenderObjC = NULL;
         }
 
-        // ¼ÓÔØ b.w3d
+        // ï¿½ï¿½ï¿½ï¿½ b.w3d
         m_flatModelRenderObjC = W3DDisplay::m_assetManager->Create_Render_Obj( "0qsnwateryy1" );
 //m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
         if( m_flatModelRenderObjC )
@@ -871,11 +875,11 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 
             Real centerX = ( extent.lo.x + extent.hi.x ) * 0.6f;
             Real centerY = ( extent.lo.y + extent.hi.y ) * 0.6f;
-           // Real belowZ  = extent.lo.z - 4.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 7.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 5.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 7.1f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
+           // Real belowZ  = extent.lo.z - 4.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 7.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 5.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 7.1f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+Real belowZ  = extent.lo.z + 7.0f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
 //Real belowZ  = extent.lo.z + 3.0f; 
             Matrix3D transform;
             transform.Make_Identity();
@@ -891,10 +895,10 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
             DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load 0qsnwateryy1.w3d\n" ));
         }
     }
-    // >>>>>> ÐÂÔö½áÊø <<<<<<
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<<
 	//
-// ====================== ¼ÓÔØ 0qsnwateryy1£¨ÐÂÔöµÚËÄ¸öÄ£ÐÍ£© ======================
-      {    // ÊÍ·ÅÉÏÒ»´Î¿ÉÄÜ²ÐÁôµÄ b ¶ÔÏó
+// ====================== ï¿½ï¿½ï¿½ï¿½ 0qsnwateryy1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¸ï¿½Ä£ï¿½Í£ï¿½ ======================
+      {    // ï¿½Í·ï¿½ï¿½ï¿½Ò»ï¿½Î¿ï¿½ï¿½Ü²ï¿½ï¿½ï¿½ï¿½ï¿½ b ï¿½ï¿½ï¿½ï¿½
         if( m_flatModelRenderObjD )
         {
             if( m_flatModelRenderObjD->Peek_Scene() != NULL )
@@ -903,7 +907,7 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
             m_flatModelRenderObjD = NULL;
         }
 
-        // ¼ÓÔØ b.w3d
+        // ï¿½ï¿½ï¿½ï¿½ b.w3d
         m_flatModelRenderObjD = W3DDisplay::m_assetManager->Create_Render_Obj( "Wave8000" );
 //m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
         if( m_flatModelRenderObjD )
@@ -913,11 +917,11 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
 
             Real centerX = ( extent.lo.x + extent.hi.x ) * 0.6f;
             Real centerY = ( extent.lo.y + extent.hi.y ) * 0.6f;
-           // Real belowZ  = extent.lo.z - 4.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 7.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 5.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 7.1f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
+           // Real belowZ  = extent.lo.z - 4.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 7.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 5.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 7.1f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+Real belowZ  = extent.lo.z + 7.0f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
             Matrix3D transform;
             transform.Make_Identity();
             transform.Set_X_Translation( centerX );
@@ -932,10 +936,10 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
             DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load Wave8000.w3d\n" ));
         }
     }
-    // >>>>>> ÐÂÔö½áÊø <<<<<<
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<<
 	//
-// ====================== ¼ÓÔØ 0qsnwateryy1£¨ÐÂÔöµÚÎå¸öÄ£ÐÍ£© ======================
-      {    // ÊÍ·ÅÉÏÒ»´Î¿ÉÄÜ²ÐÁôµÄ b ¶ÔÏó
+// ====================== ï¿½ï¿½ï¿½ï¿½ 0qsnwateryy1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½Í£ï¿½ ======================
+      {    // ï¿½Í·ï¿½ï¿½ï¿½Ò»ï¿½Î¿ï¿½ï¿½Ü²ï¿½ï¿½ï¿½ï¿½ï¿½ b ï¿½ï¿½ï¿½ï¿½
         if( m_flatModelRenderObjE )
         {
             if( m_flatModelRenderObjE->Peek_Scene() != NULL )
@@ -944,7 +948,7 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
             m_flatModelRenderObjE = NULL;
         }
 
-        // ¼ÓÔØ b.w3d
+        // ï¿½ï¿½ï¿½ï¿½ b.w3d
         m_flatModelRenderObjE = W3DDisplay::m_assetManager->Create_Render_Obj( "Reflect8000" );
 //m_flatModelRenderObj = W3DDisplay::m_assetManager->Create_Render_Obj( "BloomBox_R" ); // BloomBox_D
         if( m_flatModelRenderObjE )
@@ -954,11 +958,11 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
 
             Real centerX = ( extent.lo.x + extent.hi.x ) * 0.6f;
             Real centerY = ( extent.lo.y + extent.hi.y ) * 0.6f;
-           // Real belowZ  = extent.lo.z - 4.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 7.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 5.5f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-//Real belowZ  = extent.lo.z + 7.1f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
-Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
+           // Real belowZ  = extent.lo.z - 4.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 7.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 5.5f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+//Real belowZ  = extent.lo.z + 7.1f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
+Real belowZ  = extent.lo.z + 7.0f;  // ï¿½ï¿½ a Í¬Ò»ï¿½ß¶È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¸ï¿½
             Matrix3D transform;
             transform.Make_Identity();
             transform.Set_X_Translation( centerX );
@@ -973,7 +977,7 @@ Real belowZ  = extent.lo.z + 7.0f;  // ºÍ a Í¬Ò»¸ß¶È£¬¿É×ÔÐÐÐÞ¸Ä
             DEBUG_LOG(( "W3DTerrainVisual::load - WARNING: failed to load Reflect8000.w3d\n" ));
         }
     }
-    // >>>>>> ÐÂÔö½áÊø <<<<<<*/
+    // >>>>>> ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ <<<<<<*/
 	//
 	return TRUE;  // success
 

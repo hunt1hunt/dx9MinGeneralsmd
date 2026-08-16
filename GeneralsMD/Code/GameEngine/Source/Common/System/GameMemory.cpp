@@ -239,7 +239,12 @@ static void* sysAllocateDoNotZero(Int numBytes)
 {
 	void* p = ::GlobalAlloc(GMEM_FIXED, numBytes);
 	if (!p)
+	{
+		// DIAG: log the failed OS allocation size before throwing
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_SYSALLOC %d\n", (unsigned)timeGetTime(), numBytes); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
+	}
 #ifdef MEMORYPOOL_DEBUG
 	{
 		USE_PERF_TIMER(MemoryPoolDebugging)
@@ -1648,10 +1653,13 @@ void* MemoryPool::allocateBlockDoNotZeroImplementation(DECLARE_LITERALSTRING_ARG
 	
 	// OK, if we are here then we have no blobs with freespace... darn.
 	// allocate an overflow block.
-	if (m_firstBlobWithFreeBlocks == NULL) 
+	if (m_firstBlobWithFreeBlocks == NULL)
 	{
 		if (m_overflowAllocationCount == 0)
 		{
+			// DIAG: log which pool is exhausted and its block size
+			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			if (f) { fprintf(f, "[%u] OOM_POOL %s size=%d\n", (unsigned)timeGetTime(), m_poolName ? m_poolName : "?", m_allocationSize); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;	// this pool is not allowed to grow
 		}
 		else 
@@ -2249,7 +2257,11 @@ void *DynamicMemoryAllocator::allocateBytesDoNotZeroImplementation(Int numBytes 
 #if defined(_DEBUG) || defined(_INTERNAL)
   // check alignment
   if (unsigned(result)&3)
+  {
+    // DIAG: Remove after diagnosis
+    { FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] OOM_DMA_ALIGN size=%d result=%p\n", (unsigned)timeGetTime(), numBytes, result); fclose(f); } }
     throw ERROR_OUT_OF_MEMORY;
+  }
 #endif
 
 	return result;
@@ -2656,6 +2668,9 @@ MemoryPool *MemoryPoolFactory::createMemoryPool(const char *poolName, Int alloca
 
 	if (initialAllocationCount <= 0 || overflowAllocationCount < 0)
 	{
+		// DIAG: Remove after diagnosis
+		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		if (f) { fprintf(f, "[%u] OOM_POOLCREATE pool=%s init=%d overflow=%d\n", (unsigned)GetTickCount(), poolName ? poolName : "?", initialAllocationCount, overflowAllocationCount); fclose(f); }
 		DEBUG_CRASH(("illegal pool size: %d %d\n",initialAllocationCount,overflowAllocationCount));
 		throw ERROR_OUT_OF_MEMORY;
 	}
@@ -3407,6 +3422,8 @@ void *malloc(size_t a)
 void *realloc(void *p, size_t s)
 {
 	DEBUG_CRASH(("realloc is evil. do not call it."));
+	// DIAG: Remove after diagnosis
+	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] OOM_REALLOC size=%d\n", (unsigned)GetTickCount(), (int)s); fclose(f); } }
 	throw ERROR_OUT_OF_MEMORY;
 }
 #endif

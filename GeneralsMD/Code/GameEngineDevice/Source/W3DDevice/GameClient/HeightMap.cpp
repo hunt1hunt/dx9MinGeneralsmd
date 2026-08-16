@@ -1030,6 +1030,7 @@ Int HeightMapRenderObjClass::updateBlock(Int x0, Int y0, Int x1, Int y1,  WorldH
 	if (pMap) {
 		REF_PTR_SET(m_stageZeroTexture, pMap->getTerrainTexture());
 		REF_PTR_SET(m_stageOneTexture, pMap->getAlphaTerrainTexture());
+		REF_PTR_SET(m_stageFiveTexture, pMap->getTerrainNormalTexture());
 	}
 
 	Int i,j;
@@ -2078,6 +2079,20 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 			W3DShaderManager::setTexture(4, m_detailTexture);
 		} else {
 			W3DShaderManager::setTexture(4, NULL);
+		}
+		// Stage 5: terrain normal map atlas (PBR bump). Shared with stage 0's UVs.
+		W3DShaderManager::setTexture(5, m_stageFiveTexture);
+		// Log once for debug: confirm normal atlas bind
+		static Bool normDiagOnce = FALSE;
+		if (!normDiagOnce && m_stageFiveTexture) {
+			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			if (f) {
+				fprintf(f, "[%d] HT_BIND_STAGE5: normal atlas bound (0x%p) sz=%dx%d\n",
+					timeGetTime(), m_stageFiveTexture,
+					m_stageFiveTexture->Get_Width(), m_stageFiveTexture->Get_Height());
+				fclose(f);
+			}
+			normDiagOnce = TRUE;
 		}
 		//Disable writes to destination alpha channel (if there is one)
 		if (DX8Wrapper::getBackBufferFormat() == WW3D_FORMAT_A8R8G8B8)

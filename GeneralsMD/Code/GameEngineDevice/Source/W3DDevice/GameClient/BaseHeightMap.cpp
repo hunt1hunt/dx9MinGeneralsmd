@@ -163,6 +163,7 @@ Int BaseHeightMapRenderObjClass::freeMapResources(void)
 	REF_PTR_RELEASE(m_stageOneTexture);
 	REF_PTR_RELEASE(m_stageTwoTexture);
 	REF_PTR_RELEASE(m_stageThreeTexture);
+	REF_PTR_RELEASE(m_stageFiveTexture);
 	REF_PTR_RELEASE(m_destAlphaTexture);
 	REF_PTR_RELEASE(m_map);
 
@@ -280,6 +281,7 @@ BaseHeightMapRenderObjClass::BaseHeightMapRenderObjClass(void)
 	m_stageOneTexture=NULL;
 	m_stageTwoTexture=NULL;
 	m_stageThreeTexture=NULL;
+	m_stageFiveTexture=NULL;
 	m_destAlphaTexture=NULL;
 	m_map=NULL;
 	m_depthFade.X = 0.0f;

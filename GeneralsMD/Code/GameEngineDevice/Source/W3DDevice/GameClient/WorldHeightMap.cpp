@@ -426,6 +426,7 @@ WorldHeightMap::~WorldHeightMap(void)
 	REF_PTR_RELEASE(m_terrainTex);
 	REF_PTR_RELEASE(m_alphaTerrainTex);
 	REF_PTR_RELEASE(m_alphaEdgeTex);
+	REF_PTR_RELEASE(m_terrainNormalTex);
 }
 
 void WorldHeightMap::freeListOfMapObjects(void)
@@ -455,7 +456,8 @@ WorldHeightMap::WorldHeightMap():
 	m_tileMode(TILE_4x4),
 #endif
 	m_numCliffInfo(1),
-	m_terrainTex(NULL), m_alphaTerrainTex(NULL), m_numBitmapTiles(0), m_numBlendedTiles(1)
+	m_terrainTex(NULL), m_alphaTerrainTex(NULL), m_terrainNormalTex(NULL), m_terrainNormalTexHeight(1),
+	m_numBitmapTiles(0), m_numBlendedTiles(1)
 {
 	Int i;
 	for (i=0; i<NUM_SOURCE_TILES; i++) {
@@ -494,7 +496,8 @@ WorldHeightMap::WorldHeightMap(ChunkInputStream *pStrm, Bool logicalDataOnly):
 	m_tileMode(TILE_4x4),
 #endif
 	m_numCliffInfo(1),
-	m_terrainTex(NULL), m_alphaTerrainTex(NULL), m_numBitmapTiles(0), m_numBlendedTiles(1)
+	m_terrainTex(NULL), m_alphaTerrainTex(NULL), m_terrainNormalTex(NULL), m_terrainNormalTexHeight(1),
+	m_numBitmapTiles(0), m_numBlendedTiles(1)
 {
 
 	int i;
@@ -2208,6 +2211,31 @@ TextureClass *WorldHeightMap::getTerrainTexture(void)
 	}
 
 	return m_terrainTex;
+}
+
+TextureClass *WorldHeightMap::getTerrainNormalTexture(void)
+{
+	// The normal atlas reuses the color atlas tile layout, so make sure the
+	// color atlas (and thus updateTileTexturePositions) exists first.
+	if (m_terrainNormalTex == NULL) {
+		getTerrainTexture();
+
+		Int edgeHeight;
+		Int height = updateTileTexturePositions(&edgeHeight);
+		Int pow2Height = 1;
+		while (pow2Height<height) {
+			pow2Height *=2;
+		}
+		REF_PTR_RELEASE(m_terrainNormalTex);
+		m_terrainNormalTex = MSGNEW("WorldHeightMap_getTerrainNormalTexture") NormalMapTerrainTextureClass(pow2Height);
+		// m_terrainNormalTex is stored as TextureClass*; the update() that fills
+		// the normal atlas lives only on the derived NormalMapTerrainTextureClass.
+		m_terrainNormalTexHeight = ((NormalMapTerrainTextureClass*)m_terrainNormalTex)->update(this);
+		char buf[64];
+		sprintf(buf, "Normal tex height %d\n", pow2Height);
+		DEBUG_LOG((buf));
+	}
+	return m_terrainNormalTex;
 }
 
 TextureClass *WorldHeightMap::getAlphaTerrainTexture(void)

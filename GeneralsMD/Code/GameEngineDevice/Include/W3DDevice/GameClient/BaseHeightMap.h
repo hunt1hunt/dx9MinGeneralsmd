@@ -286,6 +286,7 @@ protected:
 	TextureClass *m_stageOneTexture;	///<transparent edging texture
 	CloudMapTerrainTextureClass *m_stageTwoTexture;	///<Cloud map texture
 	TextureClass *m_stageThreeTexture;	///<light/noise map texture
+	TextureClass *m_stageFiveTexture;	///<terrain normal map atlas (stage 5, PBR bump)
 	AsciiString m_macroTextureName; ///< Name for stage 3 texture.
 	TextureClass *m_destAlphaTexture;	///< Texture holding destination alpha LUT for water depth.
 
