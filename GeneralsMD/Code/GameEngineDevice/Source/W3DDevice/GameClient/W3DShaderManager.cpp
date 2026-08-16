@@ -2115,7 +2115,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s1 : register(s1);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
-			"float g_normalWeight : register(c2);\n"
+			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2134,13 +2134,14 @@ Int TerrainShaderPBR::init( void )
 			"    float3 geoN = normalize(cross(T, B));\n"
 			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
 			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
-			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
+			"    float slopeAtten = saturate(1.0 - (1.0 - geoN.y) * 0.75);\n"
+			"    float3 N = lerp(geoN, nmN, c2.x * slopeAtten);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
 			"    float NdotH = saturate(dot(N, H));\n"
 			"    float VdotH = NdotH;\n"
-			"    float roughness = 0.6;\n"
+			"    float roughness = c2.y;\n"
 			"    float a = roughness * roughness;\n"
 			"    float a2 = a * a;\n"
 			"    float k = a * 0.5;\n"
@@ -2168,7 +2169,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s2 : register(s2);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
-			"float g_normalWeight : register(c2);\n"
+			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2188,13 +2189,14 @@ Int TerrainShaderPBR::init( void )
 			"    float3 geoN = normalize(cross(T, B));\n"
 			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
 			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
-			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
+			"    float slopeAtten = saturate(1.0 - (1.0 - geoN.y) * 0.75);\n"
+			"    float3 N = lerp(geoN, nmN, c2.x * slopeAtten);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
 			"    float NdotH = saturate(dot(N, H));\n"
 			"    float VdotH = NdotH;\n"
-			"    float roughness = 0.6;\n"
+			"    float roughness = c2.y;\n"
 			"    float a = roughness * roughness;\n"
 			"    float a2 = a * a;\n"
 			"    float k = a * 0.5;\n"
@@ -2222,7 +2224,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s2 : register(s2);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
-			"float g_normalWeight : register(c2);\n"
+			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2242,13 +2244,14 @@ Int TerrainShaderPBR::init( void )
 			"    float3 geoN = normalize(cross(T, B));\n"
 			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
 			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
-			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
+			"    float slopeAtten = saturate(1.0 - (1.0 - geoN.y) * 0.75);\n"
+			"    float3 N = lerp(geoN, nmN, c2.x * slopeAtten);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
 			"    float NdotH = saturate(dot(N, H));\n"
 			"    float VdotH = NdotH;\n"
-			"    float roughness = 0.6;\n"
+			"    float roughness = c2.y;\n"
 			"    float a = roughness * roughness;\n"
 			"    float a2 = a * a;\n"
 			"    float k = a * 0.5;\n"
@@ -2277,7 +2280,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s3 : register(s3);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
-			"float g_normalWeight : register(c2);\n"
+			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
 			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
@@ -2298,13 +2301,14 @@ Int TerrainShaderPBR::init( void )
 			"    float3 geoN = normalize(cross(T, B));\n"
 			"    float3 nm = tex2D(s5, tex0).xyz * 2.0 - 1.0;\n"
 			"    float3 nmN = normalize(nm.x * T + nm.y * B + nm.z * geoN);\n"
-			"    float3 N = lerp(geoN, nmN, g_normalWeight);\n"
+			"    float slopeAtten = saturate(1.0 - (1.0 - geoN.y) * 0.75);\n"
+			"    float3 N = lerp(geoN, nmN, c2.x * slopeAtten);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
 			"    float3 H = normalize(L + N);\n"
 			"    float NdotH = saturate(dot(N, H));\n"
 			"    float VdotH = NdotH;\n"
-			"    float roughness = 0.6;\n"
+			"    float roughness = c2.y;\n"
 			"    float a = roughness * roughness;\n"
 			"    float a2 = a * a;\n"
 			"    float k = a * 0.5;\n"
@@ -2478,8 +2482,12 @@ Int TerrainShaderPBR::set(Int pass)
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 			normalWeight = 1.0f;
 		}
-		// g_normalWeight (c2): 1.0 when a normal atlas is bound, else 0.0 (geo normal only).
-		float nmWeight[4] = { normalWeight, normalWeight, normalWeight, normalWeight };
+		// c2 = { normalWeight, terrainRoughness, unused, unused }
+		//   x: 1.0 when a normal atlas is bound, else 0.0 (geo normal only).
+		//   y: GGX roughness. Slightly low (0.5) so the bump reads clearly; raise toward
+		//      1.0 for a matte look.
+		static float s_terrainRoughness = 0.5f;
+		float nmWeight[4] = { normalWeight, s_terrainRoughness, 0.0f, 0.0f };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, nmWeight, 1);
 
 		// DIAG: log PBR shader selection + stage 5/6 wiring (first call only)

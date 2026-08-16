@@ -281,7 +281,8 @@ int NormalMapTerrainTextureClass::update(WorldHeightMap *htMap)
 	Int pixelBytes = 4;	// A8R8G8B8
 
 	// Bump strength: scales the height gradient before normalising. Tunable.
-	const float NORMAL_STRENGTH = 6.0f;
+	// 8.0 = stronger than the initial 6.0 so the bump reads clearly on the terrain.
+	const float NORMAL_STRENGTH = 8.0f;
 
 	Int tileNdx;
 	Int tilesWritten = 0;
