@@ -1102,16 +1102,12 @@ void W3XModelDraw::updateAnimation()
 				Quaternion b(q1[0], q1[1], q1[2], q1[3]);
 				Quaternion r;
 				Slerp(r, a, b, t);
-				// Normalize the quaternion to frame 0: offset = frame0^-1 * current.
-				// At frame 0 the bone sits at its bind pose; only the animation's
-				// relative motion is applied (robust to files whose absolute values
-				// don't match the bind pose).
-				const float *qb = &ch.quatFrames[0];
-				float qbInv[4] = { -qb[0], -qb[1], -qb[2], qb[3] };
+				// RA3 channel quats are the bone's LOCAL rotation relative to its
+				// parent (confirmed: "每个骨骼的动画都相对于父级骨骼"); apply the raw
+				// interpolated value. composeControlledBones combines it with the
+				// bind rotation (animQuat * bindQuat) and recurses the parent chain.
 				float curQ[4] = { r.X, r.Y, r.Z, r.W };
-				float outQ[4];
-				QuatMultiply(outQ, qbInv, curQ);
-				m_renderObj->SetBoneAnimQuat(ch.pivot, outQ);
+				m_renderObj->SetBoneAnimQuat(ch.pivot, curQ);
 			}
 		}
 
@@ -1120,12 +1116,12 @@ void W3XModelDraw::updateAnimation()
 			int tstride = 3;
 			int tnFrames = (int)ch.transFrames.size() / tstride;
 			if (tnFrames >= 1) {
-				// Frame-0 value is the base: we apply the animation as a DELTA from
-				// its own frame 0, added to the skeleton's bind local translation.
-				// This keeps the bone at its bind position at frame 0 (a file whose
-				// absolute values don't match the bind pose can't throw the bone to
-				// a wrong spot) while preserving the animation's actual motion.
-				const float *tb0 = &ch.transFrames[0];
+				// RA3 channel translations are the bone's LOCAL position relative to
+				// its parent (confirmed: "每个骨骼的动画都相对于父级骨骼"). Apply the raw
+				// interpolated value; composeControlledBones adds it to the bind local
+				// translation (bind + animTrans) and recurses the parent chain. No
+				// frame-0 normalization — that zeroed constant weapon channels and kept
+				// weapons at their (off-the-hand) bind position.
 				int tf0 = f0 % tnFrames;
 				int tf1 = (tf0 + 1) % tnFrames;
 				if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) tf1 = tf0;
@@ -1133,9 +1129,9 @@ void W3XModelDraw::updateAnimation()
 				const float *t0 = &ch.transFrames[tf0 * tstride];
 				const float *t1 = &ch.transFrames[tf1 * tstride];
 				float outT[3];
-				outT[0] = (t0[0] + (t1[0] - t0[0]) * t) - tb0[0];
-				outT[1] = (t0[1] + (t1[1] - t0[1]) * t) - tb0[1];
-				outT[2] = (t0[2] + (t1[2] - t0[2]) * t) - tb0[2];
+				outT[0] = t0[0] + (t1[0] - t0[0]) * t;
+				outT[1] = t0[1] + (t1[1] - t0[1]) * t;
+				outT[2] = t0[2] + (t1[2] - t0[2]) * t;
 				m_renderObj->SetBoneAnimTrans(ch.pivot, outT);
 			}
 		}
@@ -1264,8 +1260,16 @@ Bool W3XModelDraw::getProjectileLaunchOffset(
 	if (launchPos) {
 		if (!vec.empty()) {
 			int bi = (specificBarrelToUse < 0 || specificBarrelToUse >= (Int)vec.size()) ? 0 : specificBarrelToUse;
-			if (vec[bi].m_launchBone >= 0)
-				*launchPos = vec[bi].m_projectileOffsetMtx;
+			// Use the CURRENT animated model-space transform of the launch bone
+			// (WeaponProjectileLaunchBone, else WeaponFireFXBone). The pristine
+			// m_projectileOffsetMtx was never populated for W3X models, so the
+			// projectile launched from the unit origin (feet); this follows the
+			// animated bone instead (fx_laser sits on the launcher, a child of the
+			// weapon bone).
+			int lb = vec[bi].m_launchBone;
+			if (lb < 0) lb = vec[bi].m_fxBone;
+			if (lb >= 0 && m_renderObj)
+				*launchPos = m_renderObj->Get_Bone_Transform_Model(lb);
 			else
 				launchPos->Make_Identity();	// no launch bone -> unit center
 		} else {

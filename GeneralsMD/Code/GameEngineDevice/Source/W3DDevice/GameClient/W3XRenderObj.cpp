@@ -302,6 +302,25 @@ const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(int boneindex)
 	return m_boneTransformCache;
 }
 
+Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model(int boneindex) const
+{
+	// Object-local (model-space) bone transform: the composed skeleton WITHOUT the
+	// object's world transform. Mirrors the "pristine" bone W3D exposes so launch/
+	// muzzle offsets that the weapon logic combines with the object transform work
+	// at the correct spot (fx_laser on the launcher, not the unit origin).
+	Matrix3D result;
+	result.Make_Identity();
+	if (boneindex < 0 || boneindex >= m_boneCount || !m_bones) return result;
+	float comp[kMaxBones * 8];
+	composeControlledBones(comp);
+	const float *bq = &comp[boneindex * 8 + 0];
+	const float *bo = &comp[boneindex * 8 + 4];
+	Quaternion q(bq[0], bq[1], bq[2], bq[3]);
+	result.Set_Rotation(q);
+	result.Set_Translation(Vector3(bo[0], bo[1], bo[2]));
+	return result;
+}
+
 const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(const char *bonename)
 {
 	int idx = Get_Bone_Index(bonename);

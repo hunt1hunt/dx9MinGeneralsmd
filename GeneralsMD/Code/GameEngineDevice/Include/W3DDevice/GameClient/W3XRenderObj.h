@@ -93,6 +93,10 @@ public:
 	virtual int Get_Bone_Index(const char *bonename);
 	virtual const Matrix3D &Get_Bone_Transform(int boneindex);
 	virtual const Matrix3D &Get_Bone_Transform(const char *bonename);
+	// Model-space (object-local) bone transform: the composed skeleton WITHOUT the
+	// object's world transform (like W3D's "pristine" bone). Used for launch/muzzle
+	// offsets that the weapon logic combines with the object transform itself.
+	Matrix3D Get_Bone_Transform_Model(int boneindex) const;
 	// Bone control for turret/barrel (game-logic driven rotation). The given
 	// transform is the bone's LOCAL rotation (e.g. Rotate_Z(turretYaw)); it is
 	// composed into the object-local WorldBones during Render. Mirrors
