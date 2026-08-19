@@ -98,13 +98,22 @@ public:
 	// composed into the object-local WorldBones during Render. Mirrors
 	// RenderObjClass::Control_Bone so W3D turret logic can drive a W3X model.
 	virtual void Capture_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) m_boneCtrlActive[bindex] = true; }
-	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) m_boneCtrlActive[bindex] = false; }
+	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) { m_boneCtrlActive[bindex] = false; m_boneAnimTransActive[bindex] = false; } }
 	virtual bool Is_Bone_Captured(int bindex) const { return (bindex >= 0 && bindex < kMaxBones) ? m_boneCtrlActive[bindex] : false; }
 	virtual void Control_Bone(int bindex, const Matrix3D &objtm, bool world_space_translation = false);
-	// Animation override: set a bone's object-local rotation quaternion directly
-	// (used by the W3X animation system for keyframe-driven bones like the
-	// barrel). Takes precedence over Control_Bone for the same bone.
+	// Animation override: set a bone's LOCAL offset rotation (relative to the
+	// bind local rotation). The animation quaternion is normalized so frame 0 =
+	// identity (bone at bind). composeControlledBones computes the bone's local
+	// quat as offsetQuat * bindLocalQuat, then accumulates the parent chain.
 	void SetBoneAnimQuat(int bindex, const float q[4]);
+	// Animation override: set a bone's LOCAL offset translation (the animation's
+	// X/Y/ZTranslation channel minus its frame-0 value, so frame 0 = zero).
+	// composeControlledBones composes it with the bind local translation.
+	void SetBoneAnimTrans(int bindex, const float t[3]);
+	// Bind-pose LOCAL quaternions + translations (Pivot Rotation/Translation per
+	// bone), index-aligned with m_bones. Used to compose the animation offset on
+	// the bind pose, then accumulate the parent chain (the SAGE composition).
+	void SetBoneLocalPose(const float *localQuat, const float *localTrans, int boneCount);
 	void SetBounds(const Vector3 &min, const Vector3 &max);
 	void SetRecolorColor(unsigned int hexColor) { m_recolorHex = hexColor; }	// 0xFFRRGGBB faction color
 	void Clear(void);
@@ -170,6 +179,10 @@ private:
 	Matrix3D m_boneTransformCache;			// Get_Bone_Transform returns a const ref
 	bool m_boneCtrlActive[kMaxBones];		// per-bone turret-control flag
 	float m_boneCtrlQuat[kMaxBones][4];		// per-bone control rotation (quat)
+	float m_boneAnimTrans[kMaxBones][3];	// per-bone animated LOCAL offset translation (frame-0-normalized)
+	bool m_boneAnimTransActive[kMaxBones];	// true when the animation overrides the local translation
+	float *m_boneLocalQuat;					// bind-pose LOCAL rotations (boneCount*4), from Pivot Rotation
+	float *m_boneLocalTrans;				// bind-pose LOCAL translations (boneCount*3), from Pivot Translation
 	Vector3 m_bmin;
 	Vector3 m_bmax;
 	unsigned int m_recolorHex;	// 0xFFRRGGBB faction color (0 = none -> white)

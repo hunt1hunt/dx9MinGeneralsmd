@@ -80,7 +80,11 @@ W3XRenderObjClass::W3XRenderObjClass() :
 		m_boneCtrlActive[i] = false;
 		m_boneCtrlQuat[i][0] = m_boneCtrlQuat[i][1] = m_boneCtrlQuat[i][2] = 0.0f;
 		m_boneCtrlQuat[i][3] = 1.0f;
+		m_boneAnimTransActive[i] = false;
+		m_boneAnimTrans[i][0] = m_boneAnimTrans[i][1] = m_boneAnimTrans[i][2] = 0.0f;
 	}
+	m_boneLocalQuat = NULL;
+	m_boneLocalTrans = NULL;
 	m_bmin.Set(0, 0, 0);
 	m_bmax.Set(0, 0, 0);
 	m_worldTransform.Make_Identity();
@@ -194,76 +198,74 @@ int W3XRenderObjClass::Get_Bone_Index(const char *bonename)
 
 void W3XRenderObjClass::composeControlledBones(float *out) const
 {
-	// Copy the bind pose, apply per-bone Control_Bone rotations, then cascade
-	// turret rotation to its children (barrel, muzzle) including the OFFSET so
-	// the barrel orbits the turret instead of spinning about its own center.
-	// 'out' holds kMaxBones*8 floats (quat+offset per bone). When no bone is
-	// controlled, out[bi] == m_bones[bi] (copy).
+	// SAGE composition (matches OpenSAGE ModelBoneInstance / W3D runtime):
+	//   boneLocal  = animationOffset * bindLocal
+	//   world      = parentWorld * boneLocal
+	// In quat+offset terms, per bone (parentIndex < bi guaranteed by loadHierarchy):
+	//   localQuat  = offsetQuat * bindLocalQuat
+	//   localTrans = offsetTrans + R(offsetQuat) * bindLocalTrans
+	//   worldQuat  = parentWorldQuat * localQuat
+	//   worldOffset= parentWorldOffset + R(parentWorldQuat) * localTrans
+	// The animation offset is normalized so frame 0 = identity, so an unanimated
+	// bone stays at its bind pose and the parent chain runs parent-first.
+	bool hasLocalPose = (m_boneLocalQuat != NULL && m_boneLocalTrans != NULL);
+
 	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
-		for (int c = 0; c < 8; c++) out[bi*8 + c] = m_bones[bi*8 + c];
-		if (m_boneCtrlActive[bi]) {
-			out[bi*8 + 0] = m_boneCtrlQuat[bi][0];
-			out[bi*8 + 1] = m_boneCtrlQuat[bi][1];
-			out[bi*8 + 2] = m_boneCtrlQuat[bi][2];
-			out[bi*8 + 3] = m_boneCtrlQuat[bi][3];
+		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
+
+		// --- local quaternion: offsetQuat * bindLocalQuat ---
+		float lq[4];
+		if (m_boneCtrlActive[bi] && hasLocalPose) {
+			W3XQuatMultiply(lq, m_boneCtrlQuat[bi], &m_boneLocalQuat[bi*4]);
+		} else if (hasLocalPose) {
+			lq[0] = m_boneLocalQuat[bi*4+0];
+			lq[1] = m_boneLocalQuat[bi*4+1];
+			lq[2] = m_boneLocalQuat[bi*4+2];
+			lq[3] = m_boneLocalQuat[bi*4+3];
+		} else {
+			lq[0] = m_bones[bi*8+0];
+			lq[1] = m_bones[bi*8+1];
+			lq[2] = m_bones[bi*8+2];
+			lq[3] = m_bones[bi*8+3];
 		}
-	}
-	// Cascade: child (barrel/muzzle) whose ANCESTOR is controlled follows that
-	// ancestor's new rotation, both quat AND offset. Handles multi-level chains
-	// (e.g. tank: turret -> 0xA5A545ED -> bone_barrel01 -> muzzle) where the
-	// barrel is not a DIRECT child of the turret.
-	if (!m_boneParents.empty() && (int)m_boneParents.size() >= m_boneCount) {
-		// Forward 0..n pass: because parents are processed before children
-		// (parentIndex < i guaranteed by loadHierarchy), once a bone is recomposed
-		// its children in this same pass see it already settled.
-		for (int cj = 1; cj < m_boneCount && cj < kMaxBones; cj++) {
-			// Walk up the ancestor chain; if any ancestor is controlled, this bone
-			// must be re-composed under its (already settled) parent.
-			int pj = m_boneParents[cj];
-			if (pj < 0 || pj >= kMaxBones) continue;
-			bool ancestorControlled = false;
-			for (int a = pj; a >= 0 && a < kMaxBones; a = (a < (int)m_boneParents.size()) ? m_boneParents[a] : -1) {
-				if (m_boneCtrlActive[a]) { ancestorControlled = true; break; }
-				if (a == m_boneParents[a]) break;	// safety: avoid self-loop
+
+		// --- local translation: bindLocalTrans + animation trans offset ---
+		// NOTE: the control/animation rotation is NOT applied to the local
+		// position. Rotating bindLocalTrans by the control quat would move the
+		// bone's pivot with the rotation (turret spins around its own centre
+		// instead of the base). The position stays at the bind spot (rotated only
+		// by the parent chain); the control quat affects orientation only.
+		float lt[3];
+		if (hasLocalPose) {
+			lt[0] = m_boneLocalTrans[bi*3+0];
+			lt[1] = m_boneLocalTrans[bi*3+1];
+			lt[2] = m_boneLocalTrans[bi*3+2];
+			if (m_boneAnimTransActive[bi]) {
+				lt[0] += m_boneAnimTrans[bi][0];
+				lt[1] += m_boneAnimTrans[bi][1];
+				lt[2] += m_boneAnimTrans[bi][2];
 			}
-			if (!ancestorControlled) continue;
-			const float *pb = &m_bones[pj*8];
-			const float *pn = &out[pj*8];
-			float local[4];
-			if (m_boneCtrlActive[cj]) {
-				// Child itself controlled (barrel pitch): its control quat is the
-				// local rotation relative to the parent.
-				local[0] = m_boneCtrlQuat[cj][0];
-				local[1] = m_boneCtrlQuat[cj][1];
-				local[2] = m_boneCtrlQuat[cj][2];
-				local[3] = m_boneCtrlQuat[cj][3];
-			} else {
-				// Child not controlled: derive local from bind pose.
-				const float *cb = &m_bones[cj*8];
-				float pbInv[4];
-				W3XQuatConjugate(pbInv, pb);
-				W3XQuatMultiply(local, pbInv, cb);
-			}
-			// child quat = parent_new * local
-			float cn[4];
-			W3XQuatMultiply(cn, pn, local);
-			out[cj*8+0] = cn[0];
-			out[cj*8+1] = cn[1];
-			out[cj*8+2] = cn[2];
-			out[cj*8+3] = cn[3];
-			// child offset = Rot(parent_new, childBase - parentBase) + parentNewOffset
-			{
-				const float *cb = &m_bones[cj*8];
-				const float *ob = &m_bones[pj*8];
-				const float *on = &out[pj*8];
-				float rel[3] = { cb[4]-ob[4], cb[5]-ob[5], cb[6]-ob[6] };
-				float rotRel[3];
-				W3XQuatRotateVector(rotRel, pn, rel);
-				out[cj*8+4] = rotRel[0] + on[4];
-				out[cj*8+5] = rotRel[1] + on[5];
-				out[cj*8+6] = rotRel[2] + on[6];
-			}
+		} else {
+			lt[0] = m_bones[bi*8+4];
+			lt[1] = m_bones[bi*8+5];
+			lt[2] = m_bones[bi*8+6];
 		}
+
+		// --- world = parentWorld * local ---
+		if (pj >= 0 && pj < kMaxBones) {
+			float wq[4];
+			W3XQuatMultiply(wq, &out[pj*8], lq);
+			out[bi*8+0] = wq[0]; out[bi*8+1] = wq[1]; out[bi*8+2] = wq[2]; out[bi*8+3] = wq[3];
+			float rot[3];
+			W3XQuatRotateVector(rot, &out[pj*8], lt);
+			out[bi*8+4] = out[pj*8+4] + rot[0];
+			out[bi*8+5] = out[pj*8+5] + rot[1];
+			out[bi*8+6] = out[pj*8+6] + rot[2];
+		} else {
+			out[bi*8+0] = lq[0]; out[bi*8+1] = lq[1]; out[bi*8+2] = lq[2]; out[bi*8+3] = lq[3];
+			out[bi*8+4] = lt[0]; out[bi*8+5] = lt[1]; out[bi*8+6] = lt[2];
+		}
+		out[bi*8+7] = m_bones[bi*8+7];	// alpha
 	}
 }
 
@@ -337,6 +339,29 @@ void W3XRenderObjClass::SetBoneAnimQuat(int bindex, const float q[4])
 	m_boneCtrlActive[bindex] = true;
 }
 
+void W3XRenderObjClass::SetBoneAnimTrans(int bindex, const float t[3])
+{
+	if (bindex < 0 || bindex >= kMaxBones) return;
+	m_boneAnimTrans[bindex][0] = t[0];
+	m_boneAnimTrans[bindex][1] = t[1];
+	m_boneAnimTrans[bindex][2] = t[2];
+	m_boneAnimTransActive[bindex] = true;
+}
+
+void W3XRenderObjClass::SetBoneLocalPose(const float *localQuat, const float *localTrans, int boneCount)
+{
+	if (m_boneLocalQuat) delete[] m_boneLocalQuat;
+	if (m_boneLocalTrans) delete[] m_boneLocalTrans;
+	m_boneLocalQuat = NULL;
+	m_boneLocalTrans = NULL;
+	if (localQuat && localTrans && boneCount > 0) {
+		m_boneLocalQuat = new float[boneCount * 4];
+		memcpy(m_boneLocalQuat, localQuat, boneCount * 4 * sizeof(float));
+		m_boneLocalTrans = new float[boneCount * 3];
+		memcpy(m_boneLocalTrans, localTrans, boneCount * 3 * sizeof(float));
+	}
+}
+
 void W3XRenderObjClass::SetBounds(const Vector3 &min, const Vector3 &max)
 {
 	m_bmin = min;
@@ -347,6 +372,8 @@ void W3XRenderObjClass::SetBounds(const Vector3 &min, const Vector3 &max)
 void W3XRenderObjClass::Clear(void)
 {
 	if (m_bones) { delete[] m_bones; m_bones = NULL; }
+	if (m_boneLocalQuat) { delete[] m_boneLocalQuat; m_boneLocalQuat = NULL; }
+	if (m_boneLocalTrans) { delete[] m_boneLocalTrans; m_boneLocalTrans = NULL; }
 	m_boneCount = 0;
 	m_boneNames.clear();
 	m_boneParents.clear();

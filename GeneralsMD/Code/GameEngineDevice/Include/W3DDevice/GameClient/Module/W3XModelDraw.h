@@ -219,6 +219,8 @@ private:
 		std::vector<W3XShaderConstant> constants;
 		std::vector<SubMeshBuffer> subMeshes;
 		float *boneMatrixArray;		// boneCount * 8 floats (RA3 WorldBones: quat+offset, 2 float4 per bone)
+		std::vector<float> boneLocalQuat;	// boneCount * 4 floats (bind Pivot Rotations)
+		std::vector<float> boneLocalTrans;	// boneCount * 3 floats (bind Pivot Translations)
 		bool valid;
 	};
 

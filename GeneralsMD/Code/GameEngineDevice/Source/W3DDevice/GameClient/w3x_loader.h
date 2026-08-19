@@ -155,6 +155,8 @@ struct W3XMeshData
 	std::vector<uint16> boneIndices;
 	std::vector<float> boneWeights;
 
+
+
 	// FXShader reference
 	AsciiString fxShaderName;
 	int techniqueIndex;
@@ -227,6 +229,9 @@ private:
 
 	// Internal: parse one ChannelQuaternion/ChannelTranslation element's frames
 	static void ParseAnimationChannel(pugi::xml_node &node, W3XAnimation &anim, bool isQuat);
+	// Internal: parse one ChannelScalar element (X/Y/ZTranslation axis) and
+	// merge its per-frame values into the pivot's transFrames (3 floats/frame).
+	static void ParseAnimationScalar(pugi::xml_node &node, W3XAnimation &anim);
 };
 
 

@@ -305,6 +305,23 @@ bool W3XModelDraw::loadHierarchy(const char *sklName, LoadedModelData &data)
 		data.boneParents.push_back(bones[pi].parentIndex);
 	}
 
+	// Keep the bind LOCAL rotations + translations (Pivot Rotation/Translation).
+	// composeControlledBones composes the animation offset on these, then
+	// accumulates the parent chain (the SAGE composition).
+	data.boneLocalQuat.clear();
+	data.boneLocalQuat.reserve(data.boneCount * 4);
+	data.boneLocalTrans.clear();
+	data.boneLocalTrans.reserve(data.boneCount * 3);
+	for (int li = 0; li < data.boneCount; li++) {
+		data.boneLocalQuat.push_back(bones[li].rotation[0]);
+		data.boneLocalQuat.push_back(bones[li].rotation[1]);
+		data.boneLocalQuat.push_back(bones[li].rotation[2]);
+		data.boneLocalQuat.push_back(bones[li].rotation[3]);
+		data.boneLocalTrans.push_back(bones[li].translation[0]);
+		data.boneLocalTrans.push_back(bones[li].translation[1]);
+		data.boneLocalTrans.push_back(bones[li].translation[2]);
+	}
+
 	// Allocate WorldBones array: 2 float4 per bone (quat + offset) = 8 floats per bone
 	if (data.boneMatrixArray) delete[] data.boneMatrixArray;
 	data.boneMatrixArray = new float[data.boneCount * 8];
@@ -326,12 +343,16 @@ bool W3XModelDraw::loadHierarchy(const char *sklName, LoadedModelData &data)
 			float *po = &data.boneMatrixArray[b.parentIndex * 8 + 4];
 			// world_quat = parent_quat * local_quat
 			QuatMultiply(wq, pq, lq);
-			// world_offset = rotate(parent_offset, local_quat) + local_offset
-			float rotatedParent[3];
-			QuatRotateVector(rotatedParent, lq, po);
-			wo[0] = rotatedParent[0] + lo[0];
-			wo[1] = rotatedParent[1] + lo[1];
-			wo[2] = rotatedParent[2] + lo[2];
+			// world_offset = parent_offset + rotate(local_offset, parent_world_quat)
+			// Standard hierarchy accumulation. The old form rotated the PARENT's
+			// offset by the LOCAL quat, which scrambled humanoid skeletons that
+			// carry non-identity bind rotations (RA3 infantry) -- vehicles with
+			// all-identity bone rotations (tank/humvee/factory) were unaffected.
+			float rotatedLocal[3];
+			QuatRotateVector(rotatedLocal, pq, lo);
+			wo[0] = po[0] + rotatedLocal[0];
+			wo[1] = po[1] + rotatedLocal[1];
+			wo[2] = po[2] + rotatedLocal[2];
 		} else {
 			// Root bone: just local transform
 			wq[0] = lq[0]; wq[1] = lq[1]; wq[2] = lq[2]; wq[3] = lq[3];
@@ -658,6 +679,11 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	// Bones
 	if (data.boneCount > 0 && data.boneMatrixArray) {
 		robj->SetBones(data.boneMatrixArray, data.boneCount);
+	}
+	// Bind LOCAL pose (rotations + translations) -> render obj so the animation
+	// offset can be composed on the bind pose (weapon-in-hand / feet-planted).
+	if (data.boneCount > 0 && !data.boneLocalQuat.empty() && !data.boneLocalTrans.empty()) {
+		robj->SetBoneLocalPose(&data.boneLocalQuat[0], &data.boneLocalTrans[0], data.boneCount);
 	}
 	// Bone names -> render obj so ini WeaponFireFXBone etc can be resolved.
 	robj->SetBoneNames(data.boneNames);
@@ -1030,25 +1056,61 @@ void W3XModelDraw::updateAnimation()
 
 	for (size_t ci = 0; ci < m_curAnim.channels.size(); ci++) {
 		const W3XAnimChannel &ch = m_curAnim.channels[ci];
-		if (ch.quatFrames.empty()) continue;
-		// 4 floats per frame; index into per-bone quat array.
-		int stride = 4;
-		int nFrames = (int)ch.quatFrames.size() / stride;
-		if (nFrames < 1) continue;
-		int ff0 = f0 % nFrames;
-		int ff1 = (ff0 + 1) % nFrames;
-		// At the clamped end of ONCE / start of ONCE_BACKWARDS, hold the quat.
-		if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) ff1 = ff0;
-		if (m_animMode == W3X_ANIM_ONCE_BACKWARDS && f0 <= 0) ff1 = ff0;
-		const float *q0 = &ch.quatFrames[ff0 * stride];
-		const float *q1 = &ch.quatFrames[ff1 * stride];
-		float outQ[4];
-		Quaternion a(q0[0], q0[1], q0[2], q0[3]);
-		Quaternion b(q1[0], q1[1], q1[2], q1[3]);
-		Quaternion r;
-		Slerp(r, a, b, t);
-		outQ[0] = r.X; outQ[1] = r.Y; outQ[2] = r.Z; outQ[3] = r.W;
-		m_renderObj->SetBoneAnimQuat(ch.pivot, outQ);
+
+		// --- quaternion (orientation) channel ---
+		if (!ch.quatFrames.empty()) {
+			// 4 floats per frame; index into per-bone quat array.
+			int stride = 4;
+			int nFrames = (int)ch.quatFrames.size() / stride;
+			if (nFrames >= 1) {
+				int ff0 = f0 % nFrames;
+				int ff1 = (ff0 + 1) % nFrames;
+				// At the clamped end of ONCE / start of ONCE_BACKWARDS, hold the quat.
+				if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) ff1 = ff0;
+				if (m_animMode == W3X_ANIM_ONCE_BACKWARDS && f0 <= 0) ff1 = ff0;
+				const float *q0 = &ch.quatFrames[ff0 * stride];
+				const float *q1 = &ch.quatFrames[ff1 * stride];
+				Quaternion a(q0[0], q0[1], q0[2], q0[3]);
+				Quaternion b(q1[0], q1[1], q1[2], q1[3]);
+				Quaternion r;
+				Slerp(r, a, b, t);
+				// Normalize the quaternion to frame 0: offset = frame0^-1 * current.
+				// At frame 0 the bone sits at its bind pose; only the animation's
+				// relative motion is applied (robust to files whose absolute values
+				// don't match the bind pose).
+				const float *qb = &ch.quatFrames[0];
+				float qbInv[4] = { -qb[0], -qb[1], -qb[2], qb[3] };
+				float curQ[4] = { r.X, r.Y, r.Z, r.W };
+				float outQ[4];
+				QuatMultiply(outQ, qbInv, curQ);
+				m_renderObj->SetBoneAnimQuat(ch.pivot, outQ);
+			}
+		}
+
+		// --- translation channel (X/Y/ZTranslation, 3 floats per frame) ---
+		if (!ch.transFrames.empty()) {
+			int tstride = 3;
+			int tnFrames = (int)ch.transFrames.size() / tstride;
+			if (tnFrames >= 1) {
+				// Frame-0 value is the base: we apply the animation as a DELTA from
+				// its own frame 0, added to the skeleton's bind local translation.
+				// This keeps the bone at its bind position at frame 0 (a file whose
+				// absolute values don't match the bind pose can't throw the bone to
+				// a wrong spot) while preserving the animation's actual motion.
+				const float *tb0 = &ch.transFrames[0];
+				int tf0 = f0 % tnFrames;
+				int tf1 = (tf0 + 1) % tnFrames;
+				if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) tf1 = tf0;
+				if (m_animMode == W3X_ANIM_ONCE_BACKWARDS && f0 <= 0) tf1 = tf0;
+				const float *t0 = &ch.transFrames[tf0 * tstride];
+				const float *t1 = &ch.transFrames[tf1 * tstride];
+				float outT[3];
+				outT[0] = (t0[0] + (t1[0] - t0[0]) * t) - tb0[0];
+				outT[1] = (t0[1] + (t1[1] - t0[1]) * t) - tb0[1];
+				outT[2] = (t0[2] + (t1[2] - t0[2]) * t) - tb0[2];
+				m_renderObj->SetBoneAnimTrans(ch.pivot, outT);
+			}
+		}
 	}
 }
 

@@ -842,6 +842,8 @@ bool W3XLoader::ParseAnimation(const char *filename, W3XAnimation &anim)
 					ParseAnimationChannel(inner, anim, true);
 				else if (strcmp(inner.name(), "ChannelTranslation") == 0)
 					ParseAnimationChannel(inner, anim, false);
+				else if (strcmp(inner.name(), "ChannelScalar") == 0)
+					ParseAnimationScalar(inner, anim);
 			}
 			continue;
 		}
@@ -849,6 +851,8 @@ bool W3XLoader::ParseAnimation(const char *filename, W3XAnimation &anim)
 			ParseAnimationChannel(chan, anim, true);
 		else if (strcmp(chan.name(), "ChannelTranslation") == 0)
 			ParseAnimationChannel(chan, anim, false);
+		else if (strcmp(chan.name(), "ChannelScalar") == 0)
+			ParseAnimationScalar(chan, anim);
 	}
 
 	DEBUG_LOG(("[W3X_P2] ParseAnimation: '%s' hierarchy='%s' frames=%d channels=%d\n",
@@ -880,6 +884,48 @@ void W3XLoader::ParseAnimationChannel(pugi::xml_node &node, W3XAnimation &anim, 
 	}
 	if (ch.quatFrames.empty() && ch.transFrames.empty()) return;
 	anim.channels.push_back(ch);
+}
+
+// Parse a <ChannelScalar Pivot="N" Type="XTranslation|YTranslation|ZTranslation">
+// element: each Frame is a single float for that axis. Merge the three axes of
+// the same pivot into one channel's transFrames (3 floats per frame). This is
+// the form the RA3 XML actually uses for bone translations; the old loader only
+// read ChannelTranslation elements and silently dropped every translation.
+void W3XLoader::ParseAnimationScalar(pugi::xml_node &node, W3XAnimation &anim)
+{
+	int pivot = node.attribute("Pivot").as_int(-1);
+	if (pivot < 0) return;
+
+	const char *type = node.attribute("Type").as_string("");
+	int axis = -1;
+	if (strcmp(type, "XTranslation") == 0) axis = 0;
+	else if (strcmp(type, "YTranslation") == 0) axis = 1;
+	else if (strcmp(type, "ZTranslation") == 0) axis = 2;
+	else return;	// not a translation channel (e.g. Visibility / rotation)
+
+	// Collect the per-frame scalar values for this axis.
+	std::vector<float> vals;
+	for (pugi::xml_node f = node.child("Frame"); f; f = f.next_sibling("Frame"))
+		vals.push_back(f.text().as_float());
+	if (vals.empty()) return;
+
+	// Find (or create) the channel for this pivot.
+	W3XAnimChannel *ch = NULL;
+	for (size_t i = 0; i < anim.channels.size(); i++) {
+		if (anim.channels[i].pivot == pivot) { ch = &anim.channels[i]; break; }
+	}
+	if (!ch) {
+		W3XAnimChannel nc;
+		nc.pivot = pivot;
+		anim.channels.push_back(nc);
+		ch = &anim.channels.back();
+	}
+
+	// Ensure transFrames is 3 floats per frame, then fill this axis.
+	size_t need = vals.size() * 3;
+	if (ch->transFrames.size() < need) ch->transFrames.resize(need, 0.0f);
+	for (size_t j = 0; j < vals.size(); j++)
+		ch->transFrames[j * 3 + axis] = vals[j];
 }
 
 
