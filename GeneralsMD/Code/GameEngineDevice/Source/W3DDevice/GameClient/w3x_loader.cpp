@@ -212,12 +212,18 @@ bool W3XLoader::ReadMeshData(const char *filename, W3XMeshData &data)
 		}
 	}
 
-	// Parse geometry sections
+	// Parse geometry sections. RA3 infantry meshes carry a SECOND per-vertex
+	// Position[1]/Normal[1]/BoneInfluences set (soft binding) as the next
+	// sibling <Vertices>/<Normals>/<BoneInfluences> block.
 	if (meshNode.child("Vertices")) {
-		if (!ParseVertices(meshNode.child("Vertices"), data)) return false;
+		if (!ParseVertices(meshNode.child("Vertices"), data, false)) return false;
+		pugi::xml_node v1 = meshNode.child("Vertices").next_sibling("Vertices");
+		if (v1) ParseVertices(v1, data, true);
 	}
 	if (meshNode.child("Normals")) {
-		if (!ParseNormals(meshNode.child("Normals"), data)) return false;
+		if (!ParseNormals(meshNode.child("Normals"), data, false)) return false;
+		pugi::xml_node n1 = meshNode.child("Normals").next_sibling("Normals");
+		if (n1) ParseNormals(n1, data, true);
 	}
 	if (meshNode.child("Tangents")) {
 		if (!ParseTangents(meshNode.child("Tangents"), data)) return false;
@@ -232,7 +238,19 @@ bool W3XLoader::ReadMeshData(const char *filename, W3XMeshData &data)
 		if (!ParseTriangles(meshNode.child("Triangles"), data)) return false;
 	}
 	if (meshNode.child("BoneInfluences")) {
-		if (!ParseBoneInfluences(meshNode.child("BoneInfluences"), data)) return false;
+		if (!ParseBoneInfluences(meshNode.child("BoneInfluences"), data, false)) return false;
+		pugi::xml_node i1 = meshNode.child("BoneInfluences").next_sibling("BoneInfluences");
+		if (i1) ParseBoneInfluences(i1, data, true);
+	}
+
+	// Soft binding: a second bone-influence block means RA3 infantry soft skin.
+	data.hasSoftBinding = !data.boneIndices2.empty();
+	if (data.hasSoftBinding) {
+		int nz = 0;
+		for (size_t wi = 0; wi < data.boneWeights2.size(); wi++)
+			if (data.boneWeights2[wi] > 0.001f) nz++;
+		DEBUG_LOG(("[W3X_P2]   SOFT BINDING mesh '%s': %d verts, %d/%d second weights non-zero\n",
+			meshNode.attribute("id").value(), (int)data.boneIndices.size(), nz, (int)data.boneWeights2.size()));
 	}
 
 	// FXShader
@@ -271,7 +289,7 @@ bool W3XLoader::ReadMeshData(const char *filename, W3XMeshData &data)
 //=============================================================================
 // Parse a <Vertices> section: <V X= Y= Z=/>
 //=============================================================================
-bool W3XLoader::ParseVertices(pugi::xml_node &node, W3XMeshData &data)
+bool W3XLoader::ParseVertices(pugi::xml_node &node, W3XMeshData &data, bool second)
 {
 	int count = 0;
 	for (pugi::xml_node v = node.child("V"); v; v = v.next_sibling("V")) {
@@ -279,7 +297,8 @@ bool W3XLoader::ParseVertices(pugi::xml_node &node, W3XMeshData &data)
 		vert.X = v.attribute("X").as_float();
 		vert.Y = v.attribute("Y").as_float();
 		vert.Z = v.attribute("Z").as_float();
-		data.vertices.push_back(vert);
+		if (second) data.vertices2.push_back(vert);
+		else data.vertices.push_back(vert);
 		count++;
 	}
 	DEBUG_LOG(("[W3X_P2]   Vertices: %d\n", count));
@@ -290,7 +309,7 @@ bool W3XLoader::ParseVertices(pugi::xml_node &node, W3XMeshData &data)
 //=============================================================================
 // Parse a <Normals> section: <N X= Y= Z=/>
 //=============================================================================
-bool W3XLoader::ParseNormals(pugi::xml_node &node, W3XMeshData &data)
+bool W3XLoader::ParseNormals(pugi::xml_node &node, W3XMeshData &data, bool second)
 {
 	int count = 0;
 	for (pugi::xml_node n = node.child("N"); n; n = n.next_sibling("N")) {
@@ -298,7 +317,8 @@ bool W3XLoader::ParseNormals(pugi::xml_node &node, W3XMeshData &data)
 		norm.X = n.attribute("X").as_float();
 		norm.Y = n.attribute("Y").as_float();
 		norm.Z = n.attribute("Z").as_float();
-		data.normals.push_back(norm);
+		if (second) data.normals2.push_back(norm);
+		else data.normals.push_back(norm);
 		count++;
 	}
 	DEBUG_LOG(("[W3X_P2]   Normals: %d\n", count));
@@ -403,14 +423,19 @@ bool W3XLoader::ParseTriangles(pugi::xml_node &node, W3XMeshData &data)
 //=============================================================================
 // Parse a <BoneInfluences> section: <I Bone="index" Weight="float"/>
 //=============================================================================
-bool W3XLoader::ParseBoneInfluences(pugi::xml_node &node, W3XMeshData &data)
+bool W3XLoader::ParseBoneInfluences(pugi::xml_node &node, W3XMeshData &data, bool second)
 {
 	int count = 0;
 	for (pugi::xml_node i = node.child("I"); i; i = i.next_sibling("I")) {
 		int boneIdx = i.attribute("Bone").as_int(0);
 		float weight = i.attribute("Weight").as_float(1.0f);
-		data.boneIndices.push_back((uint16)boneIdx);
-		data.boneWeights.push_back(weight);
+		if (second) {
+			data.boneIndices2.push_back((uint16)boneIdx);
+			data.boneWeights2.push_back(weight);
+		} else {
+			data.boneIndices.push_back((uint16)boneIdx);
+			data.boneWeights.push_back(weight);
+		}
 		count++;
 	}
 	DEBUG_LOG(("[W3X_P2]   BoneInfluences: %d\n", count));

@@ -128,6 +128,21 @@ struct W3XShaderConstant
 // Parsed W3X mesh data container (holds all data from a single .w3x <W3DMesh>)
 struct W3XMeshData
 {
+	// Zero-init all scalar members. Vectors are empty by default and filled by
+	// ReadMeshData; this guards hasSoftBinding (read by the soft-binding render
+	// path in later phases) and the bounds/shadow/technique scalars against
+	// uninitialized reads.
+	W3XMeshData()
+	{
+		castShadow = false;
+		boundSphereRadius = 0.0f;
+		techniqueIndex = 0;
+		hasSoftBinding = false;
+		boundMin[0] = boundMin[1] = boundMin[2] = 0.0f;
+		boundMax[0] = boundMax[1] = boundMax[2] = 0.0f;
+		boundSphereCenter[0] = boundSphereCenter[1] = boundSphereCenter[2] = 0.0f;
+	}
+
 	AsciiString id;
 	AsciiString geometryType;	// "Normal" or "Skin"
 	bool castShadow;
@@ -154,6 +169,15 @@ struct W3XMeshData
 	// Skinning data (per-vertex, one bone index + weight)
 	std::vector<uint16> boneIndices;
 	std::vector<float> boneWeights;
+	// RA3 infantry soft binding: a second per-vertex position/normal and a
+	// second bone influence (Position[1]/Normal[1]/BlendIndices.y/BlendWeights.y).
+	// Each position/normal is RELATIVE to its bound bone. hasSoftBinding is set
+	// when boneIndices2 is non-empty (the mesh is soft-bound infantry).
+	std::vector<Vector3> vertices2;
+	std::vector<Vector3> normals2;
+	std::vector<uint16> boneIndices2;
+	std::vector<float> boneWeights2;
+	bool hasSoftBinding;
 
 
 
@@ -215,13 +239,13 @@ private:
 	// Internal: parse XML attributes into our data structures.
 	// 'second' selects the soft-binding Position[1]/Normal[1]/Bone[1] array
 	// (RA3 infantry meshes carry TWO per-vertex position/normal/influence sets).
-	static bool ParseVertices(pugi::xml_node &node, W3XMeshData &data);
-	static bool ParseNormals(pugi::xml_node &node, W3XMeshData &data);
+	static bool ParseVertices(pugi::xml_node &node, W3XMeshData &data, bool second = false);
+	static bool ParseNormals(pugi::xml_node &node, W3XMeshData &data, bool second = false);
 	static bool ParseTangents(pugi::xml_node &node, W3XMeshData &data);
 	static bool ParseBinormals(pugi::xml_node &node, W3XMeshData &data);
 	static bool ParseTexcoords(pugi::xml_node &node, W3XMeshData &data);
 	static bool ParseTriangles(pugi::xml_node &node, W3XMeshData &data);
-	static bool ParseBoneInfluences(pugi::xml_node &node, W3XMeshData &data);
+	static bool ParseBoneInfluences(pugi::xml_node &node, W3XMeshData &data, bool second = false);
 	static bool ParseConstants(pugi::xml_node &node, W3XMeshData &data);
 
 	// Internal: compute tangent/binormal when the .w3x file provides none

@@ -555,9 +555,26 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 			// build rejects with X3116).
 			// (w3x_rastest.fx was the TEMP isolation test that proved the skinned
 			// VS + geometry + bones work — red model appeared, turret correct.)
-			outData.fxShaderName = "Shaders\\RA3\\w3x_soviet.fx";
-			//outData.fxShaderName = "Shaders\\RA3\\";
-			//outData.fxShaderName.concat(meshData.fxShaderName);
+			//
+			// BASIC-convention meshes (single "Texture_0" + texture-ALPHA faction
+			// mask, e.g. the infantry.fx soldiers) have no DiffuseTexture/NormalMap/
+			// SpecMap constants. Binding them into the IS_OBJECT PBR path finds no
+			// "Texture_0" parameter, so the DiffuseTexture sampler keeps the
+			// previous model's texture (soldier wearing humvee camo). Route them to
+			// the dedicated w3x_infantry.fx (real RA3 unified soldier VS from
+			// head1-newvs.FXH + a BASIC pixel shader that reads the faction mask
+			// from the texture alpha). PBR-convention meshes (vehicles) keep the
+			// full PBR shader.
+			bool isBasicConvention = false;
+			for (size_t ci = 0; ci < meshData.constants.size() && !isBasicConvention; ci++) {
+				if (meshData.constants[ci].type == W3X_CONSTANT_TEXTURE
+					&& strcmp(meshData.constants[ci].name.str(), "Texture_0") == 0) {
+					isBasicConvention = true;
+				}
+			}
+			outData.fxShaderName = isBasicConvention
+				? "Shaders\\RA3\\w3x_infantry.fx"
+				: "Shaders\\RA3\\w3x_soviet.fx";
 			outData.techniqueIndex = meshData.techniqueIndex;
 			outData.constants = meshData.constants;
 		}
@@ -1049,6 +1066,17 @@ void W3XModelDraw::updateAnimation()
 	} else {
 		while (m_animFrame >= (float)totalFrames) m_animFrame -= (float)totalFrames;
 		if (m_animFrame < 0) m_animFrame = 0.0f;
+	}
+
+	// DIAG: every ~32 logic frames, report the animation frame and bone 1's
+	// world translation to verify the animation actually advances and drives
+	// the skeleton (frame stuck at 0 -> advance bug; frame moves but translation
+	// constant -> quat/offset not applied; both change -> animation is live).
+	if ((frame & 0x1F) == 0 && m_renderObj && totalFrames > 0) {
+		Matrix3D bt = m_renderObj->Get_Bone_Transform(1);
+		Vector3 tp = bt.Get_Translation();
+		DEBUG_LOG(("[W3X_P5] anim '%s' frame=%.0f/%d bone1T=(%.2f,%.2f,%.2f)\n",
+			m_curAnimName.str(), m_animFrame, totalFrames, tp.X, tp.Y, tp.Z));
 	}
 
 	int f0 = (int)m_animFrame;
