@@ -102,17 +102,25 @@ public:
 	// composed into the object-local WorldBones during Render. Mirrors
 	// RenderObjClass::Control_Bone so W3D turret logic can drive a W3X model.
 	virtual void Capture_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) m_boneCtrlActive[bindex] = true; }
-	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) { m_boneCtrlActive[bindex] = false; m_boneAnimTransActive[bindex] = false; } }
+	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) { m_boneCtrlActive[bindex] = false; m_boneAnimQuatActive[bindex] = false; m_boneAnimTransActive[bindex] = false; } }
+	// Clear only the animation-driven overrides (quat + trans) for all bones,
+	// leaving turret Control_Bone rotations intact. Called at the start of each
+	// animation update so a bone outside the current animation's channel set
+	// returns to its bind pose without disturbing a game-logic controlled turret.
+	void ResetAnimationBones(void);
 	virtual bool Is_Bone_Captured(int bindex) const { return (bindex >= 0 && bindex < kMaxBones) ? m_boneCtrlActive[bindex] : false; }
 	virtual void Control_Bone(int bindex, const Matrix3D &objtm, bool world_space_translation = false);
-	// Animation override: set a bone's LOCAL offset rotation (relative to the
-	// bind local rotation). The animation quaternion is normalized so frame 0 =
-	// identity (bone at bind). composeControlledBones computes the bone's local
-	// quat as offsetQuat * bindLocalQuat, then accumulates the parent chain.
+	// Animation override: set a bone's LOCAL rotation from the animation channel.
+	// The quaternion is the RAW channel value (NOT frame-0-normalized): the
+	// authoritative SAGE composition is bone = channel × bind, so the channel is
+	// the animated local transform and the bind local rotation is composed under
+	// it (composeControlledBones: localQuat = animQuat * bindLocalQuat).
 	void SetBoneAnimQuat(int bindex, const float q[4]);
-	// Animation override: set a bone's LOCAL offset translation (the animation's
-	// X/Y/ZTranslation channel minus its frame-0 value, so frame 0 = zero).
-	// composeControlledBones composes it with the bind local translation.
+	// Animation override: set a bone's LOCAL translation from the animation
+	// channel (the RAW X/Y/ZTranslation value, NOT frame-0-normalized).
+	// composeControlledBones composes it as localTrans = R(animQuat) * bindTrans
+	// + animTrans (the bind translation rotated by the anim quat, plus the
+	// channel translation) — the channel × bind expansion.
 	void SetBoneAnimTrans(int bindex, const float t[3]);
 	// Bind-pose LOCAL quaternions + translations (Pivot Rotation/Translation per
 	// bone), index-aligned with m_bones. Used to compose the animation offset on
@@ -181,9 +189,11 @@ private:
 	std::vector<AsciiString> m_boneNames;	// per-bone name (index-aligned with m_bones)
 	std::vector<int> m_boneParents;			// per-bone parent index (-1 = root), for turret->barrel cascade
 	Matrix3D m_boneTransformCache;			// Get_Bone_Transform returns a const ref
-	bool m_boneCtrlActive[kMaxBones];		// per-bone turret-control flag
+	bool m_boneCtrlActive[kMaxBones];		// per-bone turret-control flag (Control_Bone, game-logic driven)
 	float m_boneCtrlQuat[kMaxBones][4];		// per-bone control rotation (quat)
-	float m_boneAnimTrans[kMaxBones][3];	// per-bone animated LOCAL offset translation (frame-0-normalized)
+	float m_boneAnimQuat[kMaxBones][4];		// per-bone animated LOCAL quaternion (RAW channel value)
+	bool m_boneAnimQuatActive[kMaxBones];	// true when the animation overrides the local quaternion
+	float m_boneAnimTrans[kMaxBones][3];	// per-bone animated LOCAL translation (RAW channel value)
 	bool m_boneAnimTransActive[kMaxBones];	// true when the animation overrides the local translation
 	float *m_boneLocalQuat;					// bind-pose LOCAL rotations (boneCount*4), from Pivot Rotation
 	float *m_boneLocalTrans;				// bind-pose LOCAL translations (boneCount*3), from Pivot Translation

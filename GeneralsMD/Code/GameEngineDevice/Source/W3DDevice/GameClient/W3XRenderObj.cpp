@@ -80,6 +80,9 @@ W3XRenderObjClass::W3XRenderObjClass() :
 		m_boneCtrlActive[i] = false;
 		m_boneCtrlQuat[i][0] = m_boneCtrlQuat[i][1] = m_boneCtrlQuat[i][2] = 0.0f;
 		m_boneCtrlQuat[i][3] = 1.0f;
+		m_boneAnimQuatActive[i] = false;
+		m_boneAnimQuat[i][0] = m_boneAnimQuat[i][1] = m_boneAnimQuat[i][2] = 0.0f;
+		m_boneAnimQuat[i][3] = 1.0f;
 		m_boneAnimTransActive[i] = false;
 		m_boneAnimTrans[i][0] = m_boneAnimTrans[i][1] = m_boneAnimTrans[i][2] = 0.0f;
 	}
@@ -198,57 +201,77 @@ int W3XRenderObjClass::Get_Bone_Index(const char *bonename)
 
 void W3XRenderObjClass::composeControlledBones(float *out) const
 {
-	// SAGE composition (matches OpenSAGE ModelBoneInstance / W3D runtime):
-	//   boneLocal  = animationOffset * bindLocal
-	//   world      = parentWorld * boneLocal
+	// AUTHORITATIVE SAGE composition (matches OpenSAGE ModelBoneInstance /
+	// max2w3x export for RA3 W3X):
+	//   export:   channel = animLocal × bind⁻¹            (max2w3x:10173)
+	//   runtime:  boneLocal  = channel × bind              (ModelBoneInstance:34)
+	//             world      = parentWorld × boneLocal     (parent chain)
 	// In quat+offset terms, per bone (parentIndex < bi guaranteed by loadHierarchy):
-	//   localQuat  = offsetQuat * bindLocalQuat
-	//   localTrans = offsetTrans + R(offsetQuat) * bindLocalTrans
+	//   localQuat  = animQuat * bindLocalQuat
+	//   localTrans = R(animQuat) * bindLocalTrans + animTrans
 	//   worldQuat  = parentWorldQuat * localQuat
 	//   worldOffset= parentWorldOffset + R(parentWorldQuat) * localTrans
-	// The animation offset is normalized so frame 0 = identity, so an unanimated
-	// bone stays at its bind pose and the parent chain runs parent-first.
+	// The animation channel is applied RAW (NO frame-0 normalization): a constant
+	// channel reproduces the exported animated pose exactly. A turret-controlled
+	// bone (Control_Bone) replaces the animation (W3D capture semantics) with the
+	// control rotation on the bind pose, so the tank turret stays game-logic
+	// driven while animated bones (soldier legs/spine/arms) follow the channel.
 	bool hasLocalPose = (m_boneLocalQuat != NULL && m_boneLocalTrans != NULL);
 
 	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
 		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
 
-		// --- local quaternion: offsetQuat * bindLocalQuat ---
 		float lq[4];
-		if (m_boneCtrlActive[bi] && hasLocalPose) {
-			W3XQuatMultiply(lq, m_boneCtrlQuat[bi], &m_boneLocalQuat[bi*4]);
-		} else if (hasLocalPose) {
-			lq[0] = m_boneLocalQuat[bi*4+0];
-			lq[1] = m_boneLocalQuat[bi*4+1];
-			lq[2] = m_boneLocalQuat[bi*4+2];
-			lq[3] = m_boneLocalQuat[bi*4+3];
-		} else {
-			lq[0] = m_bones[bi*8+0];
-			lq[1] = m_bones[bi*8+1];
-			lq[2] = m_bones[bi*8+2];
-			lq[3] = m_bones[bi*8+3];
-		}
-
-		// --- local translation: bindLocalTrans + animation trans offset ---
-		// NOTE: the control/animation rotation is NOT applied to the local
-		// position. Rotating bindLocalTrans by the control quat would move the
-		// bone's pivot with the rotation (turret spins around its own centre
-		// instead of the base). The position stays at the bind spot (rotated only
-		// by the parent chain); the control quat affects orientation only.
 		float lt[3];
-		if (hasLocalPose) {
-			lt[0] = m_boneLocalTrans[bi*3+0];
-			lt[1] = m_boneLocalTrans[bi*3+1];
-			lt[2] = m_boneLocalTrans[bi*3+2];
+		bool controlled = m_boneCtrlActive[bi];
+		bool animated   = m_boneAnimQuatActive[bi] || m_boneAnimTransActive[bi];
+
+		if (controlled) {
+			// W3D capture: the game-logic control rotation replaces the animation
+			// on the bind pose. bindLocalQuat * ctrlQuat (the tank's bind quats are
+			// all identity, so this is just ctrlQuat). Translation stays at the bind
+			// spot (+ any anim trans), matching the pre-split behavior.
+			if (hasLocalPose) {
+				W3XQuatMultiply(lq, &m_boneLocalQuat[bi*4], m_boneCtrlQuat[bi]);
+				lt[0] = m_boneLocalTrans[bi*3+0];
+				lt[1] = m_boneLocalTrans[bi*3+1];
+				lt[2] = m_boneLocalTrans[bi*3+2];
+				if (m_boneAnimTransActive[bi]) {
+					lt[0] += m_boneAnimTrans[bi][0];
+					lt[1] += m_boneAnimTrans[bi][1];
+					lt[2] += m_boneAnimTrans[bi][2];
+				}
+			} else {
+				lq[0] = m_bones[bi*8+0]; lq[1] = m_bones[bi*8+1]; lq[2] = m_bones[bi*8+2]; lq[3] = m_bones[bi*8+3];
+				lt[0] = m_bones[bi*8+4]; lt[1] = m_bones[bi*8+5]; lt[2] = m_bones[bi*8+6];
+			}
+		} else if (animated && hasLocalPose) {
+			// AUTHORITATIVE: boneLocal = channel × bind.
+			//   localQuat  = animQuat * bindLocalQuat
+			//   localTrans = R(animQuat) * bindLocalTrans + animTrans
+			float aq[4];
+			if (m_boneAnimQuatActive[bi]) {
+				aq[0] = m_boneAnimQuat[bi][0]; aq[1] = m_boneAnimQuat[bi][1];
+				aq[2] = m_boneAnimQuat[bi][2]; aq[3] = m_boneAnimQuat[bi][3];
+			} else {
+				aq[0] = 0.0f; aq[1] = 0.0f; aq[2] = 0.0f; aq[3] = 1.0f;	// identity
+			}
+			W3XQuatMultiply(lq, aq, &m_boneLocalQuat[bi*4]);
+			W3XQuatRotateVector(lt, aq, &m_boneLocalTrans[bi*3]);
 			if (m_boneAnimTransActive[bi]) {
 				lt[0] += m_boneAnimTrans[bi][0];
 				lt[1] += m_boneAnimTrans[bi][1];
 				lt[2] += m_boneAnimTrans[bi][2];
 			}
+		} else if (hasLocalPose) {
+			// Bind pose (no animation, no control).
+			lq[0] = m_boneLocalQuat[bi*4+0]; lq[1] = m_boneLocalQuat[bi*4+1];
+			lq[2] = m_boneLocalQuat[bi*4+2]; lq[3] = m_boneLocalQuat[bi*4+3];
+			lt[0] = m_boneLocalTrans[bi*3+0]; lt[1] = m_boneLocalTrans[bi*3+1];
+			lt[2] = m_boneLocalTrans[bi*3+2];
 		} else {
-			lt[0] = m_bones[bi*8+4];
-			lt[1] = m_bones[bi*8+5];
-			lt[2] = m_bones[bi*8+6];
+			lq[0] = m_bones[bi*8+0]; lq[1] = m_bones[bi*8+1]; lq[2] = m_bones[bi*8+2]; lq[3] = m_bones[bi*8+3];
+			lt[0] = m_bones[bi*8+4]; lt[1] = m_bones[bi*8+5]; lt[2] = m_bones[bi*8+6];
 		}
 
 		// --- world = parentWorld * local ---
@@ -351,11 +374,14 @@ void W3XRenderObjClass::Control_Bone(int bindex, const Matrix3D &objtm, bool /*w
 void W3XRenderObjClass::SetBoneAnimQuat(int bindex, const float q[4])
 {
 	if (bindex < 0 || bindex >= kMaxBones) return;
-	m_boneCtrlQuat[bindex][0] = q[0];
-	m_boneCtrlQuat[bindex][1] = q[1];
-	m_boneCtrlQuat[bindex][2] = q[2];
-	m_boneCtrlQuat[bindex][3] = q[3];
-	m_boneCtrlActive[bindex] = true;
+	// Animation channel quat goes to its OWN slot (m_boneAnimQuat), separate
+	// from the game-logic turret control (m_boneCtrlQuat via Control_Bone) so an
+	// animated bone and a turret-controlled bone never overwrite each other.
+	m_boneAnimQuat[bindex][0] = q[0];
+	m_boneAnimQuat[bindex][1] = q[1];
+	m_boneAnimQuat[bindex][2] = q[2];
+	m_boneAnimQuat[bindex][3] = q[3];
+	m_boneAnimQuatActive[bindex] = true;
 }
 
 void W3XRenderObjClass::SetBoneAnimTrans(int bindex, const float t[3])
@@ -365,6 +391,17 @@ void W3XRenderObjClass::SetBoneAnimTrans(int bindex, const float t[3])
 	m_boneAnimTrans[bindex][1] = t[1];
 	m_boneAnimTrans[bindex][2] = t[2];
 	m_boneAnimTransActive[bindex] = true;
+}
+
+void W3XRenderObjClass::ResetAnimationBones(void)
+{
+	// Clear only the animation overrides; turret Control_Bone (m_boneCtrlActive)
+	// is intentionally left alone so handleClientTurretPositioning's rotation
+	// survives an animation update.
+	for (int i = 0; i < kMaxBones; i++) {
+		m_boneAnimQuatActive[i] = false;
+		m_boneAnimTransActive[i] = false;
+	}
 }
 
 void W3XRenderObjClass::SetBoneLocalPose(const float *localQuat, const float *localTrans, int boneCount)
@@ -915,8 +952,12 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				BindW3XMatrices(drawEffect, world, vp, wvp, shadowW2S, m_recolorHex);
 				// This sub-mesh's shader constants (textures etc.)
 				BindW3XConstants(drawEffect, sm.constants);
-				// WorldBones + NumJointsPerVertex for this effect (skinned mesh)
-				BindW3XBones(drawEffect, m_bones, m_boneCount, m_worldTransform);
+				// WorldBones + NumJointsPerVertex for this effect (skinned mesh).
+				// Use the COMPOSED bones (srcBones = the turret-control + animation
+				// composed array, or the base bind when nothing is active) so an
+				// animated sub-mesh with an override shader (e.g. a tread) doesn't
+				// skin at the stale bind pose.
+				BindW3XBones(drawEffect, (float*)srcBones, m_boneCount, m_worldTransform);
 				// Bind the auxiliary samplers for this effect too (Shroud/Cloud ->
 				// shared white fallback). The RA3 ShadowMap sampler is NOT bound:
 				// the W3X casts a volumetric soft shadow, not a deferred shadow-map.

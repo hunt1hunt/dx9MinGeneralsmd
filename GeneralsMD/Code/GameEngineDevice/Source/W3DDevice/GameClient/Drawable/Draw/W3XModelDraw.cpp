@@ -969,6 +969,31 @@ void W3XModelDraw::validateBarrelInfo(const W3XConditionInfo *state) const
 	}
 }
 
+const W3XWeaponBarrelInfoVec &W3XModelDraw::resolveBarrelVec(WeaponSlotType wslot, const W3XConditionInfo *primary) const
+{
+	// The weapon-fire query runs in the current state (FIRING_A / BETWEEN_FIRING
+	// _SHOTS_A), but units declare WeaponFireFXBone/WeaponMuzzleFlash/WeaponLaunchBone
+	// only in the NONE state. If the primary state has no fire bones for this slot,
+	// fall back to the first state that declares them (preferring NONE) so the
+	// projectile launches from the muzzle instead of the unit origin (feet).
+	static W3XWeaponBarrelInfoVec s_emptyVec;	// never populated, returned when none declare bones
+	if (primary) {
+		validateBarrelInfo(primary);
+		if (!primary->m_weaponBarrelInfoVec[wslot].empty())
+			return primary->m_weaponBarrelInfoVec[wslot];
+	}
+	const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
+	if (md) {
+		for (size_t si = 0; si < md->m_conditionStates.size(); si++) {
+			const W3XConditionInfo &st = md->m_conditionStates[si];
+			validateBarrelInfo(&st);
+			if (!st.m_weaponBarrelInfoVec[wslot].empty())
+				return st.m_weaponBarrelInfoVec[wslot];
+		}
+	}
+	return s_emptyVec;
+}
+
 //-----------------------------------------------------------------------------
 // Turret / animation (RA3 skeletal)
 //-----------------------------------------------------------------------------
@@ -1034,6 +1059,18 @@ bool W3XModelDraw::loadAnimation(const char *animName)
 	m_animValid = true;
 	DEBUG_LOG(("[W3X_P5] loadAnimation: '%s' frames=%d channels=%d\n",
 		anim.name.str(), anim.numFrames, (int)anim.channels.size()));
+
+	// ONE-SHOT per animation: dump the skeleton bone-name -> index map so the
+	// [W3X_ANIM] foot/hip/muzzle probe positions can be mapped to real bones
+	// (EUTEIROCKETS: 2=hips 16=leftfoot 19=rightfoot 21=fx_laser).
+	static AsciiString s_lastBoneDumpAnim;
+	if (m_renderObj && s_lastBoneDumpAnim.compareNoCase(animName) != 0) {
+		s_lastBoneDumpAnim = animName;
+		for (int bi = 0; bi < m_renderObj->GetBoneCount(); bi++) {
+			const char *bn = m_renderObj->Get_Bone_Name(bi);
+			DEBUG_LOG(("[W3X_ANIM]   bone[%d]=%s\n", bi, bn ? bn : "?"));
+		}
+	}
 	return true;
 }
 
@@ -1068,19 +1105,47 @@ void W3XModelDraw::updateAnimation()
 		if (m_animFrame < 0) m_animFrame = 0.0f;
 	}
 
-	// DIAG: every ~32 logic frames, report the animation frame and bone 1's
-	// world translation to verify the animation actually advances and drives
-	// the skeleton (frame stuck at 0 -> advance bug; frame moves but translation
-	// constant -> quat/offset not applied; both change -> animation is live).
+	// =====================================================================
+	// AUTHORITATIVE-POSE DIAGNOSTIC (every ~32 frames): report the composed
+	// MODEL-space positions of the feet / hips / weapon muzzle so the two
+	// interpretation models can be judged against the real skeleton. For the
+	// EU AntiVehicleInfantry (EUTEIROCKETS + AUAntiVehicleInfantry_SBIDA) the
+	// bind pose stands (feet Z~1.4, hips Z~10.6); the SBIDA channel is constant
+	// and its RAW application folds the right leg up (rightfoot Z~9.8) while
+	// frame-0 normalization keeps it planted at Z~1.4. This probe shows which
+	// one the running build produces (bind + raw-fold reference in the print).
+	// =====================================================================
 	if ((frame & 0x1F) == 0 && m_renderObj && totalFrames > 0) {
-		Matrix3D bt = m_renderObj->Get_Bone_Transform(1);
-		Vector3 tp = bt.Get_Translation();
-		DEBUG_LOG(("[W3X_P5] anim '%s' frame=%.0f/%d bone1T=(%.2f,%.2f,%.2f)\n",
-			m_curAnimName.str(), m_animFrame, totalFrames, tp.X, tp.Y, tp.Z));
+		const char *probeNames[4] = { "leftfoot", "rightfoot", "hips", "fx_laser" };
+		float px[4][3] = { {0,0,0}, {0,0,0}, {0,0,0}, {0,0,0} };
+		bool found[4] = { false, false, false, false };
+		for (int k = 0; k < 4; k++) {
+			int bi = getBoneIndexByName(AsciiString(probeNames[k]));
+			if (bi >= 0) {
+				Matrix3D bt = m_renderObj->Get_Bone_Transform_Model(bi);
+				Vector3 p = bt.Get_Translation();
+				px[k][0] = p.X; px[k][1] = p.Y; px[k][2] = p.Z;
+				found[k] = true;
+			}
+		}
+		DEBUG_LOG(("[W3X_ANIM] anim='%s' frame=%.0f/%d | "
+			"footL%s=(%.2f,%.2f,%.2f) footR%s=(%.2f,%.2f,%.2f) "
+			"hips%s=(%.2f,%.2f,%.2f) muzzle%s=(%.2f,%.2f,%.2f) | "
+			"ref: bind feetZ~1.4 planted / raw-fold rightfootZ~9.8\n",
+			m_curAnimName.str(), m_animFrame, totalFrames,
+			found[0] ? "" : "?", px[0][0], px[0][1], px[0][2],
+			found[1] ? "" : "?", px[1][0], px[1][1], px[1][2],
+			found[2] ? "" : "?", px[2][0], px[2][1], px[2][2],
+			found[3] ? "" : "?", px[3][0], px[3][1], px[3][2]));
 	}
 
 	int f0 = (int)m_animFrame;
 	float t = m_animFrame - (float)f0;
+
+	// Clear the previous frame's animation overrides so a bone outside the
+	// current animation's channel set returns to its bind pose (leaves turret
+	// Control_Bone untouched). updateAnimation re-applies every channel below.
+	m_renderObj->ResetAnimationBones();
 
 	for (size_t ci = 0; ci < m_curAnim.channels.size(); ci++) {
 		const W3XAnimChannel &ch = m_curAnim.channels[ci];
@@ -1103,9 +1168,14 @@ void W3XModelDraw::updateAnimation()
 				Quaternion r;
 				Slerp(r, a, b, t);
 				// RA3 channel quats are the bone's LOCAL rotation relative to its
-				// parent (confirmed: "每个骨骼的动画都相对于父级骨骼"); apply the raw
-				// interpolated value. composeControlledBones combines it with the
-				// bind rotation (animQuat * bindQuat) and recurses the parent chain.
+				// parent (exported as animLocal × bind⁻¹, max2w3x:10173). The
+				// AUTHORITATIVE SAGE composition applies the RAW channel value
+				// (boneLocal = channel × bind, ModelBoneInstance) — it is NOT
+				// frame-0-normalized. A constant ~96° leg channel (SBIDA idle)
+				// therefore reproduces the exported pose exactly (folded if the
+				// data is folded); the [W3X_ANIM] footZ probe above tells us
+				// which. composeControlledBones computes localQuat = animQuat *
+				// bindLocalQuat from this raw value.
 				float curQ[4] = { r.X, r.Y, r.Z, r.W };
 				m_renderObj->SetBoneAnimQuat(ch.pivot, curQ);
 			}
@@ -1118,10 +1188,11 @@ void W3XModelDraw::updateAnimation()
 			if (tnFrames >= 1) {
 				// RA3 channel translations are the bone's LOCAL position relative to
 				// its parent (confirmed: "每个骨骼的动画都相对于父级骨骼"). Apply the raw
-				// interpolated value; composeControlledBones adds it to the bind local
-				// translation (bind + animTrans) and recurses the parent chain. No
-				// frame-0 normalization — that zeroed constant weapon channels and kept
-				// weapons at their (off-the-hand) bind position.
+				// interpolated value; composeControlledBones composes it as
+				// localTrans = R(animQuat) * bindTrans + animTrans (the channel × bind
+				// expansion) and recurses the parent chain. No frame-0 normalization —
+				// that zeroed constant weapon channels and kept weapons at their
+				// (off-the-hand) bind position.
 				int tf0 = f0 % tnFrames;
 				int tf1 = (tf0 + 1) % tnFrames;
 				if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) tf1 = tf0;
@@ -1254,9 +1325,14 @@ Bool W3XModelDraw::getProjectileLaunchOffset(
 	// fall back to the unit-center matrix when no launch bone is defined.
 	const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
 	const W3XConditionInfo *state = md ? md->findBestConditionState(condition) : NULL;
-	if (!state) return false;
+	if (!state) {
+		DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset NO STATE wslot=%d -> false (unit-center)\n", wslot));
+		return false;
+	}
 	validateBarrelInfo(state);
-	const W3XWeaponBarrelInfoVec &vec = state->m_weaponBarrelInfoVec[wslot];
+	const W3XWeaponBarrelInfoVec &vec = resolveBarrelVec(wslot, state);
+	DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset ENTRY anim='%s' wslot=%d barrels=%d\n",
+		state->m_animationName.str(), wslot, (int)vec.size()));
 	if (launchPos) {
 		if (!vec.empty()) {
 			int bi = (specificBarrelToUse < 0 || specificBarrelToUse >= (Int)vec.size()) ? 0 : specificBarrelToUse;
@@ -1268,11 +1344,18 @@ Bool W3XModelDraw::getProjectileLaunchOffset(
 			// weapon bone).
 			int lb = vec[bi].m_launchBone;
 			if (lb < 0) lb = vec[bi].m_fxBone;
-			if (lb >= 0 && m_renderObj)
+			if (lb >= 0 && m_renderObj) {
 				*launchPos = m_renderObj->Get_Bone_Transform_Model(lb);
-			else
+				Vector3 lt = launchPos->Get_Translation();
+				DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset launchBone=%d model=(%.2f,%.2f,%.2f)\n",
+					lb, lt.X, lt.Y, lt.Z));
+			} else {
+				DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset NO launch bone (lb=%d), identity\n", lb));
 				launchPos->Make_Identity();	// no launch bone -> unit center
+			}
 		} else {
+			DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset anim='%s' wslot=%d BARRELS EMPTY -> identity (fire bones not in this state?)\n",
+				state->m_animationName.str(), wslot));
 			launchPos->Make_Identity();
 		}
 	}
@@ -1285,10 +1368,16 @@ Bool W3XModelDraw::handleWeaponFireFX(
 	WeaponSlotType wslot, Int specificBarrelToUse, const FXList *fxl,
 	Real weaponSpeed, const Coord3D *victimPos, Real damageRadius)
 {
+	DEBUG_LOG(("[W3X_FIRE] handleWeaponFireFX ENTRY wslot=%d curState=%s\n",
+		wslot, m_curState ? m_curState->m_animationName.str() : "(none)"));
 	if (!m_curState || !m_renderObj) return false;
 	validateBarrelInfo(m_curState);
-	W3XWeaponBarrelInfoVec &vec = m_curState->m_weaponBarrelInfoVec[wslot];
-	if (vec.empty()) return false;
+	const W3XWeaponBarrelInfoVec &vec = resolveBarrelVec(wslot, m_curState);
+	if (vec.empty()) {
+		DEBUG_LOG(("[W3X_FIRE] handleWeaponFireFX curState='%s' BARRELS EMPTY -> false\n",
+			m_curState->m_animationName.str()));
+		return false;
+	}
 	int bi = (specificBarrelToUse < 0 || specificBarrelToUse >= (Int)vec.size()) ? 0 : specificBarrelToUse;
 	const W3XWeaponBarrelInfo &info = vec[bi];
 	if (fxl && info.m_fxBone >= 0) {
@@ -1298,6 +1387,8 @@ Bool W3XModelDraw::handleWeaponFireFX(
 			pos.x = mtx.Get_X_Translation();
 			pos.y = mtx.Get_Y_Translation();
 			pos.z = mtx.Get_Z_Translation();
+			DEBUG_LOG(("[W3X_FIRE] handleWeaponFireFX bone=%d '%s' world=(%.2f,%.2f,%.2f)\n",
+				info.m_fxBone, vec[bi].m_fxBone >= 0 ? "fx" : "-", pos.x, pos.y, pos.z));
 			FXList::doFXPos(fxl, &pos, &mtx, weaponSpeed, victimPos, damageRadius);
 			return true;
 		}
@@ -1309,7 +1400,7 @@ Int W3XModelDraw::getBarrelCount(WeaponSlotType wslot) const
 {
 	if (!m_curState) return 0;
 	validateBarrelInfo(m_curState);
-	return (Int)m_curState->m_weaponBarrelInfoVec[wslot].size();
+	return (Int)resolveBarrelVec(wslot, m_curState).size();
 }
 
 void W3XModelDraw::setHidden(Bool h)

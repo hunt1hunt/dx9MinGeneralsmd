@@ -191,6 +191,11 @@ private:
 	int getBoneIndexByName(const AsciiString &boneName) const;
 	// Populate this state's weapon barrel info vectors from its ini bone names.
 	void validateBarrelInfo(const W3XConditionInfo *state) const;
+	// Resolve the weapon barrel vec for a slot. Uses the given state first; if it
+	// has no fire bones for that slot (units declare WeaponLaunchBone only in the
+	// NONE state but the fire runs in FIRING_A), falls back to the first state
+	// that declares them (preferring NONE). Returns an empty vec if none do.
+	const W3XWeaponBarrelInfoVec &resolveBarrelVec(WeaponSlotType wslot, const W3XConditionInfo *primary) const;
 
 private:
 	struct SubMeshBuffer
