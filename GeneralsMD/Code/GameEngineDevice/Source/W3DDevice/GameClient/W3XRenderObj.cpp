@@ -344,6 +344,103 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model(int boneindex) const
 	return result;
 }
 
+Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *anim, int boneindex, float frame) const
+{
+	// Model-space bone transform in the pose of the given animation at 'frame',
+	// WITHOUT mutating the live animation state. The weapon launch offset must come
+	// from the firing state's pose (forward muzzle), but the fire FX / launch query
+	// runs while the render is still in the previous (e.g. idle) state — the live
+	// bone state has the muzzle on the right side. Evaluating the firing animation
+	// directly gives the forward muzzle position regardless of the render timing.
+	Matrix3D result;
+	result.Make_Identity();
+	if (!anim || boneindex < 0 || boneindex >= m_boneCount || !m_boneLocalQuat || !m_boneLocalTrans)
+		return result;
+
+	int nf = (anim->numFrames > 1) ? anim->numFrames : 1;
+	int f0 = ((int)frame % nf + nf) % nf;
+	int f1 = (f0 + 1) % nf;
+	float t = frame - (float)(int)frame;
+	if (t < 0.0f) t = 0.0f;
+
+	// Build per-bone animated LOCAL overrides from the animation's channels at 'frame'.
+	float aq[kMaxBones][4];  bool qa[kMaxBones];
+	float at[kMaxBones][3];  bool ta[kMaxBones];
+	for (int i = 0; i < kMaxBones; i++) {
+		aq[i][0] = aq[i][1] = aq[i][2] = 0.0f; aq[i][3] = 1.0f; qa[i] = false;
+		at[i][0] = at[i][1] = at[i][2] = 0.0f; ta[i] = false;
+	}
+	for (size_t ci = 0; ci < anim->channels.size(); ci++) {
+		const W3XAnimChannel &ch = anim->channels[ci];
+		int p = ch.pivot;
+		if (p < 0 || p >= kMaxBones) continue;
+		if (!ch.quatFrames.empty()) {
+			int n = (int)ch.quatFrames.size() / 4;
+			if (n >= 1) {
+				int a = f0 % n, b = f1 % n;
+				const float *q0 = &ch.quatFrames[a * 4];
+				const float *q1 = &ch.quatFrames[b * 4];
+				Quaternion R;
+				R.X = q0[0] + (q1[0] - q0[0]) * t;
+				R.Y = q0[1] + (q1[1] - q0[1]) * t;
+				R.Z = q0[2] + (q1[2] - q0[2]) * t;
+				R.W = q0[3] + (q1[3] - q0[3]) * t;
+				float len = (float)sqrt(R.X*R.X + R.Y*R.Y + R.Z*R.Z + R.W*R.W);
+				if (len > 0.0f) { R.X/=len; R.Y/=len; R.Z/=len; R.W/=len; }
+				aq[p][0] = R.X; aq[p][1] = R.Y; aq[p][2] = R.Z; aq[p][3] = R.W;
+				qa[p] = true;
+			}
+		}
+		if (!ch.transFrames.empty()) {
+			int n = (int)ch.transFrames.size() / 3;
+			if (n >= 1) {
+				int a = f0 % n, b = f1 % n;
+				const float *t0 = &ch.transFrames[a * 3];
+				const float *t1 = &ch.transFrames[b * 3];
+				at[p][0] = t0[0] + (t1[0] - t0[0]) * t;
+				at[p][1] = t0[1] + (t1[1] - t0[1]) * t;
+				at[p][2] = t0[2] + (t1[2] - t0[2]) * t;
+				ta[p] = true;
+			}
+		}
+	}
+
+	// Compose: local = anim × bind; world = parentWorld × local (parent chain).
+	// Same math as composeControlledBones but with the evaluated anim overrides and
+	// no turret Control_Bone (infantry launch bones are not turret-driven).
+	float comp[kMaxBones * 8];
+	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
+		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
+		float lq[4], lt[3];
+		if (qa[bi] || ta[bi]) {
+			W3XQuatMultiply(lq, aq[bi], &m_boneLocalQuat[bi * 4]);
+			W3XQuatRotateVector(lt, aq[bi], &m_boneLocalTrans[bi * 3]);
+			if (ta[bi]) { lt[0] += at[bi][0]; lt[1] += at[bi][1]; lt[2] += at[bi][2]; }
+		} else {
+			lq[0] = m_boneLocalQuat[bi*4+0]; lq[1] = m_boneLocalQuat[bi*4+1]; lq[2] = m_boneLocalQuat[bi*4+2]; lq[3] = m_boneLocalQuat[bi*4+3];
+			lt[0] = m_boneLocalTrans[bi*3+0]; lt[1] = m_boneLocalTrans[bi*3+1]; lt[2] = m_boneLocalTrans[bi*3+2];
+		}
+		if (pj >= 0 && pj < kMaxBones) {
+			W3XQuatMultiply(&comp[bi*8], &comp[pj*8], lq);
+			float r[3];
+			W3XQuatRotateVector(r, &comp[pj*8], lt);
+			comp[bi*8+4] = comp[pj*8+4] + r[0];
+			comp[bi*8+5] = comp[pj*8+5] + r[1];
+			comp[bi*8+6] = comp[pj*8+6] + r[2];
+		} else {
+			comp[bi*8+0] = lq[0]; comp[bi*8+1] = lq[1]; comp[bi*8+2] = lq[2]; comp[bi*8+3] = lq[3];
+			comp[bi*8+4] = lt[0]; comp[bi*8+5] = lt[1]; comp[bi*8+6] = lt[2];
+		}
+		comp[bi*8+7] = 1.0f;	// alpha
+	}
+	const float *bq = &comp[boneindex * 8 + 0];
+	const float *bo = &comp[boneindex * 8 + 4];
+	Quaternion q(bq[0], bq[1], bq[2], bq[3]);
+	result.Set_Rotation(q);
+	result.Set_Translation(Vector3(bo[0], bo[1], bo[2]));
+	return result;
+}
+
 const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(const char *bonename)
 {
 	int idx = Get_Bone_Index(bonename);

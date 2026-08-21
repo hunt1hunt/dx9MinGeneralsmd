@@ -97,6 +97,12 @@ public:
 	// object's world transform (like W3D's "pristine" bone). Used for launch/muzzle
 	// offsets that the weapon logic combines with the object transform itself.
 	Matrix3D Get_Bone_Transform_Model(int boneindex) const;
+	// Evaluate a bone's MODEL-space transform in the pose of a given W3XAnimation
+	// at a frame (default 0), WITHOUT touching the live animation state. The launch
+	// offset is computed from the firing state's animation so the projectile starts
+	// at the forward muzzle even when the render is still in another (e.g. idle)
+	// state at the instant of fire. Returns identity if anim/bone invalid.
+	Matrix3D Get_Bone_Transform_Model_Anim(const W3XAnimation *anim, int boneindex, float frame = 0.0f) const;
 	// Bone control for turret/barrel (game-logic driven rotation). The given
 	// transform is the bone's LOCAL rotation (e.g. Rotate_Z(turretYaw)); it is
 	// composed into the object-local WorldBones during Render. Mirrors

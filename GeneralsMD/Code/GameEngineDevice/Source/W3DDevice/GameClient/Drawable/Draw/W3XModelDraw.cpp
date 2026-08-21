@@ -1345,10 +1345,38 @@ Bool W3XModelDraw::getProjectileLaunchOffset(
 			int lb = vec[bi].m_launchBone;
 			if (lb < 0) lb = vec[bi].m_fxBone;
 			if (lb >= 0 && m_renderObj) {
-				*launchPos = m_renderObj->Get_Bone_Transform_Model(lb);
+				Matrix3D lm;
+				lm.Make_Identity();
+				// When the render is ALREADY in the resolved state (e.g. a tank
+				// playing its firing animation with the turret aimed), use the LIVE
+				// pose: it carries the current animation + turret Control_Bone so the
+				// muzzle follows the aimed turret.
+				if (m_curState == state) {
+					lm = m_renderObj->Get_Bone_Transform_Model(lb);
+				} else {
+					// Render is still in another (previous) state at the instant of
+					// fire — for the missile soldier the launch query runs while the
+					// render is in the idle state, whose tube is held ACROSS the
+					// chest, so the live muzzle sits on the RIGHT side. Evaluate the
+					// resolved state's animation (SATEA: tube aiming forward, hands
+					// front/back) so the projectile starts at the FORWARD muzzle.
+					if (state && !state->m_animationName.isEmpty()) {
+						char path[512];
+						sprintf(path, W3X_ASSET_DIR "%s.w3x", state->m_animationName.str());
+						W3XAnimation fireAnim;
+						if (W3XLoader::ParseAnimation(path, fireAnim)) {
+							lm = m_renderObj->Get_Bone_Transform_Model_Anim(&fireAnim, lb, 0.0f);
+						} else {
+							lm = m_renderObj->Get_Bone_Transform_Model(lb);
+						}
+					} else {
+						lm = m_renderObj->Get_Bone_Transform_Model(lb);
+					}
+				}
+				*launchPos = lm;
 				Vector3 lt = launchPos->Get_Translation();
-				DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset launchBone=%d model=(%.2f,%.2f,%.2f)\n",
-					lb, lt.X, lt.Y, lt.Z));
+				DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset launchBone=%d model=(%.2f,%.2f,%.2f)%s\n",
+					lb, lt.X, lt.Y, lt.Z, (m_curState == state) ? " [live]" : " [state-anim]"));
 			} else {
 				DEBUG_LOG(("[W3X_FIRE] getProjectileLaunchOffset NO launch bone (lb=%d), identity\n", lb));
 				launchPos->Make_Identity();	// no launch bone -> unit center
