@@ -862,7 +862,11 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 		// offset 0, bone index at float[14], stride 76 bytes (19 floats). The raw
 		// bind-pose position would build the volume in the wrong place for skinned
 		// sub-meshes (turret/barrel) -> no self-shadow, so transform each vertex:
-		// worldPos = rotate(pos, worldBone) + worldBoneOffset.
+		// worldPos = rotate(pos, worldBone) + worldBoneOffset. A soft-bound sub-mesh
+		// uses the 128-byte W3XSoftVertex (dual position0/1 + two bones + blend),
+		// so the volume vertex is the blended skin of both positions.
+		const bool softSb = w3x->GetSubMeshSoftBinding(si);
+		const int stride = softSb ? 128 : 76;
 		Vector3 *verts = NEW Vector3[vcount];
 		{
 			void *ptr = NULL;
@@ -870,14 +874,34 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 			char *base = (char *)ptr;
 			for (int v = 0; v < vcount; v++)
 			{
-				const float *p = (const float *)(base + v * 76);
-				int bi = (int)p[14];	// bone index (float 14 of 19)
-				if (bi < 0 || bi >= wbBoneCount) bi = 0;
-				const float *bk = &wbBones[bi * 8];
-				float wp[3];
-				W3XSh_QuatRotateVector(wp, &bk[0], p);
-				wp[0] += bk[4]; wp[1] += bk[5]; wp[2] += bk[6];
-				verts[v].Set(wp[0], wp[1], wp[2]);
+				const float *p = (const float *)(base + v * stride);
+				if (softSb) {
+					// W3XSoftVertex: pos0 @f0, pos1 @f6, bone0 @f24, bone1 @f25,
+					// pad @f26/f27, blend @f28 (BLENDINDICES is a full float4)
+					const float *p0 = &p[0];
+					const float *p1 = &p[6];
+					int b0 = (int)p[24]; if (b0 < 0 || b0 >= wbBoneCount) b0 = 0;
+					int b1 = (int)p[25]; if (b1 < 0 || b1 >= wbBoneCount) b1 = 0;
+					float bw = p[28];
+					const float *k0 = &wbBones[b0 * 8];
+					const float *k1 = &wbBones[b1 * 8];
+					float wp0[3], wp1[3];
+					W3XSh_QuatRotateVector(wp0, &k0[0], p0);
+					wp0[0] += k0[4]; wp0[1] += k0[5]; wp0[2] += k0[6];
+					W3XSh_QuatRotateVector(wp1, &k1[0], p1);
+					wp1[0] += k1[4]; wp1[1] += k1[5]; wp1[2] += k1[6];
+					verts[v].Set(wp0[0]+(wp1[0]-wp0[0])*bw,
+								 wp0[1]+(wp1[1]-wp0[1])*bw,
+								 wp0[2]+(wp1[2]-wp0[2])*bw);
+				} else {
+					int bi = (int)p[14];	// bone index (float 14 of 19)
+					if (bi < 0 || bi >= wbBoneCount) bi = 0;
+					const float *bk = &wbBones[bi * 8];
+					float wp[3];
+					W3XSh_QuatRotateVector(wp, &bk[0], p);
+					wp[0] += bk[4]; wp[1] += bk[5]; wp[2] += bk[6];
+					verts[v].Set(wp[0], wp[1], wp[2]);
+				}
 			}
 			vb->Unlock();
 		}

@@ -111,6 +111,16 @@ struct W3XConditionInfo
 	AsciiString							m_idleAnimationName;
 	// Animation playback mode (W3X_ANIM_*).
 	int							m_animationMode;
+	// RA3 FrameForPristineBonePositions: which frame of the state's animation to
+	// use for the pristine (model-space) launch/muzzle bone positions. The RA3 XML
+	// firing states use 4 (the frame where the launcher is properly aimed). The
+	// weapon launch offset must evaluate the animation at THIS frame, not frame 0.
+	int							m_frameForPristineBonePositions;
+	// RA3 UseWeaponTiming: true = the firing animation's playback is driven by the
+	// weapon's fire timing (so the launch frame aligns with the actual projectile
+	// launch). Parsed for config fidelity; the precise weapon-sync behavior is a
+	// refinement on top of the ONCE animation mode.
+	bool						m_useWeaponTiming;
 	// Particle systems to attach to bones in this condition state (ParticleSysBone).
 	W3XParticleSysBoneInfoVector	m_particleSysBones;
 	W3XConditionInfo()
@@ -118,6 +128,8 @@ struct W3XConditionInfo
 		for (int i = 0; i < WEAPONSLOT_COUNT; i++) m_barrelsValid[i] = false;
 		m_turretAngleBone = m_turretPitchBone = -1;
 		m_animationMode = W3X_ANIM_LOOP;
+		m_frameForPristineBonePositions = 0;
+		m_useWeaponTiming = false;
 	}
 	// Resolved turret/pitch bone indices (set at model load).
 	mutable int							m_turretAngleBone;
@@ -204,6 +216,7 @@ private:
 		IDirect3DIndexBuffer9 *indexBuffer;
 		int vertexCount, triangleCount;
 		bool hasBones;
+		bool softBinding;			// true = dual position/normal/bone (W3XSoftVertex, 128-byte)
 		AsciiString name;			// sub-mesh name (for diagnostics)
 		bool hasTangents;			// true when .w3x provided native tangent data
 		bool hasBinormals;			// true when .w3x provided native binormal data

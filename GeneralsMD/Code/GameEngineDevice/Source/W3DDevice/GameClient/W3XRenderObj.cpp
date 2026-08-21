@@ -65,6 +65,37 @@ IDirect3DVertexDeclaration9 *W3XGetVertexDecl(IDirect3DDevice9 *dev)
 }
 
 //=============================================================================
+// Shared W3X SOFT-BOUND vertex declaration (W3XSoftVertex layout, 128-byte
+// stride). Maps the dual POSITION/NORMAL/TANGENT/BINORMAL sets + two
+// BLENDINDICES + BLENDWEIGHT to the RA3 shader's VS_H_unified_input
+// (2-bone soft-skin path: WorldP = lerp(pos1*b1+off1, pos0*b0+off0, w)).
+//=============================================================================
+IDirect3DVertexDeclaration9 *W3XGetSoftVertexDecl(IDirect3DDevice9 *dev)
+{
+	static IDirect3DVertexDeclaration9 *s_decl = NULL;
+	if (!s_decl && dev) {
+		D3DVERTEXELEMENT9 decl[] = {
+			{0,   0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+			{0,  12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL, 0},
+			{0,  24, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 1},
+			{0,  36, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL, 1},
+			{0,  48, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TANGENT, 0},
+			{0,  60, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 0},
+			{0,  72, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TANGENT, 1},
+			{0,  84, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 1},
+			{0,  96, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BLENDINDICES, 0},
+			{0, 112, D3DDECLTYPE_FLOAT1, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BLENDWEIGHT, 0},
+			{0, 116, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+			{0, 124, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+			{0, 128, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
+			D3DDECL_END()
+		};
+		dev->CreateVertexDeclaration(decl, &s_decl);
+	}
+	return s_decl;
+}
+
+//=============================================================================
 // W3XRenderObjClass
 //=============================================================================
 
@@ -109,7 +140,7 @@ W3XRenderObjClass::~W3XRenderObjClass()
 	m_constants.clear();
 }
 
-void W3XRenderObjClass::AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount)
+void W3XRenderObjClass::AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount, bool softBinding)
 {
 	SubMesh sm;
 	sm.vb = vb;
@@ -118,6 +149,7 @@ void W3XRenderObjClass::AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuf
 	sm.triangleCount = triangleCount;
 	sm.hasTangents = false;
 	sm.hasBinormals = false;
+	sm.softBinding = softBinding;
 	m_meshes.push_back(sm);
 	m_valid = true;
 }
@@ -741,7 +773,7 @@ static void BindW3XMatrices(ID3DXEffect *effect, const Matrix4x4 &world,
 // plus NumJointsPerVertex to the given effect. Shared by the model-wide effect
 // and per-sub-mesh override effects.
 //=============================================================================
-static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const Matrix3D &worldTransform)
+static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const Matrix3D &worldTransform, int jointsPerVertex = -1)
 {
 	if (boneCount > 0 && bones) {
 		D3DXHANDLE hBones = effect->GetParameterByName(NULL, "WorldBones");
@@ -763,18 +795,39 @@ static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const
 				wo[4] += wtrans.X; wo[5] += wtrans.Y; wo[6] += wtrans.Z;	// + W_trans
 				wo[7] = bo[3];									// alpha
 			}
-			effect->SetFloatArray(hBones, wb, boneCount * 8);
+			HRESULT hb = effect->SetFloatArray(hBones, wb, boneCount * 8);
+#if defined(DEBUG_LOGGING)
+			// DIAG: verify the WorldBones actually reach the shader. If bone20off is
+			// ~(4.6,0.2,10.9) the bones are the animated chest pose; if (0,0,0) or
+			// garbage, the upload failed -> vertices stay at bone-local (unskinned pile).
+			{
+				static bool s_wbDiag = false;
+				if (!s_wbDiag && boneCount > 20) {
+					s_wbDiag = true;
+					DEBUG_LOG(("[W3X_SOFT4] SetFloatArray WorldBones hr=0x%08X n=%d | "
+						"bone0q=(%.3f,%.3f,%.3f,%.3f) bone2off=(%.2f,%.2f,%.2f) "
+						"bone20off=(%.2f,%.2f,%.2f)\n",
+						(int)hb, boneCount * 8,
+						wb[0], wb[1], wb[2], wb[3],
+						wb[2*8+4], wb[2*8+5], wb[2*8+6],
+						wb[20*8+4], wb[20*8+5], wb[20*8+6]));
+				}
+			}
+#else
+			(void)hb;	// keep C4189 away when DEBUG_LOG is compiled out
+#endif
 		} else {
 			DEBUG_LOG(("[W3X_P5]   WorldBones param NOT FOUND (model has %d bones)\n", boneCount));
 		}
 	}
 
 	// Set NumJointsPerVertex so the RA3 VSchooser() picks the skinned vertex
-	// shader (1 = hard skin). The model has bones, so skin it.
+	// shader (1 = hard skin, 2 = soft skin). The model has bones, so skin it.
+	// A soft-bound sub-mesh overrides to 2 (2-bone blend) right before drawing.
 	{
 		D3DXHANDLE hJoints = effect->GetParameterByName(NULL, "NumJointsPerVertex");
 		if (hJoints) {
-			int joints = boneCount > 0 ? 1 : 0;
+			int joints = (jointsPerVertex >= 0) ? jointsPerVertex : (boneCount > 0 ? 1 : 0);
 			effect->SetInt(hJoints, joints);
 		}
 	}
@@ -1103,9 +1156,77 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			}
 		}
 
-		dev9->SetStreamSource(0, sm.vb, 0, 76);	// W3XVertex stride (76 with COLOR + TEXCOORD1)
+		// Soft-bound sub-mesh: select the 2-bone soft-skin technique (DefaultSoft =
+		// VS_H_Unified(2) in w3x_infantry.fx) and set NumJointsPerVertex=2. Non-soft
+		// sub-meshes reset to the 1-bone Default technique / hard-skin joints.
+		{
+			const char *techName = sm.softBinding ? "DefaultSoft" : "Default";
+			D3DXHANDLE hTech = drawEffect->GetTechniqueByName(techName);
+			HRESULT vres = (hTech) ? drawEffect->ValidateTechnique(hTech) : E_FAIL;
+			if (hTech) drawEffect->SetTechnique(hTech);
+			D3DXHANDLE hJoints = drawEffect->GetParameterByName(NULL, "NumJointsPerVertex");
+			if (hJoints) drawEffect->SetInt(hJoints, sm.softBinding ? 2 : (m_boneCount > 0 ? 1 : 0));
+			drawEffect->CommitChanges();
+#if defined(DEBUG_LOGGING)
+			// DIAG: confirm the soft path actually engages (technique/stride/decl).
+			{
+				static bool s_softDiag = false;
+				if (!s_softDiag && sm.softBinding) {
+					s_softDiag = true;
+					IDirect3DVertexDeclaration9 *sd = W3XGetSoftVertexDecl(dev9);
+					DEBUG_LOG(("[W3X_SOFT] submesh[%d] soft=1 tech='%s' hTech=%p valid=0x%08X "
+						"stride=%d softDecl=%p bones=%d\n",
+						(int)si, techName, (void*)hTech, (int)vres,
+						(int)sizeof(W3XSoftVertex), (void*)sd, m_boneCount));
+					// Are the composed bones the ANIMATED pose? props1=bone20 should be
+					// at chest (~4.6,0.2,10.9 in SBIDA), hips=bone2 at (~-0.1,-0.9,10.4),
+					// leftfoot=bone16 at (~-1.2,-1.8,1.1). If bone20 sits near origin or
+					// all zeros, the skinning data is broken -> unskinned pile.
+					if (m_boneCount > 20 && srcBones) {
+						const float *cb = srcBones;
+						DEBUG_LOG(("[W3X_SOFT3] composed bone20=(%.2f,%.2f,%.2f) bone2=(%.2f,%.2f,%.2f) "
+							"bone16=(%.2f,%.2f,%.2f)\n",
+							cb[20*8+4], cb[20*8+5], cb[20*8+6],
+							cb[2*8+4], cb[2*8+5], cb[2*8+6],
+							cb[16*8+4], cb[16*8+5], cb[16*8+6]));
+						// Skin the first launcher vertex (v551: pos0=(13.24,-0.78,1.91),
+						// bone0=20). Engine-computed result must equal the sim (~chest).
+						float v[3] = { 13.24f, -0.78f, 1.91f };
+						float r[3];
+						W3XQuatRotateVector(r, &cb[20*8], v);
+						DEBUG_LOG(("[W3X_SOFT3] launcher v551 skinned(bone20)=(%.2f,%.2f,%.2f)\n",
+							r[0]+cb[20*8+4], r[1]+cb[20*8+5], r[2]+cb[20*8+6]));
+					}
+				}
+			}
+#else
+			(void)vres;	// keep C4189 away when DEBUG_LOG is compiled out
+#endif
+		}
+
+		// Soft-bound sub-meshes use the 128-byte W3XSoftVertex format (dual
+		// position/normal/tangent/binormal + two blend indices + blend weight);
+		// everything else uses the 76-byte W3XVertex.
+		const int vStride = sm.softBinding ? (int)sizeof(W3XSoftVertex) : 76;
+		IDirect3DVertexDeclaration9 *vDecl = sm.softBinding ? W3XGetSoftVertexDecl(dev9) : decl;
+		HRESULT ssRes = dev9->SetStreamSource(0, sm.vb, 0, vStride);
 		dev9->SetIndices(sm.ib);
-		if (decl) dev9->SetVertexDeclaration(decl);
+		HRESULT vdRes = vDecl ? dev9->SetVertexDeclaration(vDecl) : E_FAIL;
+#if defined(DEBUG_LOGGING)
+		// DIAG: did dgVoodoo accept the soft declaration? If SetVertexDeclaration
+		// fails, the device keeps the previous (76-byte) declaration and reads the
+		// 136-byte soft buffer wrong -> unskinned pile.
+		{
+			static bool s_vdDiag = false;
+			if (!s_vdDiag && sm.softBinding) {
+				s_vdDiag = true;
+				DEBUG_LOG(("[W3X_SOFT6] SetStreamSource(soft)=0x%08X stride=%d SetVertexDeclaration=0x%08X\n",
+					(int)ssRes, vStride, (int)vdRes));
+			}
+		}
+#else
+		(void)ssRes; (void)vdRes;	// keep C4189 away when DEBUG_LOG is compiled out
+#endif
 
 		UINT passes;
 		HRESULT hr = drawEffect->Begin(&passes, 0);
@@ -1116,9 +1237,9 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// CRITICAL FIX: re-bind vertex data AFTER BeginPass. D3DX9 Begin/BeginPass
 			// may reset the stream source / declaration / index buffer to defaults,
 			// leaving the draw with no valid vertex data -> 0 pixels.
-			dev9->SetStreamSource(0, sm.vb, 0, 76);
+			dev9->SetStreamSource(0, sm.vb, 0, vStride);
 			dev9->SetIndices(sm.ib);
-			if (decl) dev9->SetVertexDeclaration(decl);
+			if (vDecl) dev9->SetVertexDeclaration(vDecl);
 			// W3X triangles are CW; the RA3 technique sets CullMode=2 (culls CW),
 			// so disable culling AFTER BeginPass (BeginPass re-applies the pass
 			// render states and would otherwise undo this).

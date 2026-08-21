@@ -133,6 +133,8 @@ void W3XModelDrawModuleData::parseConditionState(INI* ini, void *instance, void 
 		{ "IdleAnimation",INI::parseAsciiString, NULL, offsetof(W3XConditionInfo, m_idleAnimationName) },
 		{ "ParticleSysBone", parseParticleSysBone, NULL, offsetof(W3XConditionInfo, m_particleSysBones) },
 		{ "AnimationMode", parseW3XAnimationMode, NULL, offsetof(W3XConditionInfo, m_animationMode) },
+		{ "FrameForPristineBonePositions", INI::parseInt, NULL, offsetof(W3XConditionInfo, m_frameForPristineBonePositions) },
+		{ "UseWeaponTiming", INI::parseBool, NULL, offsetof(W3XConditionInfo, m_useWeaponTiming) },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -441,6 +443,14 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		if (vertCount == 0 || triCount == 0) continue;
 
 		bool hasBones = ((int)meshData.boneIndices.size() >= vertCount);
+		// RA3 soft binding: a second vertex/normal/bone-influence set. These get a
+		// dedicated 136-byte W3XSoftVertex buffer + DefaultSoft technique (2-bone).
+		// TEMP: force HARD fallback (block0 positions/bones) while the soft-shader
+		// path is under investigation — the dgVoodoo wrapper reads the dual-vertex
+		// declaration wrong (all vertices use the root bone = unskinned pile).
+		// This renders the RA3 soldier via the WORKING hard path so the mesh data
+		// can be validated; soft blending is re-enabled once the shader path works.
+		bool softMesh = false;	//meshData.hasSoftBinding && (int)meshData.vertices2.size() >= vertCount;
 
 		// V-flip decision (per sub-mesh, before building vertices).
 		// .w3x UV V is authored V=0-at-bottom; D3D9 samples V=0-at-top, so every
@@ -450,59 +460,133 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		// (112,59,41). So flip uniformly for all sub-meshes.
 		const char *nm = sub.renderObjectName.str();
 		const bool flipV = true;
+		// The RA3 tangent slots are T-B-exchanged (binormal=+U, tangent=-V);
+		// flipping V negates the V-axis, so negate the tangent for consistency.
+		const float tsign = flipV ? -1.0f : 1.0f;
 
-		// Build vertex array
-		W3XVertex *verts = new W3XVertex[vertCount];
-		for (int vi = 0; vi < vertCount; vi++) {
-			verts[vi].x = meshData.vertices[vi].X;
-			verts[vi].y = meshData.vertices[vi].Y;
-			verts[vi].z = meshData.vertices[vi].Z;
-			verts[vi].nx = vi < (int)meshData.normals.size() ? meshData.normals[vi].X : 0;
-			verts[vi].ny = vi < (int)meshData.normals.size() ? meshData.normals[vi].Y : 0;
-			verts[vi].nz = vi < (int)meshData.normals.size() ? meshData.normals[vi].Z : 0;
-			verts[vi].u = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].U : 0;
-			float rawV = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
-			verts[vi].v = flipV ? (1.0f - rawV) : rawV;
-			// DIAG: dump raw vs stored V for the first few submeshes to verify the
-			// flip landed (WHEEL rawV<0 -> stored v>0.8; TREAD rawV~0 -> stored
-			// v~1.0; barrel flips like the rest).
-			if ((si == 0 || si == 1 || si == 4 || si == 7 || strstr(nm, "WHEEL") || strstr(nm, "TREAD")) && vi < 2) {
-				DEBUG_LOG(("[W3X_P5]   vert[%d] uv=(%.3f, rawV %.3f -> %.3f)%s mesh='%s'\n",
-					vi, verts[vi].u, rawV, verts[vi].v, flipV ? " FLIP" : " noflip", nm));
-			}
-			// The RA3 tangent slots are T-B-exchanged (binormal=+U, tangent=-V);
-			// flipping V negates the V-axis, so negate the tangent for consistency.
-			const float tsign = flipV ? -1.0f : 1.0f;
-			verts[vi].tx = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].X : 0;
-			verts[vi].ty = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Y : 0;
-			verts[vi].tz = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Z : 0;
-			verts[vi].bx = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].X : 0;
-			verts[vi].by = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Y : 0;
-			verts[vi].bz = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Z : 0;
-			// RA3 shader: int BoneIndex = floor(blendindices.x * 2); WorldBones
-			// is laid out 2 float4 per bone ([2i]=quat, [2i+1]=offset), so the
-			// raw bone index b must be stored AS-IS: floor(b*2)=2b points to the
-			// bone's quat slot. Do NOT divide by 2.
-			verts[vi].boneIdx = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
-			verts[vi].boneWeight = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
-			verts[vi].color = 0xFFFFFFFF;	// white vertex color (RA3 shader reads VertexColor)
-			verts[vi].u2 = 0; verts[vi].v2 = 0;	// TEXCOORD1 (RA3 texcoordNEW: zero)
-		}
-
-		// Build index array
+		// Build index array (shared by both vertex formats)
 		int indexCount = triCount * 3;
 		unsigned short *indices = new unsigned short[indexCount];
 		for (int ti = 0; ti < indexCount; ti++)
 			indices[ti] = (unsigned short)meshData.triangles[ti];
 
-		// Create vertex buffer
+		// Create vertex buffer (soft 128-byte or hard 76-byte format)
 		IDirect3DVertexBuffer9 *vb = NULL;
-		HRESULT hr = dev9->CreateVertexBuffer(vertCount * VERTEX_STRIDE, 0, 0, D3DPOOL_MANAGED, &vb, NULL);
-		if (SUCCEEDED(hr) && vb) {
-			void *ptr; hr = vb->Lock(0, 0, &ptr, 0);
-			if (SUCCEEDED(hr)) { memcpy(ptr, verts, vertCount * VERTEX_STRIDE); vb->Unlock(); }
+		HRESULT hr = E_FAIL;
+		if (softMesh) {
+			W3XSoftVertex *sverts = new W3XSoftVertex[vertCount];
+			for (int vi = 0; vi < vertCount; vi++) {
+				// POSITION0 / NORMAL0 bound to bone0 (block 0)
+				sverts[vi].x0 = meshData.vertices[vi].X;
+				sverts[vi].y0 = meshData.vertices[vi].Y;
+				sverts[vi].z0 = meshData.vertices[vi].Z;
+				sverts[vi].n0x = vi < (int)meshData.normals.size() ? meshData.normals[vi].X : 0;
+				sverts[vi].n0y = vi < (int)meshData.normals.size() ? meshData.normals[vi].Y : 0;
+				sverts[vi].n0z = vi < (int)meshData.normals.size() ? meshData.normals[vi].Z : 0;
+				// POSITION1 / NORMAL1 bound to bone1 (block 1, soft set)
+				sverts[vi].x1 = meshData.vertices2[vi].X;
+				sverts[vi].y1 = meshData.vertices2[vi].Y;
+				sverts[vi].z1 = meshData.vertices2[vi].Z;
+				sverts[vi].n1x = vi < (int)meshData.normals2.size() ? meshData.normals2[vi].X : 0;
+				sverts[vi].n1y = vi < (int)meshData.normals2.size() ? meshData.normals2[vi].Y : 0;
+				sverts[vi].n1z = vi < (int)meshData.normals2.size() ? meshData.normals2[vi].Z : 0;
+				// Tangent/binormal: reuse the (possibly fallback) primary set for
+				// both — the soft second set carries no own tangent data.
+				sverts[vi].t0x = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].X : 0;
+				sverts[vi].t0y = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Y : 0;
+				sverts[vi].t0z = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Z : 0;
+				sverts[vi].b0x = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].X : 0;
+				sverts[vi].b0y = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Y : 0;
+				sverts[vi].b0z = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Z : 0;
+				sverts[vi].t1x = sverts[vi].t0x; sverts[vi].t1y = sverts[vi].t0y; sverts[vi].t1z = sverts[vi].t0z;
+				sverts[vi].b1x = sverts[vi].b0x; sverts[vi].b1y = sverts[vi].b0y; sverts[vi].b1z = sverts[vi].b0z;
+				// Two bones + blend weight. The shader does
+				//   WorldP = lerp(pos1*bone1+off1, pos0*bone0+off0, blendweight.x)
+				// so blendweight.x = the weight toward bone1/pos1 (block-1 weight,
+				// normalized in case the two blocks don't sum to exactly 1).
+				sverts[vi].boneIdx0 = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
+				sverts[vi].boneIdx1 = vi < (int)meshData.boneIndices2.size() ? (float)meshData.boneIndices2[vi] : sverts[vi].boneIdx0;
+				float w0 = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
+				float w1 = vi < (int)meshData.boneWeights2.size() ? meshData.boneWeights2[vi] : 0.0f;
+				sverts[vi].blendWeight = (w0 + w1 > 1e-6f) ? (w1 / (w0 + w1)) : 0.0f;
+				sverts[vi]._pad0 = 0.0f; sverts[vi]._pad1 = 0.0f;	// BLENDINDICES.z/w unused
+				// Texcoords + color + texcoordNEW (same as the hard format)
+				sverts[vi].u = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].U : 0;
+				float rawV = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
+				sverts[vi].v = flipV ? (1.0f - rawV) : rawV;
+				sverts[vi].color = 0xFFFFFFFF;
+				sverts[vi].u2 = 0; sverts[vi].v2 = 0;
+			}
+			hr = dev9->CreateVertexBuffer(vertCount * sizeof(W3XSoftVertex), 0, 0, D3DPOOL_MANAGED, &vb, NULL);
+			if (SUCCEEDED(hr) && vb) {
+				void *ptr; hr = vb->Lock(0, 0, &ptr, 0);
+				if (SUCCEEDED(hr)) { memcpy(ptr, sverts, vertCount * sizeof(W3XSoftVertex)); vb->Unlock(); }
+			}
+			delete[] sverts;
+			DEBUG_LOG(("[W3X_P5]   SOFT BINDING sub-mesh '%s': %d verts x %d bytes (2-bone)\n",
+				nm, vertCount, (int)sizeof(W3XSoftVertex)));
+#if defined(DEBUG_LOGGING)
+			// DIAG: read the CREATED vertex buffer and dump the first soft vertices.
+			// Verifies the buffer content matches the W3XSoftVertex struct (if the
+			// shader still renders unskinned, this tells us whether the DATA or the
+			// declaration/read is the problem).
+			{
+				static bool s_vbDiag = false;
+				if (!s_vbDiag && vb) {
+					s_vbDiag = true;
+					void *ptr = NULL;
+					if (SUCCEEDED(vb->Lock(0, 0, &ptr, D3DLOCK_READONLY))) {
+						const char *bp = (const char *)ptr;
+						for (int k = 0; k < 3 && k < vertCount; k++) {
+							const float *f = (const float *)(bp + k * sizeof(W3XSoftVertex));
+							DEBUG_LOG(("[W3X_SOFT5] vb vert[%d] pos0=(%.2f,%.2f,%.2f) pos1=(%.2f,%.2f,%.2f) "
+								"bones=(%.0f,%.0f) blend=%.3f\n",
+								k, f[0], f[1], f[2], f[6], f[7], f[8], f[24], f[25], f[28]));
+						}
+						vb->Unlock();
+					}
+				}
+			}
+#endif
+		} else {
+			// --- hard (single-set) W3XVertex, 76-byte stride ---
+			W3XVertex *verts = new W3XVertex[vertCount];
+			for (int vi = 0; vi < vertCount; vi++) {
+				verts[vi].x = meshData.vertices[vi].X;
+				verts[vi].y = meshData.vertices[vi].Y;
+				verts[vi].z = meshData.vertices[vi].Z;
+				verts[vi].nx = vi < (int)meshData.normals.size() ? meshData.normals[vi].X : 0;
+				verts[vi].ny = vi < (int)meshData.normals.size() ? meshData.normals[vi].Y : 0;
+				verts[vi].nz = vi < (int)meshData.normals.size() ? meshData.normals[vi].Z : 0;
+				verts[vi].u = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].U : 0;
+				float rawV = vi < (int)meshData.texcoords.size() ? meshData.texcoords[vi].V : 0;
+				verts[vi].v = flipV ? (1.0f - rawV) : rawV;
+				if ((si == 0 || si == 1 || si == 4 || si == 7 || strstr(nm, "WHEEL") || strstr(nm, "TREAD")) && vi < 2) {
+					DEBUG_LOG(("[W3X_P5]   vert[%d] uv=(%.3f, rawV %.3f -> %.3f)%s mesh='%s'\n",
+						vi, verts[vi].u, rawV, verts[vi].v, flipV ? " FLIP" : " noflip", nm));
+				}
+				verts[vi].tx = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].X : 0;
+				verts[vi].ty = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Y : 0;
+				verts[vi].tz = vi < (int)meshData.tangents.size() ? tsign * meshData.tangents[vi].Z : 0;
+				verts[vi].bx = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].X : 0;
+				verts[vi].by = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Y : 0;
+				verts[vi].bz = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Z : 0;
+				// RA3 shader: int BoneIndex = floor(blendindices.x * 2); WorldBones
+				// is laid out 2 float4 per bone ([2i]=quat, [2i+1]=offset), so the
+				// raw bone index b must be stored AS-IS: floor(b*2)=2b points to the
+				// bone's quat slot. Do NOT divide by 2.
+				verts[vi].boneIdx = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
+				verts[vi].boneWeight = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
+				verts[vi].color = 0xFFFFFFFF;	// white vertex color (RA3 shader reads VertexColor)
+				verts[vi].u2 = 0; verts[vi].v2 = 0;	// TEXCOORD1 (RA3 texcoordNEW: zero)
+			}
+			hr = dev9->CreateVertexBuffer(vertCount * VERTEX_STRIDE, 0, 0, D3DPOOL_MANAGED, &vb, NULL);
+			if (SUCCEEDED(hr) && vb) {
+				void *ptr; hr = vb->Lock(0, 0, &ptr, 0);
+				if (SUCCEEDED(hr)) { memcpy(ptr, verts, vertCount * VERTEX_STRIDE); vb->Unlock(); }
+			}
+			delete[] verts;
 		}
-		delete[] verts;
 
 		// Create index buffer
 		IDirect3DIndexBuffer9 *ib = NULL;
@@ -525,6 +609,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		subBuf.vertexCount = vertCount;
 		subBuf.triangleCount = triCount;
 		subBuf.hasBones = hasBones;
+		subBuf.softBinding = softMesh;
 		subBuf.name = sub.renderObjectName;
 		subBuf.hasTangents = ((int)meshData.tangents.size() >= vertCount);
 		subBuf.hasBinormals = ((int)meshData.binormals.size() >= vertCount);
@@ -672,7 +757,7 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	// NULL the source pointers so releaseModelData won't double-free)
 	for (size_t i = 0; i < data.subMeshes.size(); i++) {
 		SubMeshBuffer &sm = data.subMeshes[i];
-		robj->AddSubMesh(sm.vertexBuffer, sm.indexBuffer, sm.vertexCount, sm.triangleCount);
+		robj->AddSubMesh(sm.vertexBuffer, sm.indexBuffer, sm.vertexCount, sm.triangleCount, sm.softBinding);
 		robj->SetSubMeshTangent((int)i, sm.hasTangents, sm.hasBinormals);
 		// Every sub-mesh keeps its own XML-declared textures. Without this the
 		// shared-effect sub-meshes inherit the first sub-mesh's DiffuseTexture
@@ -1060,6 +1145,7 @@ bool W3XModelDraw::loadAnimation(const char *animName)
 	DEBUG_LOG(("[W3X_P5] loadAnimation: '%s' frames=%d channels=%d\n",
 		anim.name.str(), anim.numFrames, (int)anim.channels.size()));
 
+#if defined(DEBUG_LOGGING)
 	// ONE-SHOT per animation: dump the skeleton bone-name -> index map so the
 	// [W3X_ANIM] foot/hip/muzzle probe positions can be mapped to real bones
 	// (EUTEIROCKETS: 2=hips 16=leftfoot 19=rightfoot 21=fx_laser).
@@ -1071,6 +1157,7 @@ bool W3XModelDraw::loadAnimation(const char *animName)
 			DEBUG_LOG(("[W3X_ANIM]   bone[%d]=%s\n", bi, bn ? bn : "?"));
 		}
 	}
+#endif
 	return true;
 }
 
@@ -1365,7 +1452,11 @@ Bool W3XModelDraw::getProjectileLaunchOffset(
 						sprintf(path, W3X_ASSET_DIR "%s.w3x", state->m_animationName.str());
 						W3XAnimation fireAnim;
 						if (W3XLoader::ParseAnimation(path, fireAnim)) {
-							lm = m_renderObj->Get_Bone_Transform_Model_Anim(&fireAnim, lb, 0.0f);
+							// RA3 FrameForPristineBonePositions: the launch uses the
+							// state's pristine frame (e.g. 4 for the Javelin firing
+							// state, where the launcher is properly aimed), not frame 0.
+							float pFrame = (float)state->m_frameForPristineBonePositions;
+							lm = m_renderObj->Get_Bone_Transform_Model_Anim(&fireAnim, lb, pFrame);
 						} else {
 							lm = m_renderObj->Get_Bone_Transform_Model(lb);
 						}

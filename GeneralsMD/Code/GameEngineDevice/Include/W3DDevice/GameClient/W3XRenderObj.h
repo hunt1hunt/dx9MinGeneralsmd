@@ -39,6 +39,37 @@ struct IDirect3DVertexDeclaration9;
 
 // Shared W3X vertex declaration (W3XVertex layout). Returns cached decl.
 IDirect3DVertexDeclaration9 *W3XGetVertexDecl(IDirect3DDevice9 *dev);
+// Shared soft-bound vertex declaration (W3XSoftVertex layout). Returns cached decl.
+IDirect3DVertexDeclaration9 *W3XGetSoftVertexDecl(IDirect3DDevice9 *dev);
+
+// Soft-bound infantry vertex (RA3 soft binding): TWO position/normal/tangent/
+// binormal sets bound to two bones, blended by blendWeight.x. Used ONLY for
+// sub-meshes whose .w3x carries a second vertex/normal/bone-influence set
+// (hasSoftBinding). The RA3 shader's 2-bone path does
+//   WorldP = lerp(pos1*bone1 + off1, pos0*bone0 + off0, blendweight.x)
+// stride = 136 bytes, independent from the 76-byte W3XVertex.
+// NOTE: BLENDINDICES is a FULL FLOAT4 (bone0,bone1,pad,pad). The dgVoodoo D3D9
+// wrapper does not feed a FLOAT2 BLENDINDICES to the VS (reads 0 -> all vertices
+// use the root bone = unskinned pile); a full register works.
+struct W3XSoftVertex
+{
+	float x0, y0, z0;		//   0 POSITION0 (bone0)
+	float n0x, n0y, n0z;	//  12 NORMAL0
+	float x1, y1, z1;		//  24 POSITION1 (bone1)
+	float n1x, n1y, n1z;	//  36 NORMAL1
+	float t0x, t0y, t0z;	//  48 TANGENT0
+	float b0x, b0y, b0z;	//  60 BINORMAL0
+	float t1x, t1y, t1z;	//  72 TANGENT1
+	float b1x, b1y, b1z;	//  84 BINORMAL1
+	float boneIdx0;			//  96 BLENDINDICES.x (bone0)
+	float boneIdx1;			// 100 BLENDINDICES.y (bone1)
+	float _pad0;			// 104 BLENDINDICES.z (unused)
+	float _pad1;			// 108 BLENDINDICES.w (unused)
+	float blendWeight;		// 112 BLENDWEIGHT.x (0..1 toward bone1)
+	float u, v;				// 116 TEXCOORD0
+	unsigned int color;		// 124 COLOR
+	float u2, v2;			// 128 TEXCOORD1
+};
 
 //-----------------------------------------------------------------------------
 // W3XRenderObjClass: a RenderObjClass that renders W3X mesh data using
@@ -59,7 +90,7 @@ public:
 	virtual void Render(RenderInfoClass &rinfo);
 
 	// Data population
-	void AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount);
+	void AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount, bool softBinding = false);
 	void SetSubMeshTangent(int subMeshIndex, bool hasTangents, bool hasBinormals);
 	// Per-sub-mesh shader constants (textures/values) for the shared effect.
 	// Without this, sub-meshes using the model-wide shader inherit the first
@@ -149,6 +180,10 @@ public:
 	// MANAGED buffers back to build shadow geometry).
 	int GetSubMeshCount(void) const { return (int)m_meshes.size(); }
 	IDirect3DVertexBuffer9 *GetSubMeshVB(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].vb : NULL; }
+	// True when the sub-mesh uses the 128-byte W3XSoftVertex format (RA3 soft
+	// binding: dual position0/1 + two bones + blendweight). The volumetric shadow
+	// builder must blend both positions by blendweight, not just skin position0.
+	bool GetSubMeshSoftBinding(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].softBinding : false; }
 	IDirect3DIndexBuffer9 *GetSubMeshIB(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].ib : NULL; }
 	int GetSubMeshVertexCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].vertexCount : 0; }
 	int GetSubMeshTriangleCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].triangleCount : 0; }
@@ -178,6 +213,7 @@ private:
 		AsciiString fxName;
 		int technique;
 		std::vector<W3XShaderConstant> constants;
+		bool softBinding;	// true = dual position/normal/bone (RA3 soft skin), 128-byte stride
 	};
 
 	enum { kMaxBones = 64 };	// must match BindW3XBones' 64-bone array
