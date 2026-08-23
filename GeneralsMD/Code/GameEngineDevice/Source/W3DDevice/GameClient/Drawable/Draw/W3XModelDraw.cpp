@@ -444,13 +444,12 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 
 		bool hasBones = ((int)meshData.boneIndices.size() >= vertCount);
 		// RA3 soft binding: a second vertex/normal/bone-influence set. These get a
-		// dedicated 136-byte W3XSoftVertex buffer + DefaultSoft technique (2-bone).
-		// TEMP: force HARD fallback (block0 positions/bones) while the soft-shader
-		// path is under investigation — the dgVoodoo wrapper reads the dual-vertex
-		// declaration wrong (all vertices use the root bone = unskinned pile).
-		// This renders the RA3 soldier via the WORKING hard path so the mesh data
-		// can be validated; soft blending is re-enabled once the shader path works.
-		bool softMesh = false;	//meshData.hasSoftBinding && (int)meshData.vertices2.size() >= vertCount;
+		// dedicated 136-byte W3XSoftVertex buffer + DefaultSoft technique (2-bone),
+		// giving smooth joints (the RA3 soldiers are soft-skinned; the hard path
+		// made joints look like over-stretched rubber). Enabled when the mesh
+		// carries a second vertex + bone-influence set. Hard-skinned meshes
+		// (vehicles/buildings, no second set) keep the 1-bone Default path.
+		bool softMesh = meshData.hasSoftBinding && (int)meshData.vertices2.size() >= vertCount;
 
 		// V-flip decision (per sub-mesh, before building vertices).
 		// .w3x UV V is authored V=0-at-bottom; D3D9 samples V=0-at-top, so every
@@ -1254,17 +1253,21 @@ void W3XModelDraw::updateAnimation()
 				Quaternion b(q1[0], q1[1], q1[2], q1[3]);
 				Quaternion r;
 				Slerp(r, a, b, t);
-				// RA3 channel quats are the bone's LOCAL rotation relative to its
-				// parent (exported as animLocal × bind⁻¹, max2w3x:10173). The
-				// AUTHORITATIVE SAGE composition applies the RAW channel value
-				// (boneLocal = channel × bind, ModelBoneInstance) — it is NOT
-				// frame-0-normalized. A constant ~96° leg channel (SBIDA idle)
-				// therefore reproduces the exported pose exactly (folded if the
-				// data is folded); the [W3X_ANIM] footZ probe above tells us
-				// which. composeControlledBones computes localQuat = animQuat *
-				// bindLocalQuat from this raw value.
+				// Normalize the quaternion to frame 0 for EVERY bone:
+				//   outQ = frame0^-1 * current
+				// At frame 0 the bone sits at its bind pose; only the animation's
+				// relative motion is applied. This matches commit 30aabc6 (the
+				// version with smooth, non-stretching joints) and is robust to RA3
+				// files whose absolute channel values don't match the bind pose
+				// (hips bind ~118, props1 absolute translation). A later change
+				// removed the frame-0 normalization, which over-rotated bones and
+				// made joints look like rubber.
+				const float *qb = &ch.quatFrames[0];
+				float qbInv[4] = { -qb[0], -qb[1], -qb[2], qb[3] };
 				float curQ[4] = { r.X, r.Y, r.Z, r.W };
-				m_renderObj->SetBoneAnimQuat(ch.pivot, curQ);
+				float outQ[4];
+				QuatMultiply(outQ, qbInv, curQ);
+				m_renderObj->SetBoneAnimQuat(ch.pivot, outQ);
 			}
 		}
 
@@ -1274,12 +1277,14 @@ void W3XModelDraw::updateAnimation()
 			int tnFrames = (int)ch.transFrames.size() / tstride;
 			if (tnFrames >= 1) {
 				// RA3 channel translations are the bone's LOCAL position relative to
-				// its parent (confirmed: "每个骨骼的动画都相对于父级骨骼"). Apply the raw
-				// interpolated value; composeControlledBones composes it as
-				// localTrans = R(animQuat) * bindTrans + animTrans (the channel × bind
-				// expansion) and recurses the parent chain. No frame-0 normalization —
-				// that zeroed constant weapon channels and kept weapons at their
-				// (off-the-hand) bind position.
+				// its parent. Apply the interpolated value as a DELTA from the
+				// channel's own frame 0 (outT = current - frame0); composeControlledBones
+				// adds it to the bind local translation. This keeps every bone at its
+				// bind position at frame 0 (so a file whose absolute values don't match
+				// the bind pose can't throw the bone to a wrong spot) while preserving
+				// the animation's actual motion — the 30aabc6 behavior that produced
+				// correct hand/weapon/foot placement.
+				const float *tb0 = &ch.transFrames[0];
 				int tf0 = f0 % tnFrames;
 				int tf1 = (tf0 + 1) % tnFrames;
 				if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) tf1 = tf0;
@@ -1287,9 +1292,9 @@ void W3XModelDraw::updateAnimation()
 				const float *t0 = &ch.transFrames[tf0 * tstride];
 				const float *t1 = &ch.transFrames[tf1 * tstride];
 				float outT[3];
-				outT[0] = t0[0] + (t1[0] - t0[0]) * t;
-				outT[1] = t0[1] + (t1[1] - t0[1]) * t;
-				outT[2] = t0[2] + (t1[2] - t0[2]) * t;
+				outT[0] = (t0[0] + (t1[0] - t0[0]) * t) - tb0[0];
+				outT[1] = (t0[1] + (t1[1] - t0[1]) * t) - tb0[1];
+				outT[2] = (t0[2] + (t1[2] - t0[2]) * t) - tb0[2];
 				m_renderObj->SetBoneAnimTrans(ch.pivot, outT);
 			}
 		}

@@ -278,9 +278,14 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 				lt[0] = m_bones[bi*8+4]; lt[1] = m_bones[bi*8+5]; lt[2] = m_bones[bi*8+6];
 			}
 		} else if (animated && hasLocalPose) {
-			// AUTHORITATIVE: boneLocal = channel × bind.
+			// SAGE composition (commit 30aabc6): the animation rotation is applied
+			// to the ORIENTATION only; the bone's local POSITION stays at its bind
+			// spot plus the animation's translation offset. Rotating bindLocalTrans
+			// by the animation quaternion would swing the bone's pivot around its
+			// own centre (turret/limb spin) instead of staying on the parent mount
+			// — that made soldier joints stretch like rubber.
 			//   localQuat  = animQuat * bindLocalQuat
-			//   localTrans = R(animQuat) * bindLocalTrans + animTrans
+			//   localTrans = bindLocalTrans + animTrans
 			float aq[4];
 			if (m_boneAnimQuatActive[bi]) {
 				aq[0] = m_boneAnimQuat[bi][0]; aq[1] = m_boneAnimQuat[bi][1];
@@ -289,7 +294,9 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 				aq[0] = 0.0f; aq[1] = 0.0f; aq[2] = 0.0f; aq[3] = 1.0f;	// identity
 			}
 			W3XQuatMultiply(lq, aq, &m_boneLocalQuat[bi*4]);
-			W3XQuatRotateVector(lt, aq, &m_boneLocalTrans[bi*3]);
+			lt[0] = m_boneLocalTrans[bi*3+0];
+			lt[1] = m_boneLocalTrans[bi*3+1];
+			lt[2] = m_boneLocalTrans[bi*3+2];
 			if (m_boneAnimTransActive[bi]) {
 				lt[0] += m_boneAnimTrans[bi][0];
 				lt[1] += m_boneAnimTrans[bi][1];
@@ -419,6 +426,15 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 				R.W = q0[3] + (q1[3] - q0[3]) * t;
 				float len = (float)sqrt(R.X*R.X + R.Y*R.Y + R.Z*R.Z + R.W*R.W);
 				if (len > 0.0f) { R.X/=len; R.Y/=len; R.Z/=len; R.W/=len; }
+				// Frame-0 normalize for EVERY bone (matches updateAnimation):
+				//   outQ = frame0^-1 * R
+				const float *qf0 = &ch.quatFrames[0];
+				float inv0x = -qf0[0], inv0y = -qf0[1], inv0z = -qf0[2], inv0w = qf0[3];
+				float tx = inv0w*R.X + inv0x*R.W + inv0y*R.Z - inv0z*R.Y;
+				float ty = inv0w*R.Y - inv0x*R.Z + inv0y*R.W + inv0z*R.X;
+				float tz = inv0w*R.Z + inv0x*R.Y - inv0y*R.X + inv0z*R.W;
+				float tw = inv0w*R.W - inv0x*R.X - inv0y*R.Y - inv0z*R.Z;
+				R.X = tx; R.Y = ty; R.Z = tz; R.W = tw;
 				aq[p][0] = R.X; aq[p][1] = R.Y; aq[p][2] = R.Z; aq[p][3] = R.W;
 				qa[p] = true;
 			}
@@ -429,9 +445,10 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 				int a = f0 % n, b = f1 % n;
 				const float *t0 = &ch.transFrames[a * 3];
 				const float *t1 = &ch.transFrames[b * 3];
-				at[p][0] = t0[0] + (t1[0] - t0[0]) * t;
-				at[p][1] = t0[1] + (t1[1] - t0[1]) * t;
-				at[p][2] = t0[2] + (t1[2] - t0[2]) * t;
+				const float *tb0 = &ch.transFrames[0];
+				at[p][0] = (t0[0] + (t1[0] - t0[0]) * t) - tb0[0];
+				at[p][1] = (t0[1] + (t1[1] - t0[1]) * t) - tb0[1];
+				at[p][2] = (t0[2] + (t1[2] - t0[2]) * t) - tb0[2];
 				ta[p] = true;
 			}
 		}
@@ -445,8 +462,12 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
 		float lq[4], lt[3];
 		if (qa[bi] || ta[bi]) {
+			// Same as composeControlledBones: rotate the ORIENTATION only, keep the
+			// local position at bind + animation trans offset (30aabc6 semantics).
 			W3XQuatMultiply(lq, aq[bi], &m_boneLocalQuat[bi * 4]);
-			W3XQuatRotateVector(lt, aq[bi], &m_boneLocalTrans[bi * 3]);
+			lt[0] = m_boneLocalTrans[bi*3+0];
+			lt[1] = m_boneLocalTrans[bi*3+1];
+			lt[2] = m_boneLocalTrans[bi*3+2];
 			if (ta[bi]) { lt[0] += at[bi][0]; lt[1] += at[bi][1]; lt[2] += at[bi][2]; }
 		} else {
 			lq[0] = m_boneLocalQuat[bi*4+0]; lq[1] = m_boneLocalQuat[bi*4+1]; lq[2] = m_boneLocalQuat[bi*4+2]; lq[3] = m_boneLocalQuat[bi*4+3];
