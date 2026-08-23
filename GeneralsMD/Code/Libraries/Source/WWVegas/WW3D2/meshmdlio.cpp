@@ -1736,6 +1736,28 @@ WW3DErrorType MeshModelClass::read_prelit_material (ChunkLoadClass &cload, MeshL
  *=============================================================================================*/
 void MeshModelClass::post_process()
 {
+	// Force lighting on for EVERY material on this mesh, unconditionally.
+	// DX9: emissive-only materials (skyboxes like qsnboxmorning.w3d, bloom boxes,
+	// water) get Set_Lighting(false) during Post_Load_Process because they have no
+	// diffuse/ambient input, which turns off D3DRS_LIGHTING and makes their
+	// self-emissive textures render black / lose the skybox. Setting lighting ON
+	// here (after the material config) keeps those meshes lit while normal meshes
+	// are unaffected.
+	if (DefMatDesc != NULL) {
+		int npass = DefMatDesc->Get_Pass_Count();
+		if (npass <= 0) npass = 1;
+		for (int pass = 0; pass < npass; pass++) {
+			if (!DefMatDesc->Has_Material_Array(pass)) {
+				VertexMaterialClass *vmat = DefMatDesc->Peek_Single_Material(pass);
+				if (vmat) vmat->Set_Lighting(true);
+			} else if (DefMatDesc->MaterialArray[pass]) {
+				for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++) {
+					VertexMaterialClass *vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);
+					if (vmat) vmat->Set_Lighting(true);
+				}
+			}
+		}
+	}
 #if 0
 	// we want to allow this now due to usage of the static sort 
 	// Ensure no sorting, multipass meshes (for they are abomination...)
