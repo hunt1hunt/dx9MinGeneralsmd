@@ -48,6 +48,7 @@
 #include "wwdebug.h"
 #include "wwmemlog.h"
 #include <string.h>
+#include <math.h>
 #include <d3d9.h>
 #include <d3dx9effect.h>
 
@@ -265,6 +266,18 @@ static void QuatRotateVector(float *out, const float *q, const float *v)
 	out[0] = v[0] + q[3]*t[0] + (q[1]*t[2] - q[2]*t[1]);
 	out[1] = v[1] + q[3]*t[1] + (q[2]*t[0] - q[0]*t[2]);
 	out[2] = v[2] + q[3]*t[2] + (q[0]*t[1] - q[1]*t[0]);
+}
+
+static void QuatNormalize(float *out, const float *q)
+{
+	// out = normalize(q); falls back to identity on a zero-length quat so the
+	// caller's conjugate-inverse / slerp stays well-defined on dirty data.
+	float len = (float)sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+	if (len > 1e-8f) {
+		out[0] = q[0]/len; out[1] = q[1]/len; out[2] = q[2]/len; out[3] = q[3]/len;
+	} else {
+		out[0] = 0.0f; out[1] = 0.0f; out[2] = 0.0f; out[3] = 1.0f;
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -1249,24 +1262,21 @@ void W3XModelDraw::updateAnimation()
 				if (m_animMode == W3X_ANIM_ONCE_BACKWARDS && f0 <= 0) ff1 = ff0;
 				const float *q0 = &ch.quatFrames[ff0 * stride];
 				const float *q1 = &ch.quatFrames[ff1 * stride];
-				Quaternion a(q0[0], q0[1], q0[2], q0[3]);
-				Quaternion b(q1[0], q1[1], q1[2], q1[3]);
+				// Normalize the keyframe endpoints so the slerp runs on unit
+				// quaternions (RA3 data is unit; dirty extractions may not be).
+				float nq0[4], nq1[4];
+				QuatNormalize(nq0, q0);
+				QuatNormalize(nq1, q1);
+				Quaternion a(nq0[0], nq0[1], nq0[2], nq0[3]);
+				Quaternion b(nq1[0], nq1[1], nq1[2], nq1[3]);
 				Quaternion r;
 				Slerp(r, a, b, t);
-				// Normalize the quaternion to frame 0 for EVERY bone:
-				//   outQ = frame0^-1 * current
-				// At frame 0 the bone sits at its bind pose; only the animation's
-				// relative motion is applied. This matches commit 30aabc6 (the
-				// version with smooth, non-stretching joints) and is robust to RA3
-				// files whose absolute channel values don't match the bind pose
-				// (hips bind ~118, props1 absolute translation). A later change
-				// removed the frame-0 normalization, which over-rotated bones and
-				// made joints look like rubber.
-				const float *qb = &ch.quatFrames[0];
-				float qbInv[4] = { -qb[0], -qb[1], -qb[2], qb[3] };
-				float curQ[4] = { r.X, r.Y, r.Z, r.W };
-				float outQ[4];
-				QuatMultiply(outQ, qbInv, curQ);
+				// The RA3 channel is the bone's ABSOLUTE local rotation (channel =
+				// animLocal × bind^-1, so compose = channel × bind). Apply it directly
+				// — NO frame-0 normalization. Frame-0 normalization forced clip-frame-0
+				// = bind, which over-rotated clips whose frame-0 pose is not the bind
+				// pose (RUNA run swung the legs to hip height = rubber joints).
+				float outQ[4] = { r.X, r.Y, r.Z, r.W };
 				m_renderObj->SetBoneAnimQuat(ch.pivot, outQ);
 			}
 		}
@@ -1277,14 +1287,9 @@ void W3XModelDraw::updateAnimation()
 			int tnFrames = (int)ch.transFrames.size() / tstride;
 			if (tnFrames >= 1) {
 				// RA3 channel translations are the bone's LOCAL position relative to
-				// its parent. Apply the interpolated value as a DELTA from the
-				// channel's own frame 0 (outT = current - frame0); composeControlledBones
-				// adds it to the bind local translation. This keeps every bone at its
-				// bind position at frame 0 (so a file whose absolute values don't match
-				// the bind pose can't throw the bone to a wrong spot) while preserving
-				// the animation's actual motion — the 30aabc6 behavior that produced
-				// correct hand/weapon/foot placement.
-				const float *tb0 = &ch.transFrames[0];
+				// its parent. Apply the interpolated value directly (NO frame-0
+				// subtract); composeControlledBones adds it to the bind local
+				// translation. Matches updateAnimation's raw-channel semantic.
 				int tf0 = f0 % tnFrames;
 				int tf1 = (tf0 + 1) % tnFrames;
 				if (m_animMode == W3X_ANIM_ONCE && f0 >= lastIdx) tf1 = tf0;
@@ -1292,9 +1297,9 @@ void W3XModelDraw::updateAnimation()
 				const float *t0 = &ch.transFrames[tf0 * tstride];
 				const float *t1 = &ch.transFrames[tf1 * tstride];
 				float outT[3];
-				outT[0] = (t0[0] + (t1[0] - t0[0]) * t) - tb0[0];
-				outT[1] = (t0[1] + (t1[1] - t0[1]) * t) - tb0[1];
-				outT[2] = (t0[2] + (t1[2] - t0[2]) * t) - tb0[2];
+				outT[0] = t0[0] + (t1[0] - t0[0]) * t;
+				outT[1] = t0[1] + (t1[1] - t0[1]) * t;
+				outT[2] = t0[2] + (t1[2] - t0[2]) * t;
 				m_renderObj->SetBoneAnimTrans(ch.pivot, outT);
 			}
 		}

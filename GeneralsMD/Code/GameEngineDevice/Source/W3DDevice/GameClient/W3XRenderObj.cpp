@@ -38,6 +38,7 @@
 static void W3XQuatMultiply(float *out, const float *a, const float *b);
 static void W3XQuatRotateVector(float *out, const float *q, const float *v);
 static void W3XQuatConjugate(float *out, const float *q);
+static void W3XQuatNormalize(float *out, const float *q);
 static void W3XMatrix3DToQuat(const Matrix3D &m, float *q);
 
 //=============================================================================
@@ -233,21 +234,24 @@ int W3XRenderObjClass::Get_Bone_Index(const char *bonename)
 
 void W3XRenderObjClass::composeControlledBones(float *out) const
 {
-	// AUTHORITATIVE SAGE composition (matches OpenSAGE ModelBoneInstance /
-	// max2w3x export for RA3 W3X):
-	//   export:   channel = animLocal × bind⁻¹            (max2w3x:10173)
-	//   runtime:  boneLocal  = channel × bind              (ModelBoneInstance:34)
-	//             world      = parentWorld × boneLocal     (parent chain)
-	// In quat+offset terms, per bone (parentIndex < bi guaranteed by loadHierarchy):
+	// RA3 W3X composition (commit 43f2ed91 = 30aabc6 semantics). The animation
+	// rotation is applied to the ORIENTATION only; the bone's local POSITION stays
+	// at its bind spot plus the animation's translation offset. Rotating
+	// bindLocalTrans by the anim quaternion would swing the bone's pivot around
+	// its own centre instead of staying on the parent mount — that made soldier
+	// joints stretch like rubber. Matches the RA3 shader contract (Skinning.fxh
+	// BoneTransformPosition = R·v + t: the translation is never rotated by the
+	// bone's own rotation):
 	//   localQuat  = animQuat * bindLocalQuat
-	//   localTrans = R(animQuat) * bindLocalTrans + animTrans
+	//   localTrans = bindLocalTrans + animTrans
 	//   worldQuat  = parentWorldQuat * localQuat
 	//   worldOffset= parentWorldOffset + R(parentWorldQuat) * localTrans
-	// The animation channel is applied RAW (NO frame-0 normalization): a constant
-	// channel reproduces the exported animated pose exactly. A turret-controlled
-	// bone (Control_Bone) replaces the animation (W3D capture semantics) with the
-	// control rotation on the bind pose, so the tank turret stays game-logic
-	// driven while animated bones (soldier legs/spine/arms) follow the channel.
+	// animQuat / animTrans are the RAW RA3 channel values (channel = animLocal ×
+	// bind^-1, so compose = channel × bind reproduces the exported pose). A turret-
+	// controlled bone (Control_Bone) replaces the animation (W3D capture
+	// semantics) with the control rotation on the bind pose, so the tank turret
+	// stays game-logic driven while animated bones (soldier legs/spine/arms)
+	// follow the channel.
 	bool hasLocalPose = (m_boneLocalQuat != NULL && m_boneLocalTrans != NULL);
 
 	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
@@ -419,22 +423,17 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 				int a = f0 % n, b = f1 % n;
 				const float *q0 = &ch.quatFrames[a * 4];
 				const float *q1 = &ch.quatFrames[b * 4];
+				// Normalize the keyframe endpoints so the slerp runs on unit
+				// quaternions (RA3 data is unit; dirty extractions may not be).
+				float nq0[4], nq1[4];
+				W3XQuatNormalize(nq0, q0);
+				W3XQuatNormalize(nq1, q1);
+				Quaternion A(nq0[0], nq0[1], nq0[2], nq0[3]);
+				Quaternion B(nq1[0], nq1[1], nq1[2], nq1[3]);
 				Quaternion R;
-				R.X = q0[0] + (q1[0] - q0[0]) * t;
-				R.Y = q0[1] + (q1[1] - q0[1]) * t;
-				R.Z = q0[2] + (q1[2] - q0[2]) * t;
-				R.W = q0[3] + (q1[3] - q0[3]) * t;
-				float len = (float)sqrt(R.X*R.X + R.Y*R.Y + R.Z*R.Z + R.W*R.W);
-				if (len > 0.0f) { R.X/=len; R.Y/=len; R.Z/=len; R.W/=len; }
-				// Frame-0 normalize for EVERY bone (matches updateAnimation):
-				//   outQ = frame0^-1 * R
-				const float *qf0 = &ch.quatFrames[0];
-				float inv0x = -qf0[0], inv0y = -qf0[1], inv0z = -qf0[2], inv0w = qf0[3];
-				float tx = inv0w*R.X + inv0x*R.W + inv0y*R.Z - inv0z*R.Y;
-				float ty = inv0w*R.Y - inv0x*R.Z + inv0y*R.W + inv0z*R.X;
-				float tz = inv0w*R.Z + inv0x*R.Y - inv0y*R.X + inv0z*R.W;
-				float tw = inv0w*R.W - inv0x*R.X - inv0y*R.Y - inv0z*R.Z;
-				R.X = tx; R.Y = ty; R.Z = tz; R.W = tw;
+				Slerp(R, A, B, t);
+				// Apply the channel directly (RA3 absolute-local semantic, matches
+				// updateAnimation) — NO frame-0 normalization. See updateAnimation.
 				aq[p][0] = R.X; aq[p][1] = R.Y; aq[p][2] = R.Z; aq[p][3] = R.W;
 				qa[p] = true;
 			}
@@ -445,10 +444,9 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 				int a = f0 % n, b = f1 % n;
 				const float *t0 = &ch.transFrames[a * 3];
 				const float *t1 = &ch.transFrames[b * 3];
-				const float *tb0 = &ch.transFrames[0];
-				at[p][0] = (t0[0] + (t1[0] - t0[0]) * t) - tb0[0];
-				at[p][1] = (t0[1] + (t1[1] - t0[1]) * t) - tb0[1];
-				at[p][2] = (t0[2] + (t1[2] - t0[2]) * t) - tb0[2];
+				at[p][0] = (t0[0] + (t1[0] - t0[0]) * t);
+				at[p][1] = (t0[1] + (t1[1] - t0[1]) * t);
+				at[p][2] = (t0[2] + (t1[2] - t0[2]) * t);
 				ta[p] = true;
 			}
 		}
@@ -635,6 +633,18 @@ static void W3XQuatConjugate(float *out, const float *q)
 {
 	// out = q* (inverse for unit quaternions) = (-x, -y, -z, w)
 	out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3];
+}
+
+static void W3XQuatNormalize(float *out, const float *q)
+{
+	// out = normalize(q); falls back to identity on a zero-length quat so the
+	// caller's conjugate-inverse / slerp stays well-defined on dirty data.
+	float len = (float)sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+	if (len > 1e-8f) {
+		out[0] = q[0]/len; out[1] = q[1]/len; out[2] = q[2]/len; out[3] = q[3]/len;
+	} else {
+		out[0] = 0.0f; out[1] = 0.0f; out[2] = 0.0f; out[3] = 1.0f;
+	}
 }
 
 // Extract the rotation part of a Matrix3D as a quaternion (x,y,z,w)
