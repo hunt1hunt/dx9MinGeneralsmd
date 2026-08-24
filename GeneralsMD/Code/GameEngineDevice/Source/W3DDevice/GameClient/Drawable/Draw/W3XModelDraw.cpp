@@ -512,10 +512,10 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 				sverts[vi].b0z = vi < (int)meshData.binormals.size() ? meshData.binormals[vi].Z : 0;
 				sverts[vi].t1x = sverts[vi].t0x; sverts[vi].t1y = sverts[vi].t0y; sverts[vi].t1z = sverts[vi].t0z;
 				sverts[vi].b1x = sverts[vi].b0x; sverts[vi].b1y = sverts[vi].b0y; sverts[vi].b1z = sverts[vi].b0z;
-				// Two bones + blend weight. The shader does
-				//   WorldP = lerp(pos1*bone1+off1, pos0*bone0+off0, blendweight.x)
-				// so blendweight.x = the weight toward bone1/pos1 (block-1 weight,
-				// normalized in case the two blocks don't sum to exactly 1).
+				// Two bones + blend weight. blendweight.x = w1/(w0+w1) = the weight
+				// toward POSITION1/BONE1, normalized in case the two blocks don't sum
+				// to exactly 1. The volumetric shadow blends lerp(P0,P1,bw) and the
+				// RA3 skin shader must use the SAME direction (lerp(X0,X1,bw)).
 				sverts[vi].boneIdx0 = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
 				sverts[vi].boneIdx1 = vi < (int)meshData.boneIndices2.size() ? (float)meshData.boneIndices2[vi] : sverts[vi].boneIdx0;
 				float w0 = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;

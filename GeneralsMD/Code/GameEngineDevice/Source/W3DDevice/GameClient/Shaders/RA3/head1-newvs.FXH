@@ -114,11 +114,11 @@ VS_H_output VS_H_Unified(VS_H_unified_input i, uniform int BonePerVertex)
         float3 wp0 = mul(i.position0.xyz * bonescale.x , m0) + off0.xyz;
         float3 wp1 = mul(i.position1.xyz * bonescale.y , m1) + off1.xyz;
         
-        WorldP = lerp(wp1, wp0, i.blendweight.x);
-        o.WorldN = lerp(mul(i.normal1.xyz, m1), mul(i.normal0.xyz, m0), i.blendweight.x);
-        o.WorldT = lerp(mul(i.tangent1.xyz, m1), mul(i.tangent0.xyz, m0), i.blendweight.x);
-        o.WorldB = lerp(mul(i.binormal1.xyz, m1), mul(i.binormal0.xyz, m0), i.blendweight.x);
-        o.VertexColor.w *= lerp(off1.w, off0.w, i.blendweight.x);
+        WorldP = lerp(wp0, wp1, i.blendweight.x);
+        o.WorldN = lerp(mul(i.normal0.xyz, m0), mul(i.normal1.xyz, m1), i.blendweight.x);
+        o.WorldT = lerp(mul(i.tangent0.xyz, m0), mul(i.tangent1.xyz, m1), i.blendweight.x);
+        o.WorldB = lerp(mul(i.binormal0.xyz, m0), mul(i.binormal1.xyz, m1), i.blendweight.x);
+        o.VertexColor.w *= lerp(off0.w, off1.w, i.blendweight.x);
         
         o.CoordOBJ.xyz = WorldP - WorldBones[1].xyz; // Specific to 22skin [cite: 47]
     }
@@ -271,9 +271,9 @@ VS_notgt_output VS_L_Unified(VS_L_unified_input i, uniform int BonePerVertex)
         float3 wp0 = QuaternionRotate(q0, i.position0.xyz * bonescale.x) + off0.xyz;
         float3 wp1 = QuaternionRotate(q1, i.position1.xyz * bonescale.y) + off1.xyz;
         
-        WorldP = lerp(wp1, wp0, i.blendweight.x);
-        o.WorldN = lerp(QuaternionRotate(q1, i.normal1.xyz), QuaternionRotate(q0, i.normal0.xyz), i.blendweight.x);
-        o.VertexColor.w = lerp(off1.w, off0.w, i.blendweight.x);
+        WorldP = lerp(wp0, wp1, i.blendweight.x);
+        o.WorldN = lerp(QuaternionRotate(q0, i.normal0.xyz), QuaternionRotate(q1, i.normal1.xyz), i.blendweight.x);
+        o.VertexColor.w = lerp(off0.w, off1.w, i.blendweight.x);
         o.CoordOBJ.xyz = WorldP - WorldBones[1].xyz;
     }
 
@@ -355,8 +355,8 @@ VS_ShadowMaker_output VS_ShadowMaker_Unified(VS_Shadow_unified_input i, uniform 
         float3 wp0 = QuaternionRotate(q0, i.position0.xyz * bonescale.x) + off0.xyz;
         float3 wp1 = QuaternionRotate(q1, i.position1.xyz * bonescale.y) + off1.xyz;
         
-        WorldPosition.xyz = lerp(wp1, wp0, i.blendweight.x);
-        o.Valpha = lerp(off1.w, off0.w, i.blendweight.x); 
+        WorldPosition.xyz = lerp(wp0, wp1, i.blendweight.x);
+        o.Valpha = lerp(off0.w, off1.w, i.blendweight.x); 
     }
 
     o.Position = mul(WorldPosition, getVPmatrix());

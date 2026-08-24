@@ -242,12 +242,12 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 	// joints stretch like rubber. Matches the RA3 shader contract (Skinning.fxh
 	// BoneTransformPosition = R·v + t: the translation is never rotated by the
 	// bone's own rotation):
-	//   localQuat  = animQuat * bindLocalQuat
+	//   localQuat  = bindLocalQuat * animQuat
 	//   localTrans = bindLocalTrans + animTrans
 	//   worldQuat  = parentWorldQuat * localQuat
 	//   worldOffset= parentWorldOffset + R(parentWorldQuat) * localTrans
-	// animQuat / animTrans are the RAW RA3 channel values (channel = animLocal ×
-	// bind^-1, so compose = channel × bind reproduces the exported pose). A turret-
+	// animQuat / animTrans are the RAW RA3 channel values (channel = bind^-1 ×
+	// animLocal, so compose = bind × channel reproduces the exported pose). A turret-
 	// controlled bone (Control_Bone) replaces the animation (W3D capture
 	// semantics) with the control rotation on the bind pose, so the tank turret
 	// stays game-logic driven while animated bones (soldier legs/spine/arms)
@@ -297,7 +297,7 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 			} else {
 				aq[0] = 0.0f; aq[1] = 0.0f; aq[2] = 0.0f; aq[3] = 1.0f;	// identity
 			}
-			W3XQuatMultiply(lq, aq, &m_boneLocalQuat[bi*4]);
+			W3XQuatMultiply(lq, &m_boneLocalQuat[bi*4], aq);
 			lt[0] = m_boneLocalTrans[bi*3+0];
 			lt[1] = m_boneLocalTrans[bi*3+1];
 			lt[2] = m_boneLocalTrans[bi*3+2];
@@ -460,9 +460,10 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
 		float lq[4], lt[3];
 		if (qa[bi] || ta[bi]) {
-			// Same as composeControlledBones: rotate the ORIENTATION only, keep the
-			// local position at bind + animation trans offset (30aabc6 semantics).
-			W3XQuatMultiply(lq, aq[bi], &m_boneLocalQuat[bi * 4]);
+			// Same as composeControlledBones: localQuat = bindLocalQuat * animQuat
+			// (RA3 export channel = bind^-1 × animLocal), translation stays at bind +
+			// anim trans offset (30aabc6 semantics).
+			W3XQuatMultiply(lq, &m_boneLocalQuat[bi * 4], aq[bi]);
 			lt[0] = m_boneLocalTrans[bi*3+0];
 			lt[1] = m_boneLocalTrans[bi*3+1];
 			lt[2] = m_boneLocalTrans[bi*3+2];

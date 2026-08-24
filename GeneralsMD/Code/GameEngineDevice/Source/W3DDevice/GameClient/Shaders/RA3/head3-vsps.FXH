@@ -222,11 +222,11 @@ VS_H_output  VS_H_22skin (VS_H_22skin_input  i)  //2 bone skin, with tangentfram
     float3 worldB0 = mul(i.binormal0.xyz, bone_matrix_0) ;
     float3 worldB1 = mul(i.binormal1.xyz, bone_matrix_1) ;
 
-    o.WorldP = lerp( worldP1 , worldP0 , i.blendweight.x) ;
-    o.WorldN = lerp( worldN1 , worldN0 , i.blendweight.x) ;
-    o.WorldT = lerp( worldT1 , worldT0 , i.blendweight.x) ;
-    o.WorldB = lerp( worldB1 , worldB0 , i.blendweight.x) ;
-    o.VertexColor.w *= lerp(bone_offset_alpha_1.w , bone_offset_alpha_0.w , i.blendweight.x) ; 
+    o.WorldP = lerp( worldP0 , worldP1 , i.blendweight.x) ;
+    o.WorldN = lerp( worldN0 , worldN1 , i.blendweight.x) ;
+    o.WorldT = lerp( worldT0 , worldT1 , i.blendweight.x) ;
+    o.WorldB = lerp( worldB0 , worldB1 , i.blendweight.x) ;
+    o.VertexColor.w *= lerp(bone_offset_alpha_0.w , bone_offset_alpha_1.w , i.blendweight.x) ; 
     //o.WorldN = normalize(o.WorldN);
 
     //以上是物体到世界空间相关的代码，以下保留======
@@ -416,9 +416,9 @@ VS_notgt_output  VS_L_22skin (VS_22skin_notgt_input  i)//, uniform bool UseShado
     float3 worldN0 = QuaternionRotate( bone_Quaternion_0 , i.normal0.xyz);
     float3 worldN1 = QuaternionRotate( bone_Quaternion_1 , i.normal1.xyz);
 
-    o.WorldP = lerp( worldP1 , worldP0 , i.blendweight.x) ;
-    o.WorldN = lerp( worldN1 , worldN0 , i.blendweight.x) ;
-    o.VertexColor.w = lerp(bone_offset_alpha_1.w , bone_offset_alpha_0.w , i.blendweight.x) ; 
+    o.WorldP = lerp( worldP0 , worldP1 , i.blendweight.x) ;
+    o.WorldN = lerp( worldN0 , worldN1 , i.blendweight.x) ;
+    o.VertexColor.w = lerp(bone_offset_alpha_0.w , bone_offset_alpha_1.w , i.blendweight.x) ; 
 
     //以上是物体到世界空间相关的代码，以下保留======
 
@@ -538,8 +538,8 @@ VS_ShadowMaker_output VS_ShadowMaker_22skin(VS_ShadowMaker_22skin_input i)
 
     float3 worldP0 = QuaternionRotate( bone_Quaternion_0 , i.position0.xyz ) + bone_offset_alpha_0.xyz ;
     float3 worldP1 = QuaternionRotate( bone_Quaternion_1 , i.position1.xyz ) + bone_offset_alpha_1.xyz ;
-    WorldPosition.xyz = lerp( worldP1 , worldP0 , i.blendweight.x) ;
-    o.Valpha = lerp(bone_offset_alpha_1.w , bone_offset_alpha_0.w , i.blendweight.x) ;//* OpacityOverride ; 
+    WorldPosition.xyz = lerp( worldP0 , worldP1 , i.blendweight.x) ;
+    o.Valpha = lerp(bone_offset_alpha_0.w , bone_offset_alpha_1.w , i.blendweight.x) ;//* OpacityOverride ; 
     //以下是阴影空间投影
     o.Position = mul(WorldPosition, ViewProjection);
     o.ClipSpace = o.Position ;
