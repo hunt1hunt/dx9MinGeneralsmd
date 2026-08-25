@@ -881,6 +881,13 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	W3DDisplay::m_3DScene->Add_Render_Object(robj);
 	m_renderObj = robj;
 
+	// Associate the drawable with the render object (mirrors W3DModelDraw:3137).
+	// Without this, W3DView::pickDrawable reads Get_User_Data() == NULL and the
+	// pick/hover can never resolve the W3X unit even though Cast_Ray hits it.
+	if (getDrawable()) {
+		robj->Set_User_Data(getDrawable()->getDrawableInfo());
+	}
+
 	// Set the render object's collision type for ray-picking (mirrors
 	// W3DModelDraw). Without it the W3X collision type stays 0 and mouse clicks
 	// can't select the unit (only drag-box works). Soldiers are KINDOF_SELECTABLE
