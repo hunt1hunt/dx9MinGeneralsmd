@@ -23,6 +23,7 @@
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/coltest.h"	// CollisionMath for Cast_Ray (mouse picking)
 #include "WWMath/matrix4.h"
 #include "WWMath/quat.h"	// Quaternion for Get_Bone_Transform (Matrix3D::Set_Rotation)
 #include "WW3D2/texture.h"
@@ -760,6 +761,48 @@ static AsciiString ResolveTexturePathCached(const char *texName)
 		s_texPathCacheSize++;
 	}
 	return path;
+}
+
+// Force the engine texture manager to load every texture a W3X constant set
+// references, so the first in-game render doesn't hit a D3D file load.
+static void PreloadW3XConstantsTextures(const std::vector<W3XShaderConstant> &constants)
+{
+	for (size_t ci = 0; ci < constants.size(); ci++) {
+		const W3XShaderConstant &c = constants[ci];
+		if (c.type != W3X_CONSTANT_TEXTURE || c.textureValue.isEmpty()) continue;
+		AsciiString dds = ResolveTexturePathCached(c.textureValue.str());
+		if (!dds.isEmpty())
+			WW3DAssetManager::Get_Instance()->Get_Texture(dds.str(), MIP_LEVELS_ALL, WW3D_FORMAT_UNKNOWN, true);
+	}
+}
+
+void W3XRenderObjClass::PreloadAssets(void)
+{
+	// Compile the model-wide + per-sub-mesh shaders (D3DXCreateEffect is the
+	// biggest single-frame stall when it runs on first render).
+	W3XEffectManager::Instance()->GetEffect(m_fxName.str());
+	for (size_t mi = 0; mi < m_meshes.size(); mi++)
+		if (!m_meshes[mi].fxName.isEmpty())
+			W3XEffectManager::Instance()->GetEffect(m_meshes[mi].fxName.str());
+	// Load the textures referenced by the model + per-sub-mesh constants.
+	PreloadW3XConstantsTextures(m_constants);
+	for (size_t si = 0; si < m_meshes.size(); si++)
+		PreloadW3XConstantsTextures(m_meshes[si].constants);
+}
+
+bool W3XRenderObjClass::Cast_Ray(RayCollisionTestClass & raytest)
+{
+	// Mirrors AABoxRenderObjClass::Cast_Ray so mouse clicks pick W3X units. The
+	// base RenderObjClass::Cast_Ray returns false -> W3X objects were unselectable
+	// by click (only drag-box). Test the world-space AABB set via SetBounds.
+	if ((Get_Collision_Type() & raytest.CollisionType) == 0) return false;
+	if (raytest.Result->StartBad) return false;
+
+	if (CollisionMath::Collide(raytest.Ray, Get_Bounding_Box(), raytest.Result)) {
+		raytest.CollidedRenderObj = this;
+		return true;
+	}
+	return false;
 }
 
 //=============================================================================

@@ -123,6 +123,15 @@ public:
 	// of the spread bind/T-pose. Does NOT touch the bind pose or turret control.
 	// Returns true if any channel was applied.
 	bool ApplyAnimationFrame(const W3XAnimation *anim, int frame);
+	// Compile the model + per-sub-mesh shaders and load their textures NOW so the
+	// first in-game render of a W3X unit doesn't hitch (D3DXCreateEffect and the
+	// D3D texture loads are lazy and block on first use). Called from
+	// W3XModelDraw::preloadAssets at map/game load time.
+	void PreloadAssets(void);
+	// Ray vs bounding-box test for mouse picking / selection. The base
+	// RenderObjClass::Cast_Ray returns false, so W3X units were unclickable;
+	// this tests the world-space AABB (set via SetBounds) like AABoxRenderObjClass.
+	virtual bool Cast_Ray(RayCollisionTestClass & raytest);
 	// Bone-name interface so the Generals model/weapon code (W3DModelDraw's
 	// findSingleBone etc) can resolve WeaponFireFXBone/WeaponMuzzleFlash/
 	// WeaponLaunchBone ini names to skeleton pivots. Bone names are loaded from

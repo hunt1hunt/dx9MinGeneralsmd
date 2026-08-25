@@ -28,6 +28,7 @@
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DShadow.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/View.h"	// PICK_TYPE_SELECTABLE for ray-picking collision type
 #include "GameClient/Shadow.h"
 #include "GameClient/FXList.h"		// FXList::doFXPos for weapon fire placement
 #include "GameLogic/Object.h"
@@ -275,6 +276,18 @@ void W3XModelDraw::preloadAssets(TimeOfDay timeOfDay)
 		m_loadedModel = tmp;
 		m_loadedModelName = md->m_defaultModelName;
 		createRenderObject(m_loadedModel);
+		// Preload everything that would otherwise load lazily on the first in-game
+		// spawn/render and stall a frame: shader compile (D3DXCreateEffect), DDS
+		// textures, the idle animation XML, and the volumetric shadow geometry.
+		// Shaders/textures/shadow-geometry are cached globally, so the first real
+		// unit of each type reuses them.
+		if (m_renderObj) {
+			m_renderObj->PreloadAssets();
+			const W3XConditionInfo *idle = md->findBestConditionState(ModelConditionFlags());
+			if (idle && !idle->m_animationName.isEmpty())
+				loadAnimation(idle->m_animationName.str());
+			allocateShadows();
+		}
 	}
 }
 
@@ -867,6 +880,26 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 	// Add to scene
 	W3DDisplay::m_3DScene->Add_Render_Object(robj);
 	m_renderObj = robj;
+
+	// Set the render object's collision type for ray-picking (mirrors
+	// W3DModelDraw). Without it the W3X collision type stays 0 and mouse clicks
+	// can't select the unit (only drag-box works). Soldiers are KINDOF_SELECTABLE
+	// -> PICK_TYPE_SELECTABLE.
+	{
+		const ThingTemplate *tmplate = getDrawable() ? getDrawable()->getTemplate() : NULL;
+		if (tmplate && robj) {
+			if (tmplate->isKindOf(KINDOF_SELECTABLE))
+				robj->Set_Collision_Type(PICK_TYPE_SELECTABLE);
+			else if (tmplate->isKindOf(KINDOF_SHRUBBERY))
+				robj->Set_Collision_Type(PICK_TYPE_SHRUBBERY);
+			else if (tmplate->isKindOf(KINDOF_MINE))
+				robj->Set_Collision_Type(PICK_TYPE_MINES);
+			else if (tmplate->isKindOf(KINDOF_FORCEATTACKABLE))
+				robj->Set_Collision_Type(PICK_TYPE_FORCEATTACKABLE);
+			else
+				robj->Set_Collision_Type(0);
+		}
+	}
 
 	DEBUG_LOG(("[W3X_P5]   W3XRenderObj added to scene: %d sub-meshes, fx=%s\n",
 		(int)data.subMeshes.size(), data.fxShaderName.str()));

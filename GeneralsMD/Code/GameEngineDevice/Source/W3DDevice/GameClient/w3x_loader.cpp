@@ -52,6 +52,7 @@
 
 #include "always.h"
 #include "w3x_loader.h"
+#include <map>
 
 // pugixml configuration: disable STL streams (not available with VC6/STLport)
 #define PUGIXML_NO_STL
@@ -822,6 +823,17 @@ bool W3XLoader::ParseHierarchy(const char *filename,
 //=============================================================================
 bool W3XLoader::ParseAnimation(const char *filename, W3XAnimation &anim)
 {
+	// Global cache: animations are parsed once per drawable on first use, which
+	// stalls a frame at spawn (e.g. every new infantry of the same type re-parsed
+	// the idle XML). Cache by filename so the first drawable parses and all
+	// subsequent ones reuse the keyframes.
+	static std::map<AsciiString, W3XAnimation> s_animCache;
+	std::map<AsciiString, W3XAnimation>::iterator cached = s_animCache.find(AsciiString(filename));
+	if (cached != s_animCache.end()) {
+		anim = cached->second;
+		return true;
+	}
+
 	anim.channels.clear();
 	anim.numFrames = 0;
 
@@ -882,7 +894,9 @@ bool W3XLoader::ParseAnimation(const char *filename, W3XAnimation &anim)
 
 	DEBUG_LOG(("[W3X_P2] ParseAnimation: '%s' hierarchy='%s' frames=%d channels=%d\n",
 		anim.name.str(), anim.hierarchy.str(), anim.numFrames, (int)anim.channels.size()));
-	return (!anim.channels.empty());
+	bool ok = !anim.channels.empty();
+	if (ok) s_animCache[AsciiString(filename)] = anim;
+	return ok;
 }
 
 // Helper for ParseAnimation: read one channel element's pivot + frame keyframes.
