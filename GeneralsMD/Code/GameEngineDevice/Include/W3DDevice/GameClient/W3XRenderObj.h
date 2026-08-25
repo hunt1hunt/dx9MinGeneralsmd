@@ -109,6 +109,20 @@ public:
 	// parts like the turret/barrel). NULL if the model has no bones.
 	const float *GetBones(void) const { return m_bones; }
 	int GetBoneCount(void) const { return m_boneCount; }
+	// Composed object-local WorldBones (quat+offset, 8 floats/bone): the bind pose
+	// plus the current animation + turret control, same array the renderer uploads.
+	// The volumetric shadow geometry must be skinned with these (NOT the raw bind
+	// GetBones) so an animated soldier casts a compact standing silhouette instead
+	// of the spread bind/T-pose (arms out, weapon 11 units to the side). Writes at
+	// most maxFloats floats into out (needs >= kMaxBones*8). Returns bone count,
+	// or 0 if out/maxFloats is invalid.
+	int GetComposedBones(float *out, int maxFloats) const;
+	// Apply one frame of an animation to the bone anim overrides so the composed
+	// bones (and thus a volumetric shadow silhouette built from them) are that
+	// pose — e.g. the idle frame 0 = standing soldier with weapon in hand, instead
+	// of the spread bind/T-pose. Does NOT touch the bind pose or turret control.
+	// Returns true if any channel was applied.
+	bool ApplyAnimationFrame(const W3XAnimation *anim, int frame);
 	// Bone-name interface so the Generals model/weapon code (W3DModelDraw's
 	// findSingleBone etc) can resolve WeaponFireFXBone/WeaponMuzzleFlash/
 	// WeaponLaunchBone ini names to skeleton pivots. Bone names are loaded from

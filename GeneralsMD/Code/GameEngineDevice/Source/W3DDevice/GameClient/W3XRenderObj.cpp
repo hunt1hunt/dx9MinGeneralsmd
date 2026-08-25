@@ -348,6 +348,36 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 	}
 }
 
+int W3XRenderObjClass::GetComposedBones(float *out, int maxFloats) const
+{
+	if (!out || maxFloats < kMaxBones * 8) return 0;
+	composeControlledBones(out);
+	return m_boneCount;
+}
+
+bool W3XRenderObjClass::ApplyAnimationFrame(const W3XAnimation *anim, int frame)
+{
+	if (!anim) return false;
+	bool applied = false;
+	for (size_t ci = 0; ci < anim->channels.size(); ci++) {
+		const W3XAnimChannel &ch = anim->channels[ci];
+		if (ch.pivot < 0 || ch.pivot >= kMaxBones) continue;
+		if (!ch.quatFrames.empty()) {
+			int n = (int)ch.quatFrames.size() / 4;
+			int f = (n > 0) ? (frame % n) : 0;
+			SetBoneAnimQuat(ch.pivot, &ch.quatFrames[f * 4]);
+			applied = true;
+		}
+		if (!ch.transFrames.empty()) {
+			int n = (int)ch.transFrames.size() / 3;
+			int f = (n > 0) ? (frame % n) : 0;
+			SetBoneAnimTrans(ch.pivot, &ch.transFrames[f * 3]);
+			applied = true;
+		}
+	}
+	return applied;
+}
+
 const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(int boneindex)
 {
 	// World-space bone transform, taking the turret/barrel control (Control_Bone

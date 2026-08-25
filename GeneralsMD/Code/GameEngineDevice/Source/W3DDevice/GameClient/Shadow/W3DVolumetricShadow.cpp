@@ -821,14 +821,35 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 	static const int kMaxShadowBones = 128;
 	float wbBones[kMaxShadowBones * 8];
 	int wbBoneCount = 0;
-	const float *skBones = w3x->GetBones();
-	int skBoneCount = w3x->GetBoneCount();
-	{
+	// Skin with the COMPOSED object-local world bones (bind + current animation +
+	// turret control), NOT the raw bind GetBones: a humanoid's bind/T-pose is
+	// spread wide (arms out, weapon ~11 units to the side), so the bind silhouette
+	// is ~3x the standing soldier. Composing the current animation yields the
+	// standing pose (weapon in hand) -> a compact, realistic shadow.
+	wbBoneCount = w3x->GetComposedBones(wbBones, kMaxShadowBones * 8);
+	if (wbBoneCount <= 0) {
+		// fallback: raw bind bones (model without animation/turret control)
+		const float *skBones = w3x->GetBones();
+		int skBoneCount = w3x->GetBoneCount();
 		int maxB = skBoneCount < kMaxShadowBones ? skBoneCount : kMaxShadowBones;
-		for (int bi = 0; bi < maxB; bi++) {
+		for (int bi = 0; bi < maxB; bi++)
 			for (int c = 0; c < 8; c++) wbBones[bi*8 + c] = skBones[bi*8 + c];
-		}
 		wbBoneCount = maxB;
+	}
+
+	// Body-cap Z for the shadow silhouette: skip sub-meshes whose skinned vertices
+	// extend far above the body (e.g. the missile defender's vertical launcher
+	// tube reaches ~2x the soldier height) so the shadow stays compact. Reference
+	// = 1.5x the composed HEAD bone's Z; anything above that is not part of the
+	// compact body silhouette.
+	float bodyCapZ = 1.0e30f;
+	{
+		int headIdx = w3x->Get_Bone_Index("head");
+		if (headIdx > 0 && headIdx < wbBoneCount) {
+			float hz = wbBones[headIdx * 8 + 6];	// composed head Z (object-local)
+			if (hz > 1.0f)
+				bodyCapZ = hz * 1.5f;
+		}
 	}
 
 	int subMeshCount = w3x->GetSubMeshCount();
@@ -904,6 +925,15 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 				}
 			}
 			vb->Unlock();
+		}
+
+		// Skip sub-meshes whose silhouette extends far above the body (vertical
+		// launcher/antenna) so the shadow stays compact and matches the soldier.
+		if (bodyCapZ < 1.0e30f) {
+			float maxZ = -1.0e30f;
+			for (int v = 0; v < vcount; v++)
+				if (verts[v].Z > maxZ) maxZ = verts[v].Z;
+			if (maxZ > bodyCapZ) { delete[] verts; continue; }
 		}
 
 		// Read triangle indices (16-bit).

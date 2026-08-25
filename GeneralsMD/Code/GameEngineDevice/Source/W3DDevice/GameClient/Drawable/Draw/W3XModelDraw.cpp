@@ -182,15 +182,49 @@ void W3XModelDraw::releaseShadows(void)
 
 void W3XModelDraw::allocateShadows(void)
 {
-	// SWITCHED to the engine's W3D soft (projected) shadow path: the deferred
-	// shadow-map could not rasterize the W3X into the shadow color RT under
-	// dgVoodoo2 (0 pixels), so use the same projected ground-blob shadow the
-	// standard W3D units use, driven by the template's Shadow type
-	// (SHADOW_PROJECTION). NOT volumetric (its open sub-mesh parts overflow the
-	// shadow buffers), but a projected blob from the object bounds.
+	// SWITCHED to the engine's W3D soft shadow path: the deferred shadow-map could
+	// not rasterize the W3X into the shadow color RT under dgVoodoo2 (0 pixels),
+	// so use the engine shadow driven by the template's Shadow type
+	// (SHADOW_VOLUME). The shadow geometry is skinned from the render object's
+	// COMPOSED (animated) bones, so apply the current animation's frame 0 first —
+	// a humanoid's bind/T-pose (arms out, weapon 11 units to the side) would
+	// otherwise make the shadow ~3x the standing soldier.
 	const ThingTemplate *tmplate = getDrawable() ? getDrawable()->getTemplate() : NULL;
 	if (m_shadow == NULL && m_renderObj && TheW3DShadowManager
 		&& tmplate && tmplate->getShadowType() != SHADOW_NONE) {
+		// Apply the current animation's frame-0 pose so the baked volumetric shadow
+		// silhouette is the standing pose (weapon in hand), not the spread bind.
+		// doDrawModule() loaded the animation into m_curAnim before calling us.
+		W3XRenderObjClass *w3x = m_renderObj;	// W3XModelDraw's render object is always a W3XRenderObjClass
+		if (w3x && m_curAnim.numFrames > 0 && !m_curAnim.channels.empty())
+			w3x->ApplyAnimationFrame(&m_curAnim, 0);
+		// If the applied pose is prone (hips far below the bind height — e.g. the
+		// GU sniper's idle lies down), a horizontal shadow looks wrong/reversed.
+		// Use the MOVING animation (the sniper's bent-upright crawl) for a normal
+		// upright shadow silhouette instead. m_curAnim is left untouched so the
+		// live animation keeps playing the idle.
+		if (w3x) {
+			int hips = w3x->Get_Bone_Index("hips");
+			float bindHipsZ = 0.0f;
+			if (hips > 0 && hips < w3x->GetBoneCount())
+				bindHipsZ = w3x->GetBones()[hips * 8 + 6];
+			float compBones[128 * 8];
+			int compN = w3x->GetComposedBones(compBones, 128 * 8);
+			float poseHipsZ = (compN > 0 && hips > 0 && hips < compN) ? compBones[hips * 8 + 6] : 0.0f;
+			if (bindHipsZ > 1.0f && poseHipsZ < 0.6f * bindHipsZ) {
+				const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
+				ModelConditionFlags moveFlags;
+				moveFlags.set(MODELCONDITION_MOVING);
+				const W3XConditionInfo *moveState = md ? md->findBestConditionState(moveFlags) : NULL;
+				if (moveState && !moveState->m_animationName.isEmpty()) {
+					W3XAnimation moveAnim;
+					char path[512];
+					sprintf(path, W3X_ASSET_DIR "%s.w3x", moveState->m_animationName.str());
+					if (W3XLoader::ParseAnimation(path, moveAnim))
+						w3x->ApplyAnimationFrame(&moveAnim, 0);
+				}
+			}
+		}
 		Shadow::ShadowTypeInfo shadowInfo;
 		strcpy(shadowInfo.m_ShadowName, tmplate->getShadowTextureName().str());
 		shadowInfo.allowUpdates    = FALSE;
@@ -201,6 +235,8 @@ void W3XModelDraw::allocateShadows(void)
 		shadowInfo.m_offsetX       = tmplate->getShadowOffsetX();
 		shadowInfo.m_offsetY       = tmplate->getShadowOffsetY();
 		m_shadow = TheW3DShadowManager->addShadow(m_renderObj, &shadowInfo);
+		// Restore the live animation state; the per-frame update re-applies it.
+		if (w3x) w3x->ResetAnimationBones();
 		if (m_shadow) {
 			m_shadow->enableShadowInvisible(m_fullyObscuredByShroud);
 			if (m_renderObj->Is_Hidden() || !m_shadowEnabled)
