@@ -234,24 +234,25 @@ int W3XRenderObjClass::Get_Bone_Index(const char *bonename)
 
 void W3XRenderObjClass::composeControlledBones(float *out) const
 {
-	// RA3 W3X composition (commit 43f2ed91 = 30aabc6 semantics). The animation
-	// rotation is applied to the ORIENTATION only; the bone's local POSITION stays
-	// at its bind spot plus the animation's translation offset. Rotating
-	// bindLocalTrans by the anim quaternion would swing the bone's pivot around
-	// its own centre instead of staying on the parent mount — that made soldier
-	// joints stretch like rubber. Matches the RA3 shader contract (Skinning.fxh
-	// BoneTransformPosition = R·v + t: the translation is never rotated by the
-	// bone's own rotation):
+	// RA3 W3X composition. The animation rotation is applied to the ORIENTATION
+	// only; the bone's local POSITION stays at its bind spot plus the (bind-rotated)
+	// animation translation delta. Rotating bindLocalTrans by the anim quaternion
+	// would swing the bone's pivot around its own centre instead of staying on the
+	// parent mount — that made soldier joints stretch like rubber. Matches the RA3
+	// shader contract (Skinning.fxh BoneTransformPosition = R·v + t: the translation
+	// is never rotated by the bone's own rotation):
 	//   localQuat  = bindLocalQuat * animQuat
-	//   localTrans = bindLocalTrans + animTrans
+	//   localTrans = bindLocalTrans + R(bindLocalQuat) * animTrans
 	//   worldQuat  = parentWorldQuat * localQuat
 	//   worldOffset= parentWorldOffset + R(parentWorldQuat) * localTrans
 	// animQuat / animTrans are the RAW RA3 channel values (channel = bind^-1 ×
-	// animLocal, so compose = bind × channel reproduces the exported pose). A turret-
-	// controlled bone (Control_Bone) replaces the animation (W3D capture
-	// semantics) with the control rotation on the bind pose, so the tank turret
-	// stays game-logic driven while animated bones (soldier legs/spine/arms)
-	// follow the channel.
+	// animLocal, so compose = bind × channel reproduces the exported pose; the
+	// anim translation delta must be rotated by the bind quaternion to recover
+	// animLocal.trans — identity-bind bones, i.e. all vehicles/buildings, are
+	// unaffected). A turret-controlled bone (Control_Bone) replaces the animation
+	// (W3D capture semantics) with the control rotation on the bind pose, so the
+	// tank turret stays game-logic driven while animated bones (soldier
+	// legs/spine/arms) follow the channel.
 	bool hasLocalPose = (m_boneLocalQuat != NULL && m_boneLocalTrans != NULL);
 
 	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
@@ -266,30 +267,35 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 			// W3D capture: the game-logic control rotation replaces the animation
 			// on the bind pose. bindLocalQuat * ctrlQuat (the tank's bind quats are
 			// all identity, so this is just ctrlQuat). Translation stays at the bind
-			// spot (+ any anim trans), matching the pre-split behavior.
+			// spot (+ bind-rotated anim trans), matching the pre-split behavior.
 			if (hasLocalPose) {
 				W3XQuatMultiply(lq, &m_boneLocalQuat[bi*4], m_boneCtrlQuat[bi]);
 				lt[0] = m_boneLocalTrans[bi*3+0];
 				lt[1] = m_boneLocalTrans[bi*3+1];
 				lt[2] = m_boneLocalTrans[bi*3+2];
 				if (m_boneAnimTransActive[bi]) {
-					lt[0] += m_boneAnimTrans[bi][0];
-					lt[1] += m_boneAnimTrans[bi][1];
-					lt[2] += m_boneAnimTrans[bi][2];
+					// Same channel-frame rotation as the animated branch: rotate the
+					// anim translation delta by the bind quaternion. Identity-bind
+					// bones (all vehicles/buildings) are unaffected.
+					float r[3];
+					W3XQuatRotateVector(r, &m_boneLocalQuat[bi*4], m_boneAnimTrans[bi]);
+					lt[0] += r[0];
+					lt[1] += r[1];
+					lt[2] += r[2];
 				}
 			} else {
 				lq[0] = m_bones[bi*8+0]; lq[1] = m_bones[bi*8+1]; lq[2] = m_bones[bi*8+2]; lq[3] = m_bones[bi*8+3];
 				lt[0] = m_bones[bi*8+4]; lt[1] = m_bones[bi*8+5]; lt[2] = m_bones[bi*8+6];
 			}
 		} else if (animated && hasLocalPose) {
-			// SAGE composition (commit 30aabc6): the animation rotation is applied
-			// to the ORIENTATION only; the bone's local POSITION stays at its bind
-			// spot plus the animation's translation offset. Rotating bindLocalTrans
-			// by the animation quaternion would swing the bone's pivot around its
-			// own centre (turret/limb spin) instead of staying on the parent mount
-			// — that made soldier joints stretch like rubber.
-			//   localQuat  = animQuat * bindLocalQuat
-			//   localTrans = bindLocalTrans + animTrans
+			// SAGE composition (commit 30aabc6 + bind-rotation fix): the animation
+			// rotation is applied to the ORIENTATION only; the bone's local POSITION
+			// stays at its bind spot plus the bind-rotated animation translation
+			// delta. Rotating bindLocalTrans by the animation quaternion would swing
+			// the bone's pivot around its own centre (turret/limb spin) instead of
+			// staying on the parent mount — that made soldier joints stretch.
+			//   localQuat  = bindLocalQuat * animQuat
+			//   localTrans = bindLocalTrans + R(bindLocalQuat) * animTrans
 			float aq[4];
 			if (m_boneAnimQuatActive[bi]) {
 				aq[0] = m_boneAnimQuat[bi][0]; aq[1] = m_boneAnimQuat[bi][1];
@@ -302,9 +308,16 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 			lt[1] = m_boneLocalTrans[bi*3+1];
 			lt[2] = m_boneLocalTrans[bi*3+2];
 			if (m_boneAnimTransActive[bi]) {
-				lt[0] += m_boneAnimTrans[bi][0];
-				lt[1] += m_boneAnimTrans[bi][1];
-				lt[2] += m_boneAnimTrans[bi][2];
+				// channel = bind^-1 x animLocal, so the anim translation DELTA must be
+				// rotated by the bind quaternion to recover animLocal.trans. Without
+				// this, bones with a non-identity bind rotation (e.g. JUANTI
+				// ENERGYRIFLE, 90 deg around Z) had the delta applied in the parent
+				// frame and the weapon flew ~17 units from the hand.
+				float r[3];
+				W3XQuatRotateVector(r, &m_boneLocalQuat[bi*4], m_boneAnimTrans[bi]);
+				lt[0] += r[0];
+				lt[1] += r[1];
+				lt[2] += r[2];
 			}
 		} else if (hasLocalPose) {
 			// Bind pose (no animation, no control).
@@ -452,7 +465,8 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 		}
 	}
 
-	// Compose: local = anim × bind; world = parentWorld × local (parent chain).
+	// Compose: localQuat = bind × anim, localTrans = bind + R(bind)*anim;
+	// world = parentWorld × local (parent chain).
 	// Same math as composeControlledBones but with the evaluated anim overrides and
 	// no turret Control_Bone (infantry launch bones are not turret-driven).
 	float comp[kMaxBones * 8];
@@ -460,14 +474,21 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
 		float lq[4], lt[3];
 		if (qa[bi] || ta[bi]) {
-			// Same as composeControlledBones: localQuat = bindLocalQuat * animQuat
-			// (RA3 export channel = bind^-1 × animLocal), translation stays at bind +
-			// anim trans offset (30aabc6 semantics).
+			// Same as composeControlledBones: localQuat = bindLocalQuat * animQuat,
+			// localTrans = bindLocalTrans + R(bindLocalQuat) * animTrans (RA3 export
+			// channel = bind^-1 × animLocal, so the anim delta is bind-rotated).
 			W3XQuatMultiply(lq, &m_boneLocalQuat[bi * 4], aq[bi]);
 			lt[0] = m_boneLocalTrans[bi*3+0];
 			lt[1] = m_boneLocalTrans[bi*3+1];
 			lt[2] = m_boneLocalTrans[bi*3+2];
-			if (ta[bi]) { lt[0] += at[bi][0]; lt[1] += at[bi][1]; lt[2] += at[bi][2]; }
+			if (ta[bi]) {
+				// Rotate the anim translation delta by the bind quaternion (channel =
+				// bind^-1 x animLocal), matching composeControlledBones so the launch
+				// offset follows the same pose the renderer shows.
+				float arot[3];
+				W3XQuatRotateVector(arot, &m_boneLocalQuat[bi * 4], at[bi]);
+				lt[0] += arot[0]; lt[1] += arot[1]; lt[2] += arot[2];
+			}
 		} else {
 			lq[0] = m_boneLocalQuat[bi*4+0]; lq[1] = m_boneLocalQuat[bi*4+1]; lq[2] = m_boneLocalQuat[bi*4+2]; lq[3] = m_boneLocalQuat[bi*4+3];
 			lt[0] = m_boneLocalTrans[bi*3+0]; lt[1] = m_boneLocalTrans[bi*3+1]; lt[2] = m_boneLocalTrans[bi*3+2];
