@@ -1736,14 +1736,37 @@ WW3DErrorType MeshModelClass::read_prelit_material (ChunkLoadClass &cload, MeshL
  *=============================================================================================*/
 void MeshModelClass::post_process()
 {
-	// Force lighting on for EVERY material on this mesh, unconditionally.
-	// DX9: emissive-only materials (skyboxes like qsnboxmorning.w3d, bloom boxes,
-	// water) get Set_Lighting(false) during Post_Load_Process because they have no
-	// diffuse/ambient input, which turns off D3DRS_LIGHTING and makes their
-	// self-emissive textures render black / lose the skybox. Setting lighting ON
-	// here (after the material config) keeps those meshes lit while normal meshes
-	// are unaffected.
-	if (DefMatDesc != NULL) {
+	// Skybox meshes (qsnboxmorning/qingwaddskybox) are emissive-only materials
+	// whose sky gradients are authored as per-vertex colors (dome has no
+	// texture). Forcing D3DRS_LIGHTING ON discards the vertex colors (material
+	// diffuse=0) and renders the sky dome white/black. Keep LIGHTING=OFF for
+	// them: the fixed-function LIGHTING=OFF path outputs vertex-color x texture,
+	// which is the correct skybox look.
+	bool isSkyboxMesh = false;
+	{
+		const char *meshName = Get_Name();
+		if (meshName) {
+			static const char *skyboxNames[] = { "qsnboxmorning", "qingwaddskybox" };
+			for (int si = 0; si < (int)(sizeof(skyboxNames)/sizeof(skyboxNames[0])); si++) {
+				int len = (int)strlen(skyboxNames[si]);
+				if (_strnicmp(meshName, skyboxNames[si], len) == 0 &&
+					(meshName[len] == '\0' || meshName[len] == '.')) {
+					isSkyboxMesh = true;
+					break;
+				}
+			}
+		}
+	}
+
+	// Force lighting on for EVERY material on this mesh, EXCEPT skybox meshes.
+	// DX9: emissive-only materials (bloom boxes, water) get Set_Lighting(false)
+	// during Post_Load_Process because they have no diffuse/ambient input, which
+	// turns off D3DRS_LIGHTING and makes their self-emissive textures render
+	// black. Setting lighting ON here (after the material config) keeps those
+	// meshes lit while normal meshes are unaffected. Skybox meshes are excluded
+	// (see isSkyboxMesh above): LIGHTING=ON discards their per-vertex-color
+	// gradients, rendering the sky dome white/black.
+	if (!isSkyboxMesh && DefMatDesc != NULL) {
 		int npass = DefMatDesc->Get_Pass_Count();
 		if (npass <= 0) npass = 1;
 		for (int pass = 0; pass < npass; pass++) {
@@ -1890,33 +1913,36 @@ void MeshModelClass::post_process()
 
         // 
         bool can_enable_specular = true;
-        if (can_enable_specular)  
-        {  
-            if (!DefMatDesc->Has_Material_Array(pass))  
-            {  
-                VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);  
-                if (vmat)  
-                {  
-                    vmat->Set_Lighting(true);
-                    // 
-                }  
-            }  
-            else  
-            {  
-                if (DefMatDesc->MaterialArray[pass])  
-                {  
-                    for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)  
-                    {  
-                        VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);  
-                        if (vmat)  
-                        {  
-                            vmat->Set_Lighting(true);
-                            // 
-                        }  
-                    }  
-                }  
-            }  
-        }  
+        if (can_enable_specular)
+        {
+            if (!DefMatDesc->Has_Material_Array(pass))
+            {
+                VertexMaterialClass* vmat = DefMatDesc->Peek_Single_Material(pass);
+                if (vmat)
+                {
+                    // Skybox meshes keep LIGHTING=OFF so their per-vertex-color
+                    // gradients render (LIGHTING=ON discards vertex colors).
+                    if (!isSkyboxMesh) vmat->Set_Lighting(true);
+                    //
+                }
+            }
+            else
+            {
+                if (DefMatDesc->MaterialArray[pass])
+                {
+                    for (int j = 0; j < DefMatDesc->MaterialArray[pass]->Get_Count(); j++)
+                    {
+                        VertexMaterialClass* vmat = DefMatDesc->MaterialArray[pass]->Peek_Element(j);
+                        if (vmat)
+                        {
+                            // Skybox meshes keep LIGHTING=OFF (see above).
+                            if (!isSkyboxMesh) vmat->Set_Lighting(true);
+                            //
+                        }
+                    }
+                }
+            }
+        }
     }  
 
     // 

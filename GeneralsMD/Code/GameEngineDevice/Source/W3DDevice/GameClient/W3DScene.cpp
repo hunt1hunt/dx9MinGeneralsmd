@@ -33,6 +33,7 @@
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include <stdlib.h>
+#include <string.h>
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Lib/BaseType.h"
@@ -1318,6 +1319,29 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 /** Custom render method for the RTS3DScene, custom render properties for our
   * particular game go here */
 //=============================================================================
+
+// Skybox models (qsnboxmorning.w3d / qingwaddskybox.w3d) are emissive-only
+// meshes whose sky gradients are authored as per-vertex colors with no
+// textures on the dome mesh. The G-Buffer PS only samples the s0 texture
+// (NULL -> white), so skyboxes must skip the G-Buffer pass and render in
+// the forward pass, where LIGHTING=OFF outputs vertex-color x texture.
+static bool isSkyboxRenderObjName(const char *name)
+{
+	if (name == NULL) return false;
+	static const char *skyboxNames[] = {
+		"qsnboxmorning",
+		"qingwaddskybox",
+	};
+	for (int i = 0; i < (int)(sizeof(skyboxNames)/sizeof(skyboxNames[0])); i++) {
+		int len = (int)strlen(skyboxNames[i]);
+		if (_strnicmp(name, skyboxNames[i], len) == 0) {
+			// exact "qsnboxmorning" or container form "qsnboxmorning.xxx"
+			if (name[len] == '\0' || name[len] == '.') return true;
+		}
+	}
+	return false;
+}
+
 void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 {
 #ifdef DIRTY_CONDITION_FLAGS
@@ -1405,6 +1429,13 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 
 		if (robj->Class_ID() == RenderObjClass::CLASSID_TILEMAP)
 			continue;	//we already rendered terrain
+
+		// G-Buffer pass: skip skybox models. Their sky gradients are per-vertex
+		// colors (dome has no texture) and the G-Buffer PS only samples s0
+		// (NULL -> white), which paints the sky white. Skyboxes render only in
+		// the forward pass (LIGHTING=OFF -> vertex-color x texture).
+		if (m_customPassMode == SCENE_PASS_GBUFFER && isSkyboxRenderObjName(robj->Get_Name()))
+			continue;
 
 		// DIAG: trace all non-terrain objects during G-Buffer pass
 		if (m_customPassMode == SCENE_PASS_GBUFFER) {
