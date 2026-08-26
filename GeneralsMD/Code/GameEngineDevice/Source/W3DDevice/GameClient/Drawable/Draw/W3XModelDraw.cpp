@@ -197,6 +197,10 @@ void W3XModelDraw::allocateShadows(void)
 		// silhouette is the standing pose (weapon in hand), not the spread bind.
 		// doDrawModule() loaded the animation into m_curAnim before calling us.
 		W3XRenderObjClass *w3x = m_renderObj;	// W3XModelDraw's render object is always a W3XRenderObjClass
+		// Note: the missile defender's launcher tube is excluded from the shadow
+		// geometry in W3DShadowGeometry::initFromW3X (rocket bone collapsed onto
+		// the hips bone), so the idle standing pose already casts a compact
+		// shadow — no per-unit pose override is needed here.
 		if (w3x && m_curAnim.numFrames > 0 && !m_curAnim.channels.empty())
 			w3x->ApplyAnimationFrame(&m_curAnim, 0);
 		// If the applied pose is prone (hips far below the bind height — e.g. the

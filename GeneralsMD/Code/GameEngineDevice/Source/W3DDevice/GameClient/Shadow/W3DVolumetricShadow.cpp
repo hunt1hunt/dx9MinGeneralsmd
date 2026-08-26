@@ -852,6 +852,23 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 		}
 	}
 
+	// Launcher-tube collapse for the shadow silhouette: the missile defender's
+	// rocket (launcher tube) bone sits ~15 units to the right of the body, so
+	// skinned tube vertices stretch/scatter the shadow in every pose. Collapse
+	// the rocket bone onto the hips bone — tube vertices then skin onto the
+	// waist and the shadow stays a compact standing soldier. Only models with
+	// a rocket bone are affected (the missile defender).
+	{
+		int rocketIdx = w3x->Get_Bone_Index("rocket");
+		if (rocketIdx > 0 && rocketIdx < wbBoneCount) {
+			int hipsIdx = w3x->Get_Bone_Index("hips");
+			if (hipsIdx > 0 && hipsIdx < wbBoneCount) {
+				for (int c = 0; c < 8; c++)
+					wbBones[rocketIdx * 8 + c] = wbBones[hipsIdx * 8 + c];
+			}
+		}
+	}
+
 	int subMeshCount = w3x->GetSubMeshCount();
 	// DIAG (per model): log the sub-mesh shadow-inclusion for the tank so we can
 	// confirm the barrel (UP04) is part of the volumetric shadow geometry (it
