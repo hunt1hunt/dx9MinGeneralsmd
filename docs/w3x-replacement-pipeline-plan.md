@@ -141,9 +141,28 @@ python GeneralsMD/Code/Tools/check_w3x_conventions.py "E:/!!!!!!!QWCSB/ART/W3X" 
 | 本文件 | 全面回顾 + 通用方案 + 分步计划 |
 
 ## 六、中方建筑试点状态（ChinaWarFactory → APAWarFactory）
-**已完成**（2026-08-27）：
-- 转换工具 `w3x_convert.py` 落地，产物输出到 `E:\!!!!!!!QWCSB\ART\W3X\AP\`（按源分类 AP 子目录，84 文件）。
+**已完成并验证通过**（2026-08-27）：
+- 转换工具 `w3x_convert.py` 落地，产物输出到 `E:\!!!!!!!QWCSB\ART\W3X\AP\`（按源分类 AP 子目录）。
 - 模型：`APAWARFACTORY_SKN`（8 主网格 + SKL + IDLE + DOOR(模型+动画一体) + BLD/CON）。
-- INI：`ChinaWarFactory` 主块 → `W3XModelDraw`（DefaultModelName + NONE/REALLYDAMAGED + IDLE 循环动画）；新增门 `ModuleTag_09`（DOOR_1_OPENING/WAITING_OPEN/CLOSING）；旧 W3D 子块（吊车/围栏/脚手架/传送带/门/建造吊车）全部禁用。
-- 校验 `check_w3x_conventions.py`：主模型/门/建造块均 0 错误（PBR 路由）。
-- **待验证**：需重新编译 GameEngineDevice→RTS.exe（子目录搜索 + 着色器改动），进游戏目视确认模型/贴图/开门/IDLE/阴影。
+- INI：`ChinaWarFactory` 主块 → `W3XModelDraw`（DefaultModelName + NONE/REALLYDAMAGED + IDLE 循环动画）；新增门 `ModuleTag_09`（DOOR_1_OPENING/WAITING_OPEN/CLOSING）；旧 W3D 子块全部禁用。
+- 校验 0 错误（PBR 路由）。
+- **用户验证通过**：模型/贴图/开门动画/风扇(ANIM01骨)正常。两问题已修（INI 运行时读取，无需重编译）：
+  1. 烟囱冒烟：NONE 状态加 `ParticleSysBone = FX_SMOKE01/02/03 SteamVent`。
+  2. 出口方向：门在世界 X=57（Y 中心 7.5），`UnitCreatePoint/NaturalRallyPoint` 改为 (54,7.5)/(57,7.5)。
+
+## 六之二、中方其余建筑批量转换（8 个，2026-08-27）
+**已完成**：转换工具输出到 `Art/W3X/AP/` + INI patch（`FactionBuilding.ini.bak_china_buildings_batch_20260827` 备份）。
+
+| 建筑 | 模型 | 动画/门 |
+|------|------|---------|
+| ChinaAirfield | APAAIRFIELD_SKN | IDLE + 4 门(DOOR_01-04_SKN, DOOR_1 同时开) |
+| ChinaBarracks | APABARRACKS_SKN | IDLE + 门(APABARRACKS_DOOR, X=29/Y=-25 已对齐出口) |
+| ChinaPowerPlant | APAPOWERPLANT_SKN | IDLA(涡轮) |
+| ChinaBunker | APABUNKER_SKN | 无 |
+| ChinaWall | APAWALL_SKN | 无(容器+骨架同id合并文件) |
+| ChinaWallHub | APAWALLHUB_SKN | 无(同上) |
+| ChinaGattlingCannon | APABASEDEFENSEGATLIN_SKN | IDLE + Turret=BONE_TURRET + PREATTACK/FIRING/BETWEEN(ATA LOOP) |
+| ChinaNuclearMissileLauncher | APATAVNUKECN_SKN | IDLA + Turret=BONE_TURRET + PREATTACK(PREA)/FIRING(ATKA) |
+
+校验：13 模型 0 错误（4 个 FX2ndPassA 特效贴图警告为既有灯网格问题）。
+**待用户目视验证**：8 个建筑逐个进游戏确认模型/贴图/动画/门/出口。
