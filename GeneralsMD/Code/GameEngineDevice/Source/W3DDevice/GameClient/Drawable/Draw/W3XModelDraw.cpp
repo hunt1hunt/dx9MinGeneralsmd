@@ -493,6 +493,20 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 
 	const int VERTEX_STRIDE = sizeof(W3XVertex);
 
+	// Model-wide FX shader selection: decided from ALL non-default sub-meshes,
+	// not just the first one. Mixed-convention models (soldier = BASIC Texture_0
+	// / infantry.fx, vehicle = PBR DiffuseTexture / objects*.fx) must route the
+	// model-wide shader to PBR so the vehicle meshes keep their textures; the
+	// soldier meshes are then overridden per-sub-mesh to w3x_infantry.fx in
+	// createRenderObject. Only a model whose non-default meshes are ALL BASIC
+	// routes the whole model to w3x_infantry.fx.
+	bool hasPBRMesh = false;
+	bool hasBasicMesh = false;
+	int firstPBRTech = 0;
+	int firstBasicTech = 0;
+	std::vector<W3XShaderConstant> firstPBRConst;
+	std::vector<W3XShaderConstant> firstBasicConst;
+
 	// Load each sub-mesh
 	for (size_t si = 0; si < subObjects.size(); si++) {
 		const W3XSubObjectInfo &sub = subObjects[si];
@@ -695,9 +709,10 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 			sub.renderObjectName.str(), vertCount, triCount, hasBones ? (int)meshData.boneIndices.size() : 0,
 			(int)meshData.tangents.size(), meshData.fxShaderName.str()));
 
-		// Use the first non-defaultw3d FX shader (defaultw3d.fx is a placeholder
-		// that sub-parts use when they should render with the standard pipeline)
-		if (!meshData.fxShaderName.isEmpty() && outData.fxShaderName.isEmpty()
+		// Classify every non-defaultw3d FX shader (defaultw3d.fx is a placeholder
+		// that sub-parts use when they should render with the standard pipeline);
+		// the model-wide shader is decided below from the full mesh set.
+		if (!meshData.fxShaderName.isEmpty()
 			&& strcmp(meshData.fxShaderName.str(), "defaultw3d.fx") != 0) {
 			// REAL RA3 PBR shader via SAS-free override (w3x_soviet.fx compiles
 			// VS_H_11skin + PS_H_ARPBR directly; objectssoviet.fx itself uses
@@ -722,12 +737,35 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 					isBasicConvention = true;
 				}
 			}
-			outData.fxShaderName = isBasicConvention
-				? "Shaders\\RA3\\w3x_infantry.fx"
-				: "Shaders\\RA3\\w3x_soviet.fx";
-			outData.techniqueIndex = meshData.techniqueIndex;
-			outData.constants = meshData.constants;
+			if (isBasicConvention) {
+				if (!hasBasicMesh) {
+					hasBasicMesh = true;
+					firstBasicTech = meshData.techniqueIndex;
+					firstBasicConst = meshData.constants;
+				}
+			} else {
+				if (!hasPBRMesh) {
+					hasPBRMesh = true;
+					firstPBRTech = meshData.techniqueIndex;
+					firstPBRConst = meshData.constants;
+				}
+			}
 		}
+	}
+
+	// Decide the model-wide shader from ALL non-default sub-meshes. Any PBR
+	// mesh forces the shared PBR shader (vehicles/buildings keep their
+	// DiffuseTexture/NormalMap/SpecMap); soldier meshes are overridden
+	// per-sub-mesh to w3x_infantry.fx in createRenderObject. A purely-BASIC
+	// model (all soldiers) still routes the whole model to the infantry shader.
+	if (hasPBRMesh) {
+		outData.fxShaderName = "Shaders\\RA3\\w3x_soviet.fx";
+		outData.techniqueIndex = firstPBRTech;
+		outData.constants = firstPBRConst;
+	} else if (hasBasicMesh) {
+		outData.fxShaderName = "Shaders\\RA3\\w3x_infantry.fx";
+		outData.techniqueIndex = firstBasicTech;
+		outData.constants = firstBasicConst;
 	}
 
 	outData.valid = (outData.subMeshes.size() > 0);
