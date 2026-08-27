@@ -52,6 +52,58 @@
 #include <io.h>
 
 //-------------------------------------------------------------------------------------------------
+// W3XFindFileRecursive
+// Recursively search baseDir (relative to the game dir) for a file whose
+// basename matches. RA3/W3X assets may be organized in per-faction sub-directories
+// under Art/W3X/ (e.g. Art/W3X/AP/ for China) - search them when the direct
+// path is not found. On success writes the found relative path into outPath.
+//-------------------------------------------------------------------------------------------------
+static bool W3XFindFileRecursive(const char *baseDir, const char *basename,
+	char *outPath, int outSize)
+{
+	if (!baseDir || !basename || !basename[0] || outSize <= 0) return false;
+
+	char dir[512];
+	strcpy(dir, baseDir);
+	int dlen = (int)strlen(dir);
+	if (dlen > 0 && dir[dlen-1] != '/' && dir[dlen-1] != '\\')
+		strcat(dir, "/");
+
+	// 1) file directly in this directory?
+	char candidate[560];
+	sprintf(candidate, "%s%s", dir, basename);
+	struct _finddata_t fd;
+	long h = _findfirst(candidate, &fd);
+	if (h != -1) {
+		bool isFile = !(fd.attrib & _A_SUBDIR);
+		_findclose(h);
+		if (isFile && (int)strlen(candidate) < outSize) {
+			strcpy(outPath, candidate);
+			return true;
+		}
+	}
+
+	// 2) recurse into sub-directories
+	char pattern[520];
+	sprintf(pattern, "%s*", dir);
+	h = _findfirst(pattern, &fd);
+	if (h == -1) return false;
+	do {
+		if (fd.attrib & _A_SUBDIR) {
+			if (strcmp(fd.name, ".") == 0 || strcmp(fd.name, "..") == 0) continue;
+			char sub[512];
+			sprintf(sub, "%s%s", dir, fd.name);
+			if (W3XFindFileRecursive(sub, basename, outPath, outSize)) {
+				_findclose(h);
+				return true;
+			}
+		}
+	} while (_findnext(h, &fd) == 0);
+	_findclose(h);
+	return false;
+}
+
+//-------------------------------------------------------------------------------------------------
 /** Game file access.  At present this allows us to access test assets, assets from
 	* legacy GDI assets, and the current flat directory access for textures, models etc */
 //-------------------------------------------------------------------------------------------------
@@ -240,6 +292,21 @@ char const * GameFileClass::Set_Name( char const *filename )
 		strcpy( m_filePath, "Art/W3X/" );
 		strcat( m_filePath, filename );
 		m_fileExists = TheFileSystem->doesFileExist( m_filePath );
+	}
+
+	// W3X textures may also live in per-faction sub-directories under Art/W3X/
+	// (organized by source category, e.g. Art/W3X/AP/ for China). Search
+	// recursively by basename when the flat Art/W3X/ path is not found.
+	if( m_fileExists == FALSE && isImageFileType(fileType) )
+	{
+		const char *slash = strrchr(filename, '/');
+		if (!slash) slash = strrchr(filename, '\\');
+		const char *base = slash ? (slash + 1) : filename;
+		char found[_MAX_PATH];
+		if (W3XFindFileRecursive("Art/W3X", base, found, sizeof(found))) {
+			strcpy( m_filePath, found );
+			m_fileExists = TheFileSystem->doesFileExist( m_filePath );
+		}
 	}
 
 

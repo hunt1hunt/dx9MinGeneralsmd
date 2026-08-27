@@ -53,6 +53,7 @@
 #include "always.h"
 #include "w3x_loader.h"
 #include <map>
+#include <io.h>		// _findfirst/_findnext for recursive Art/W3X sub-dir search
 
 // pugixml configuration: disable STL streams (not available with VC6/STLport)
 #define PUGIXML_NO_STL
@@ -83,6 +84,59 @@ const char *W3XLoader::Get_Version_String(void)
 
 
 //=============================================================================
+// W3XFindFileRecursive
+// Recursively search baseDir (relative to the game dir) for a file whose
+// basename matches. W3X assets may be organized in per-faction sub-directories
+// under Art/W3X/ (e.g. Art/W3X/AP/ for China) - search them when the direct
+// path is not found. On success writes the found relative path into outPath.
+//=============================================================================
+static bool W3XFindFileRecursive(const char *baseDir, const char *basename,
+	char *outPath, int outSize)
+{
+	if (!baseDir || !basename || !basename[0] || outSize <= 0) return false;
+
+	char dir[512];
+	strcpy(dir, baseDir);
+	int dlen = (int)strlen(dir);
+	if (dlen > 0 && dir[dlen-1] != '/' && dir[dlen-1] != '\\')
+		strcat(dir, "/");
+
+	// 1) file directly in this directory?
+	char candidate[560];
+	sprintf(candidate, "%s%s", dir, basename);
+	struct _finddata_t fd;
+	long h = _findfirst(candidate, &fd);
+	if (h != -1) {
+		bool isFile = !(fd.attrib & _A_SUBDIR);
+		_findclose(h);
+		if (isFile && (int)strlen(candidate) < outSize) {
+			strcpy(outPath, candidate);
+			return true;
+		}
+	}
+
+	// 2) recurse into sub-directories
+	char pattern[520];
+	sprintf(pattern, "%s*", dir);
+	h = _findfirst(pattern, &fd);
+	if (h == -1) return false;
+	do {
+		if (fd.attrib & _A_SUBDIR) {
+			if (strcmp(fd.name, ".") == 0 || strcmp(fd.name, "..") == 0) continue;
+			char sub[512];
+			sprintf(sub, "%s%s", dir, fd.name);
+			if (W3XFindFileRecursive(sub, basename, outPath, outSize)) {
+				_findclose(h);
+				return true;
+			}
+		}
+	} while (_findnext(h, &fd) == 0);
+	_findclose(h);
+	return false;
+}
+
+
+//=============================================================================
 // W3XLoader::ReadFileContent
 // Read the entire file into a heap buffer using the engine FileClass.
 // Caller must delete[] the returned buffer.
@@ -98,9 +152,40 @@ char *W3XLoader::ReadFileContent(const char *filename, int &fileSize)
 	}
 
 	if (!file->Is_Available()) {
-		DEBUG_LOG(("[W3X_P2] ReadFileContent: '%s' not available\n", filename));
+		// Sub-directory fallback: W3X assets may be organized in per-faction
+		// sub-directories under Art/W3X/ (and Art/Textures/ for images). Search
+		// the matching base recursively when the direct path is not found.
 		_TheFileFactory->Return_File(file);
-		return NULL;
+		file = NULL;
+		const char *slash = strrchr(filename, '/');
+		if (!slash) slash = strrchr(filename, '\\');
+		const char *basename = slash ? (slash + 1) : filename;
+		const char *bases[2] = { NULL, NULL };
+		int nbase = 0;
+		if (slash) {
+			if (strnicmp(filename, "Art/W3X", 7) == 0) {
+				bases[0] = "Art/W3X"; nbase = 1;
+			} else if (strnicmp(filename, "Art/Textures", 12) == 0
+				|| strnicmp(filename, "Textures", 8) == 0) {
+				bases[0] = "Art/Textures"; nbase = 1;
+			}
+		} else {
+			// bare names (texture XMLs) live with the models; also try textures
+			bases[0] = "Art/W3X"; bases[1] = "Art/Textures"; nbase = 2;
+		}
+		char found[600];
+		bool hit = false;
+		for (int bi = 0; bi < nbase && !hit; bi++) {
+			hit = W3XFindFileRecursive(bases[bi], basename, found, sizeof(found));
+		}
+		if (hit) {
+			file = _TheFileFactory->Get_File(found);
+		}
+		if (!file || !file->Is_Available()) {
+			DEBUG_LOG(("[W3X_P2] ReadFileContent: '%s' not available\n", filename));
+			if (file) _TheFileFactory->Return_File(file);
+			return NULL;
+		}
 	}
 
 	file->Open();
