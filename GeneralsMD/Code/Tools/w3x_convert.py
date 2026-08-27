@@ -50,6 +50,22 @@ def wrap(content):
     return DECL + '\t' + content.replace('\n', '\n\t').rstrip() + '\n</AssetDeclaration>\n'
 
 
+def merge_element(path, content):
+    """Insert a top-level XML element into an existing AssetDeclaration file
+    (used when a skeleton/animation id collides with the container id, e.g.
+    walls whose hierarchy id == container id: one file serves both roles)."""
+    with open(path, 'r', encoding='utf-8') as f:
+        data = f.read()
+    close_tag = '</AssetDeclaration>'
+    if close_tag in data:
+        data = data.replace(close_tag,
+                            '\t' + content.replace('\n', '\n\t').rstrip() + '\n' + close_tag)
+    else:
+        data = data.rstrip() + '\n\t' + content.replace('\n', '\n\t').rstrip() + '\n' + close_tag
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(data)
+
+
 def attr(text, name):
     m = re.search(name + r'="([^"]*)"', text)
     return m.group(1) if m else None
@@ -129,9 +145,16 @@ def main():
                 skl_id = attr(hier[0], 'id') or hierarchy
             else:
                 skl_id = hierarchy
-            with open(os.path.join(out_dir, skl_id + '.w3x'), 'w', encoding='utf-8') as f:
-                f.write(wrap(hier[0]))
-            print('  wrote skeleton %s.w3x' % skl_id)
+            skl_file = os.path.join(out_dir, skl_id + '.w3x')
+            if os.path.exists(skl_file):
+                # skeleton id collides with the container (e.g. walls: hierarchy
+                # id == container id) - merge into the same file.
+                merge_element(skl_file, hier[0])
+                print('  merged skeleton into %s.w3x' % skl_id)
+            else:
+                with open(skl_file, 'w', encoding='utf-8') as f:
+                    f.write(wrap(hier[0]))
+                print('  wrote skeleton %s.w3x' % skl_id)
 
     # ---- animations / doors / build / produce (other <Model>_*.W3X) ----
     for fn in sorted(os.listdir(src_dir)):
@@ -176,7 +199,10 @@ def main():
             if not aid:
                 continue
             apath = os.path.join(out_dir, aid + '.w3x')
-            if not os.path.exists(apath):
+            if os.path.exists(apath):
+                merge_element(apath, a)
+                print('  merged animation into %s.w3x' % aid)
+            else:
                 with open(apath, 'w', encoding='utf-8') as f:
                     f.write(wrap(a))
                 print('  wrote animation %s.w3x' % aid)
