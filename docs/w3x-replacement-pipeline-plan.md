@@ -134,6 +134,16 @@ python GeneralsMD/Code/Tools/check_w3x_conventions.py "E:/!!!!!!!QWCSB/ART/W3X" 
 | 文件 | 说明 |
 |------|------|
 | `GameEngineDevice/.../W3XModelDraw.cpp` | 引擎：per-submesh 步兵 override + 模型级"有PBR就PBR" |
+| `GameEngineDevice/.../w3x_loader.cpp` / `W3DFileSystem.cpp` | 引擎：Art/W3X 子目录递归搜索（支持按源分类子目录组织资源）|
 | `GeneralsMD/Code/Tools/check_w3x_conventions.py` | 通用替换管线校验脚本 |
+| `GeneralsMD/Code/Tools/w3x_convert.py` | RA3 源模型 → 游戏 W3X 转换器（拆分容器/网格/SKL/动画 + 贴图收集，输出到分类子目录）|
 | `docs/w3x-quadcannon-soldier-texture-fix.md` | 四管修复专项记录 |
 | 本文件 | 全面回顾 + 通用方案 + 分步计划 |
+
+## 六、中方建筑试点状态（ChinaWarFactory → APAWarFactory）
+**已完成**（2026-08-27）：
+- 转换工具 `w3x_convert.py` 落地，产物输出到 `E:\!!!!!!!QWCSB\ART\W3X\AP\`（按源分类 AP 子目录，84 文件）。
+- 模型：`APAWARFACTORY_SKN`（8 主网格 + SKL + IDLE + DOOR(模型+动画一体) + BLD/CON）。
+- INI：`ChinaWarFactory` 主块 → `W3XModelDraw`（DefaultModelName + NONE/REALLYDAMAGED + IDLE 循环动画）；新增门 `ModuleTag_09`（DOOR_1_OPENING/WAITING_OPEN/CLOSING）；旧 W3D 子块（吊车/围栏/脚手架/传送带/门/建造吊车）全部禁用。
+- 校验 `check_w3x_conventions.py`：主模型/门/建造块均 0 错误（PBR 路由）。
+- **待验证**：需重新编译 GameEngineDevice→RTS.exe（子目录搜索 + 着色器改动），进游戏目视确认模型/贴图/开门/IDLE/阴影。
