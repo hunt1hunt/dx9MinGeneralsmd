@@ -836,6 +836,16 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 				|| strstr(sm.origShader.str(), "tread") != NULL)) {
 			robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_tread.fx", 0, sm.constants);
 		}
+		// Per-sub-mesh shader override: BASIC-convention soldier sub-meshes (their
+		// .w3x FXShader is infantry.fx - a single Texture_0 + texture-alpha faction
+		// mask) route to the dedicated w3x_infantry.fx so the soldier renders with
+		// its own soldier texture. Without this, a mixed soldier+vehicle model
+		// stays on the shared PBR shader and the soldier leaks the vehicle's
+		// DiffuseTexture (soldier wearing vehicle camo) instead of its Texture_0.
+		if (!sm.origShader.isEmpty()
+			&& strcmp(sm.origShader.str(), "infantry.fx") == 0) {
+			robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_infantry.fx", 0, sm.constants);
+		}
 		sm.vertexBuffer = NULL;
 		sm.indexBuffer = NULL;
 	}
