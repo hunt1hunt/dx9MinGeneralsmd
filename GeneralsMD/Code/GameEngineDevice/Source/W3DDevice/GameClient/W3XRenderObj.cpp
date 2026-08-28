@@ -1370,6 +1370,29 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// so disable culling AFTER BeginPass (BeginPass re-applies the pass
 			// render states and would otherwise undo this).
 			dev9->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+			// Per-mesh alpha test: meshes whose material declares
+			// AlphaTestEnable=true (alpha-cutout textures - wire fences,
+			// helicopter rotor blades) discard transparent pixels in the
+			// rasterizer. BeginPass re-applies the pass render states, so set
+			// it AFTER BeginPass (same as CullMode); the next sub-mesh's
+			// BeginPass resets it from the technique.
+			{
+				bool alphaTest = false;
+				for (size_t ci = 0; ci < sm.constants.size(); ci++) {
+					if (sm.constants[ci].type == W3X_CONSTANT_BOOL
+						&& strcmp(sm.constants[ci].name.str(), "AlphaTestEnable") == 0) {
+						alphaTest = sm.constants[ci].boolValue;
+						break;
+					}
+				}
+				if (alphaTest) {
+					dev9->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);
+					dev9->SetRenderState(D3DRS_ALPHAREF, 0x80);          // >= 0.5 alpha
+					dev9->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
+				} else {
+					dev9->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+				}
+			}
 			hr = dev9->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, sm.vertexCount, 0, sm.triangleCount);
 			if (FAILED(hr)) { DEBUG_LOG(("[W3X_P5]   submesh[%d] DrawIndexedPrimitive FAILED hr=0x%08X (vc=%d tc=%d)\n", (int)si, (int)hr, sm.vertexCount, sm.triangleCount)); totalFailed++; }
 			drawEffect->EndPass();
