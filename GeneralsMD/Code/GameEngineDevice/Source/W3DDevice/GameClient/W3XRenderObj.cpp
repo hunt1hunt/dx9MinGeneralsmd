@@ -180,6 +180,12 @@ void W3XRenderObjClass::SetSubMeshShader(int subMeshIndex, const char *fxName, i
 	sm.constants = constants;
 }
 
+void W3XRenderObjClass::SetSubMeshOrigShader(int subMeshIndex, const char *shader)
+{
+	if (subMeshIndex < 0 || subMeshIndex >= (int)m_meshes.size()) return;
+	m_meshes[subMeshIndex].origShader = shader ? shader : "";
+}
+
 void W3XRenderObjClass::SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants)
 {
 	m_fxName = fxName ? fxName : "";
@@ -1389,20 +1395,30 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// re-setting the uniform AFTER BeginPass - the technique's
 			// "AlphaTestEnable = 0" state assignment would otherwise reset it.
 			{
+				// Muzzleflash meshes (w3x_muzzle.fx: rotor blades/engine fans) never
+				// alpha-test - their Additive/Multiply blend handles transparency,
+				// and their MultiTextureEnable means "sample the texture twice with
+				// the transposed UV" (RA3 muzzleflash), NOT an alpha-cutout. Forcing
+				// the test would clip the rotor on its near-zero texture alpha, so
+				// leave the technique's AlphaTestEnable=0 standing.
+				bool isMuzzleflash = (!sm.fxName.isEmpty()
+					&& strcmp(sm.fxName.str(), "Shaders\\RA3\\w3x_muzzle.fx") == 0);
 				bool alphaTest = false;
-				for (size_t ci = 0; ci < sm.constants.size() && !alphaTest; ci++) {
-					const W3XShaderConstant &cc = sm.constants[ci];
-					if (cc.type == W3X_CONSTANT_BOOL
-						&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
-						alphaTest = cc.boolValue;
-					}
-					// RA3 blade/rotor material marker: MultiTextureEnable=true
-					// (the rotor meshes declare Texture_0 + MultiTextureEnable +
-					// TexCoordTransform, no AlphaTestEnable). Treat it as an
-					// alpha-cutout so the Fx_blades alpha gaps are clipped.
-					if (cc.type == W3X_CONSTANT_BOOL
-						&& strcmp(cc.name.str(), "MultiTextureEnable") == 0) {
-						if (cc.boolValue) alphaTest = true;
+				if (!isMuzzleflash) {
+					for (size_t ci = 0; ci < sm.constants.size() && !alphaTest; ci++) {
+						const W3XShaderConstant &cc = sm.constants[ci];
+						if (cc.type == W3X_CONSTANT_BOOL
+							&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
+							alphaTest = cc.boolValue;
+						}
+						// RA3 blade/rotor material marker: MultiTextureEnable=true
+						// (the rotor meshes declare Texture_0 + MultiTextureEnable +
+						// TexCoordTransform, no AlphaTestEnable). Treat it as an
+						// alpha-cutout so the Fx_blades alpha gaps are clipped.
+						if (cc.type == W3X_CONSTANT_BOOL
+							&& strcmp(cc.name.str(), "MultiTextureEnable") == 0) {
+							if (cc.boolValue) alphaTest = true;
+						}
 					}
 				}
 				if (alphaTest) {

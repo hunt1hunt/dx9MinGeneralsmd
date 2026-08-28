@@ -502,10 +502,19 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 	// routes the whole model to w3x_infantry.fx.
 	bool hasPBRMesh = false;
 	bool hasBasicMesh = false;
+	bool hasBuildingMesh = false;	// any sub-mesh declares a buildings*.fx shader
 	int firstPBRTech = 0;
 	int firstBasicTech = 0;
 	std::vector<W3XShaderConstant> firstPBRConst;
 	std::vector<W3XShaderConstant> firstBasicConst;
+	// The faction/type shader each mesh declares (buildingssoviet, objectsjapan,
+	// objectsallied, objectsgeneric, muzzleflash, infantry...). Used to route the
+	// model-wide shader to the matching SAS-free variant (w3x_buildings.fx for
+	// buildings, w3x_soviet.fx for everything else) instead of forcing everything
+	// onto one shader. Special meshes (muzzle flash, treads, soldiers, generic
+	// fences) are overridden per-sub-mesh in createRenderObject.
+	AsciiString firstPBRShader;
+	AsciiString firstBasicShader;
 
 	// Load each sub-mesh
 	for (size_t si = 0; si < subObjects.size(); si++) {
@@ -693,6 +702,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		subBuf.hasTangents = ((int)meshData.tangents.size() >= vertCount);
 		subBuf.hasBinormals = ((int)meshData.binormals.size() >= vertCount);
 		subBuf.origShader = meshData.fxShaderName;
+		subBuf.techniqueIndex = meshData.techniqueIndex;
 		subBuf.constants = meshData.constants;
 		// Carry the real local-space AABB from the .w3x <BoundingBox> node so
 		// createRenderObject can build a correct model box (scene culling + the
@@ -742,24 +752,39 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 					hasBasicMesh = true;
 					firstBasicTech = meshData.techniqueIndex;
 					firstBasicConst = meshData.constants;
+					firstBasicShader = meshData.fxShaderName;
 				}
 			} else {
 				if (!hasPBRMesh) {
 					hasPBRMesh = true;
 					firstPBRTech = meshData.techniqueIndex;
 					firstPBRConst = meshData.constants;
+					firstPBRShader = meshData.fxShaderName;
+				}
+				// A buildings*.fx mesh marks a building model. Buildings keep the
+				// FORBID_CLIPPING variant (opaque - their texture-alpha pads would
+				// otherwise clip holes), so the model-wide shader below picks
+				// w3x_buildings.fx instead of the standard PBR.
+				if (strstr(meshData.fxShaderName.str(), "buildings") != NULL) {
+					hasBuildingMesh = true;
 				}
 			}
 		}
 	}
 
 	// Decide the model-wide shader from ALL non-default sub-meshes. Any PBR
-	// mesh forces the shared PBR shader (vehicles/buildings keep their
-	// DiffuseTexture/NormalMap/SpecMap); soldier meshes are overridden
-	// per-sub-mesh to w3x_infantry.fx in createRenderObject. A purely-BASIC
-	// model (all soldiers) still routes the whole model to the infantry shader.
+	// mesh forces a PBR shader (vehicles/buildings keep their DiffuseTexture/
+	// NormalMap/SpecMap). All RA3 faction shaders share the same PBR internally;
+	// the only split is the buildings' FORBID_CLIPPING (opaque) vs. the vehicle/
+	// generic shaders (allow alpha-cutout), so a building model routes to
+	// w3x_buildings.fx and every other PBR model to w3x_soviet.fx. Special meshes
+	// (soldiers, treads, muzzle flash, generic fences) are overridden per-sub-mesh
+	// in createRenderObject. A purely-BASIC model (all soldiers) still routes the
+	// whole model to the infantry shader.
 	if (hasPBRMesh) {
-		outData.fxShaderName = "Shaders\\RA3\\w3x_soviet.fx";
+		outData.fxShaderName = hasBuildingMesh
+			? "Shaders\\RA3\\w3x_buildings.fx"
+			: "Shaders\\RA3\\w3x_soviet.fx";
 		outData.techniqueIndex = firstPBRTech;
 		outData.constants = firstPBRConst;
 	} else if (hasBasicMesh) {
@@ -846,6 +871,32 @@ static AsciiString resolveTextureCached(const char *texName)
 }
 
 //-----------------------------------------------------------------------------
+// W3XShaderVariant: map a RA3 .w3x FXShader name to our SAS-free variant.
+//
+// All RA3 faction shaders (objectsjapan/objectsallied/objectssoviet/
+// objectsgeneric) share the same PBR internally; the only behavioral split is
+// the buildings' FORBID_CLIPPING_CONSTANT (opaque - their texture-alpha pads
+// would otherwise clip holes) vs. the vehicle/generic shaders (allow
+// alpha-cutout for AP logo decals, wire-fence lattices). So buildings ->
+// w3x_buildings.fx, every other PBR shader -> w3x_soviet.fx.
+// muzzleflash.fx (rotor blades, muzzle quads) blends additively ->
+// w3x_muzzle.fx. infantry.fx soldiers -> w3x_infantry.fx. Treads ->
+// w3x_tread.fx. Returns NULL for unknown shaders so the mesh stays on the
+// model-wide shader.
+//-----------------------------------------------------------------------------
+static const char *W3XShaderVariant(const char *origShader)
+{
+	if (!origShader || !origShader[0]) return NULL;
+	if (strcmp(origShader, "muzzleflash.fx") == 0
+		|| strstr(origShader, "muzzle") != NULL) return "Shaders\\RA3\\w3x_muzzle.fx";
+	if (strcmp(origShader, "objectsalliedtread.fx") == 0
+		|| strstr(origShader, "tread") != NULL) return "Shaders\\RA3\\w3x_tread.fx";
+	if (strcmp(origShader, "infantry.fx") == 0) return "Shaders\\RA3\\w3x_infantry.fx";
+	if (strstr(origShader, "buildings") != NULL) return "Shaders\\RA3\\w3x_buildings.fx";
+	return "Shaders\\RA3\\w3x_soviet.fx";
+}
+
+//-----------------------------------------------------------------------------
 // renderModel: Render using D3DXEffect
 void W3XModelDraw::createRenderObject(LoadedModelData &data)
 {
@@ -866,23 +917,27 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 		// shared-effect sub-meshes inherit the first sub-mesh's DiffuseTexture
 		// (UP04 gun renders TavGattTank2 camo instead of TavBtMstr2 black metal).
 		robj->SetSubMeshConstants((int)i, sm.constants);
-		// Per-sub-mesh shader override: sub-meshes authored for the RA3 tread
-		// shader keep their scrolling-tread effect via the SAS-free override
-		// w3x_tread.fx instead of being forced onto the shared soviet shader.
-		if (!sm.origShader.isEmpty()
-			&& (strcmp(sm.origShader.str(), "objectsalliedtread.fx") == 0
-				|| strstr(sm.origShader.str(), "tread") != NULL)) {
-			robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_tread.fx", 0, sm.constants);
-		}
-		// Per-sub-mesh shader override: BASIC-convention soldier sub-meshes (their
-		// .w3x FXShader is infantry.fx - a single Texture_0 + texture-alpha faction
-		// mask) route to the dedicated w3x_infantry.fx so the soldier renders with
-		// its own soldier texture. Without this, a mixed soldier+vehicle model
-		// stays on the shared PBR shader and the soldier leaks the vehicle's
-		// DiffuseTexture (soldier wearing vehicle camo) instead of its Texture_0.
-		if (!sm.origShader.isEmpty()
-			&& strcmp(sm.origShader.str(), "infantry.fx") == 0) {
-			robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_infantry.fx", 0, sm.constants);
+		// Authoring FXShader name for the volumetric shadow (tells a transparent
+		// generic fence from a solid body/rotor that must cast a shadow).
+		robj->SetSubMeshOrigShader((int)i, sm.origShader.str());
+		// Per-sub-mesh shader override: route each sub-mesh to the SAS-free
+		// variant matching its RA3 FXShader, whenever it differs from the
+		// model-wide shader. Buildings stay opaque (w3x_buildings.fx
+		// FORBID_CLIPPING), muzzle flash / rotor blades alpha-clip + blend
+		// additively (w3x_muzzle.fx), treads keep scrolling (w3x_tread.fx),
+		// soldiers keep their own diffuse (w3x_infantry.fx - without this a
+		// mixed soldier+vehicle model leaks the vehicle's DiffuseTexture onto
+		// the soldier), and generic meshes like the wire fence get the
+		// alpha-cutout PBR (w3x_soviet.fx - their AlphaTestEnable=true clips
+		// the lattice gaps).
+		{
+			const char *meshVariant = W3XShaderVariant(sm.origShader.str());
+			if (meshVariant && strcmp(meshVariant, data.fxShaderName.str()) != 0) {
+				// Pass the .w3x <FXShader TechniqueIndex> so w3x_muzzle.fx picks the
+				// authored technique: rotor blades = 1 (Multiply), engine fans =
+				// 0 (Additive). The render object selects the technique by index.
+				robj->SetSubMeshShader((int)i, meshVariant, sm.techniqueIndex, sm.constants);
+			}
 		}
 		sm.vertexBuffer = NULL;
 		sm.indexBuffer = NULL;

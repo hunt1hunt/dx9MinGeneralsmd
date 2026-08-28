@@ -221,6 +221,7 @@ private:
 		bool hasTangents;			// true when .w3x provided native tangent data
 		bool hasBinormals;			// true when .w3x provided native binormal data
 		AsciiString origShader;		// FX shader the sub-mesh was authored with
+		int techniqueIndex;			// .w3x <FXShader TechniqueIndex> - selects Additive/Multiply etc
 		std::vector<W3XShaderConstant> constants;	// this sub-mesh's shader constants
 		float boundMin[3];			// local-space AABB from .w3x <BoundingBox> (culling + projected shadow)
 		float boundMax[3];

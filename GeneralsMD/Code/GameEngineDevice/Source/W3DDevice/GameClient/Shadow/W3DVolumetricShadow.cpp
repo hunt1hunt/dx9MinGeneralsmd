@@ -989,14 +989,33 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 			vertParent[j] = j;
 		}
 
-		// Build the triangle array.
+		// Build the triangle array, dropping degenerate triangles. A flat/duplicate
+		// sub-mesh (e.g. the helicopter rotor quad) can contain zero-area or
+		// duplicate-index triangles (their cross product is the zero vector);
+		// buildPolygonNormal normalizes that -> NaN -> garbage silhouette edges.
+		// Skipping them keeps the valid boundary triangles (a square quad still
+		// yields its 4-edge silhouette) while the degenerate ones feed no NaN.
 		TriIndex *polys = NEW TriIndex[tcount];
-		for (int ti = 0; ti < tcount; ti++)
+		int polyOut = 0;
+		for (int ti = 0; ti < tcount && polyOut < tcount; ti++)
 		{
-			polys[ti].I = (unsigned short)idx[ti * 3 + 0];
-			polys[ti].J = (unsigned short)idx[ti * 3 + 1];
-			polys[ti].K = (unsigned short)idx[ti * 3 + 2];
+			unsigned short ia = idx[ti * 3 + 0];
+			unsigned short ib = idx[ti * 3 + 1];
+			unsigned short ic = idx[ti * 3 + 2];
+			if (ia == ib || ib == ic || ia == ic) continue;			// duplicate vertices
+			if (ia >= (unsigned)vcount || ib >= (unsigned)vcount || ic >= (unsigned)vcount) continue;
+			const Vector3 &va = verts[ia], &vb = verts[ib], &vc = verts[ic];
+			Vector3 e1 = vb - va;
+			Vector3 e2 = vc - va;
+			Vector3 cr;
+			Vector3::Cross_Product(e1, e2, &cr);	// (this codebase's Vector3 has only the 3-arg form)
+			if (cr.Length2() < 1e-14f) continue;					// zero-area (flat/collinear)
+			polys[polyOut].I = ia;
+			polys[polyOut].J = ib;
+			polys[polyOut].K = ic;
+			polyOut++;
 		}
+		tcount = polyOut;
 		delete[] idx;
 
 		W3DShadowGeometryMesh *geomMesh = &m_meshList[m_meshCount];

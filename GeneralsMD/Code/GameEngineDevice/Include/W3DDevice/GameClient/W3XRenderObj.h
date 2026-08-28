@@ -100,6 +100,10 @@ public:
 	// model-wide shader (set by SetFX). Non-empty overrides per sub-mesh.
 	void SetSubMeshShader(int subMeshIndex, const char *fxName, int technique,
 		const std::vector<W3XShaderConstant> &constants);
+	// Authoring FXShader name (objectsgeneric.fx / objectssoviet.fx /
+	// muzzleflash.fx ...) so the volumetric shadow can tell genuinely-transparent
+	// generic meshes (fence lattice) from solid bodies that must cast shadows.
+	void SetSubMeshOrigShader(int subMeshIndex, const char *shader);
 	void SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants);
 	void SetBones(float *bones, int boneCount);
 	// Skin-bone access for the volumetric shadow system. The shadow geometry is
@@ -210,19 +214,22 @@ public:
 	IDirect3DIndexBuffer9 *GetSubMeshIB(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].ib : NULL; }
 	int GetSubMeshVertexCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].vertexCount : 0; }
 	int GetSubMeshTriangleCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].triangleCount : 0; }
-	// True when the sub-mesh's material declares AlphaTestEnable=true (alpha-cutout
-	// texture: wire fence, rotor blades). Such a mesh must NOT contribute a solid
-	// silhouette to the volumetric shadow - the transparent gaps should not cast a
-	// shadow block, so the shadow builder skips these sub-meshes.
+	// True when the sub-mesh must NOT contribute a solid silhouette to the
+	// volumetric shadow. This is reserved for genuinely-transparent generic
+	// meshes (objectsgeneric.fx: the wire-fence lattice), whose rendered opacity
+	// is too low for a solid shadow block to be correct.
+	//
+	// NOTE: vehicle/building bodies declare AlphaTestEnable=true for small
+	// transparent details (cockpit glass, vents) but are essentially SOLID and
+	// MUST cast their normal shadow - do NOT skip them. The rotor blades
+	// (muzzleflash.fx) cast the helicopter's rotor shadow - do NOT skip them
+	// either. The previous rule (skip any AlphaTestEnable/MultiTextureEnable
+	// mesh) erased the entire helicopter and vehicle shadows.
 	bool GetSubMeshAlphaTest(int i) const {
 		if (i < 0 || i >= (int)m_meshes.size()) return false;
-		const std::vector<W3XShaderConstant> &c = m_meshes[i].constants;
-		for (size_t ci = 0; ci < c.size(); ci++) {
-			if (c[ci].type == W3X_CONSTANT_BOOL
-				&& strcmp(c[ci].name.str(), "AlphaTestEnable") == 0)
-				return c[ci].boolValue;
-		}
-		return false;
+		const AsciiString &os = m_meshes[i].origShader;
+		if (os.isEmpty()) return false;
+		return strstr(os.str(), "objectsgeneric") != NULL;
 	}
 
 	// Name (used as the shadow-geometry cache key by W3DShadowGeometryManager).
@@ -246,6 +253,11 @@ private:
 		int triangleCount;
 		bool hasTangents;	// native TANGENT/BINORMAL data present (bump-normal usable)
 		bool hasBinormals;
+		// RA3 FXShader the sub-mesh was authored with (objectsgeneric.fx,
+		// objectssoviet.fx, muzzleflash.fx, ...). Kept per-sub-mesh so the
+		// volumetric shadow can decide which meshes are genuinely transparent
+		// (generic lattice/fence) vs solid bodies that must cast shadows.
+		AsciiString origShader;
 		// Per-sub-mesh shader override (empty fxName -> use model-wide shader)
 		AsciiString fxName;
 		int technique;
