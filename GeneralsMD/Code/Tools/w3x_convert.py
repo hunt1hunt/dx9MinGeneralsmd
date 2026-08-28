@@ -242,6 +242,31 @@ def main():
                 shutil.copy2(src, dst)
                 copied += 1
     print('copied %d texture files (names: %s)' % (copied, ', '.join(sorted(all_tex))))
+
+    # ---- post-conversion validation (catches the known script/pipeline holes) ----
+    print('== 转换后校验 ==')
+    skl_out = os.path.join(out_dir, (hierarchy or game_model) + '.w3x')
+    if os.path.isfile(skl_out):
+        sdata = read_utf8(skl_out)
+        hash_bones = re.findall(r'<Pivot Name="(0x[0-9A-Fa-f]{6,})"', sdata)
+        if hash_bones:
+            print('  WARN: 骨架有哈希骨 %s - INI 无法用这些骨名引用 Turret/WeaponFireFXBone; '
+                  '炮管/炮塔网格绑哈希骨不会随炮塔转。' % ', '.join(sorted(set(hash_bones))[:6]))
+    # per-mesh shader availability + convention check
+    known_shaders = ('infantry.fx', 'objectsjapan.fx', 'objectsgeneric.fx',
+                     'objectssoviet.fx', 'buildingssoviet.fx', 'objectsalliedtread.fx',
+                     'defaultw3d.fx')
+    for m in meshes:
+        mid = attr(m, 'id')
+        sh = re.search(r'ShaderName="([^"]*)"', m)
+        shader = sh.group(1) if sh else ''
+        has_t0 = 'Texture_0' in m
+        has_diff = 'DiffuseTexture' in m
+        if shader and shader != 'defaultw3d.fx' and shader not in known_shaders:
+            print('  WARN: 网格 %s 用未知着色器 "%s" - 游戏无此shader, 会走错渲染路径。' % (mid, shader))
+        if has_t0 and not has_diff:
+            print('  WARN: 网格 %s 用 Texture_0(BASIC) - 若模型级走 PBR 会绑不上贴图, '
+                  '需改 DiffuseTexture(如旋翼)。' % mid)
     print('DONE: %s -> %s' % (game_model, out_dir))
 
 

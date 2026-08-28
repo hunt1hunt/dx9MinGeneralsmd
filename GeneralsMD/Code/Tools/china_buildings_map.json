@@ -1,0 +1,146 @@
+{
+  "//": "中方建筑 → RA3(将军2)源模型映射表。每个建筑: ini对象名 → 源模型/动画/门/特殊配置。用于 w3x_convert 自动生成 INI + 校验, 防止选错模型(如核弹基地误用载具)。",
+  "_note_uncertain": "CommandCenter/SpeakerTower/SupplyCenter/PropagandaCenter/InternetCenter/Moat 映射待确认, 标 *。",
+  "buildings": [
+    {
+      "ini": "ChinaWarFactory",
+      "source": "APAWarFactory",
+      "anim": "APAWarFactory_IDLE",
+      "door": "APAWarFactory_DOOR",
+      "smoke": ["FX_SMOKE01", "FX_SMOKE02", "FX_SMOKE03"],
+      "exit": {"create": "X:54.0 Y:7.5 Z:0.0", "rally": "X:57.0 Y:7.5 Z:0.0"},
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaCommandCenter",
+      "source": "APAConstructionYard",
+      "anim": "APAConstructionYard_IDLE",
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaAirfield",
+      "source": "APAAirfield",
+      "anim": "APAAirfield_IDLE",
+      "door": ["APAAirfield_DOOR_01_SKN", "APAAirfield_DOOR_02_SKN", "APAAirfield_DOOR_03_SKN", "APAAirfield_DOOR_04_SKN"],
+      "smoke": [],
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaBarracks",
+      "source": "APABarracks",
+      "anim": "APABarracks_IDLE",
+      "door": "APABarracks_DOOR",
+      "smoke": [],
+      "exit": {"create": "X:54.0 Y:-25.0 Z:0.0", "rally": "X:36.0 Y:-25.0 Z:0.0"},
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaPowerPlant",
+      "source": "APAPowerPlant",
+      "anim": "APAPowerPlant_IDLA",
+      "door": null,
+      "smoke": ["FX_SMOKE01", "FX_SMOKE02"],
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaBunker",
+      "source": "APABunker",
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "garrison_firepoints": ["FIREPOINT01","FIREPOINT02","FIREPOINT03","FIREPOINT04","FIREPOINT05"],
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaWall",
+      "source": "APAWall",
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaWallHub",
+      "source": "APAWallHub",
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaGattlingCannon",
+      "source": "APABaseDefenseGatlin",
+      "anim": "APABaseDefenseGatlin_IDLE",
+      "door": null,
+      "smoke": [],
+      "turret": {"azimuth": "BONE_TURRET", "pitch": "BONE_TURRETEL", "weapon": "BONE_WEAPONA01"},
+      "attack": {"pre": null, "fire": "APABaseDefenseGatlin_ATA", "fireMode": "LOOP"},
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaNuclearMissileLauncher",
+      "source": "APASuperWeaponAdvanced",
+      "anim": "APASuperWeaponAdvanced_IDLE",
+      "door": null,
+      "smoke": [],
+      "turret": {"azimuth": null, "pitch": null, "weapon": "BONE_WEAPON01"},
+      "attack": {"pre": "APASuperWeaponAdvanced_OPN", "fire": "APASuperWeaponAdvanced_ATKA", "fireMode": "ONCE"},
+      "exit": null,
+      "status": "confirmed"
+    },
+    {
+      "ini": "ChinaSpeakerTower",
+      "source": "APACameraTower",
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "*待确认"
+    },
+    {
+      "ini": "ChinaSupplyCenter",
+      "source": "APARefinery",
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "*待确认"
+    },
+    {
+      "ini": "ChinaPropagandaCenter",
+      "source": null,
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "*待确认"
+    },
+    {
+      "ini": "ChinaInternetCenter",
+      "source": null,
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "*待确认"
+    },
+    {
+      "ini": "ChinaMoat",
+      "source": null,
+      "anim": null,
+      "door": null,
+      "smoke": [],
+      "exit": null,
+      "status": "*待确认(地形, 可能无模型)"
+    }
+  ]
+}

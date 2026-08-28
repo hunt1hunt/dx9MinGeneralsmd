@@ -183,6 +183,67 @@ def check_model(model, w3x_dir):
                     '[%s] soldier mesh %s wears the VEHICLE texture "%s" - change '
                     'its Texture_0 to the soldier texture (e.g. TgiRifleS).' % (model, sid, st))
 
+    # 4b) alpha-cutout meshes: AlphaTestEnable=true must have a diffuse texture
+    # with an actual alpha channel, otherwise the cutout has nothing to cut
+    # (uniform-gray/no-alpha textures render solid - the wire-fence bug).
+    if os.environ.get('CHECK_ALPHA') != '0':
+        try:
+            from PIL import Image
+            import io
+        except Exception:
+            Image = None
+        if Image is not None:
+            for sid, role, shader, consts in mesh_info:
+                # read AlphaTestEnable directly from the mesh file (parse_mesh
+                # only collects <Texture> constants)
+                mpath_a = os.path.join(w3x_dir, model + '.' + sid + '.w3x')
+                alpha_test = False
+                diff = consts.get('DiffuseTexture') or consts.get('Texture_0')
+                try:
+                    mdata_a = open(mpath_a, 'rb').read().decode('utf-8', errors='replace')
+                    if re.search(r'AlphaTestEnable"?>\s*<Value>true', mdata_a):
+                        alpha_test = True
+                except Exception:
+                    pass
+                if not alpha_test:
+                    continue
+                if not diff:
+                    continue
+                dds_path = os.path.join(w3x_dir, diff + '.dds')
+                if not os.path.isfile(dds_path):
+                    continue
+                try:
+                    im = Image.open(dds_path)
+                    if 'A' in im.mode:
+                        a = list(im.getchannel('A').getdata())
+                        low = sum(1 for x in a if x < 128)
+                        pct = 100.0 * low / len(a)
+                        if pct < 1.0:
+                            warnings.append(
+                                '[%s] alpha-test mesh %s texture "%s" has ~no alpha '
+                                '(%.1f%%<128) - cutout renders solid; generate an alpha '
+                                'pattern (e.g. wire mesh).' % (model, sid, diff, pct))
+                except Exception:
+                    pass
+
+    # 4c) hash-named bones (0x...) in the skeleton - unusable for INI Turret/
+    # WeaponFireFXBone references and often indicate the source lost bone names
+    # (e.g. the Gattling tank's barrel chain). Warn so the model is re-authored.
+    if hier:
+        skl_path2 = os.path.join(w3x_dir, hier + '.w3x')
+        if os.path.isfile(skl_path2):
+            try:
+                sdata = open(skl_path2, 'rb').read().decode('utf-8', errors='replace')
+                hash_bones = re.findall(r'<Pivot Name="(0x[0-9A-Fa-f]{6,})"', sdata)
+                if hash_bones:
+                    warnings.append(
+                        '[%s] skeleton has hash-named bones %s - these cannot be '
+                        'referenced by INI Turret/WeaponFireFXBone; barrel/turret '
+                        'meshes binding to them will not rotate with the turret.' % (
+                            model, ', '.join(sorted(set(hash_bones))[:6])))
+            except Exception:
+                pass
+
     # 5) simulate engine model-wide shader selection (any PBR -> soviet; all-BASIC -> infantry)
     hasPBR = any(role == 'VEHICLE' or (role == 'OTHER' and any(k in PBR_CONSTS for k in c))
                  for _, role, _, c in mesh_info)
