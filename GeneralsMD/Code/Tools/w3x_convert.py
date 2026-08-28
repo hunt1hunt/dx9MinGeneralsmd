@@ -50,6 +50,56 @@ def wrap(content):
     return DECL + '\t' + content.replace('\n', '\n\t').rstrip() + '\n</AssetDeclaration>\n'
 
 
+def reorder_container(container, meshes):
+    """D1: order the container's SubObjects so PBR (vehicle) meshes come FIRST.
+    The engine picks the model-wide shader from the first non-default sub-mesh;
+    a soldier (BASIC Texture_0) first would route the whole model to the infantry
+    shader and leak the soldier texture onto the vehicle body. Ordering PBR first
+    keeps the model-wide shader on w3x_soviet.fx (the per-sub-mesh infantry
+    override then handles soldiers). Collision boxes stay in place.
+    Classifies from the already-parsed `meshes` (their <Constants>), since the
+    mesh files are written after the container."""
+    mesh_consts = {}   # mesh id (e.g. X.SUB) -> (hasDiffuse, hasTexture0)
+    for mesh in meshes:
+        mid = attr(mesh, 'id')
+        if not mid:
+            continue
+        has_diff = '<Texture Name="DiffuseTexture"' in mesh
+        has_t0 = '<Texture Name="Texture_0"' in mesh
+        mesh_consts[mid] = (has_diff, has_t0)
+
+    subs = re.findall(r'<SubObject.*?</SubObject>', container, re.S)
+    if not subs:
+        return container
+
+    def classify(sub):
+        m = re.search(r'<CollisionBox>([^<]*)</CollisionBox>', sub)
+        if m:
+            return 2  # collision box - keep middle
+        m = re.search(r'<Mesh>([^<]*)</Mesh>', sub)
+        if not m:
+            return 2
+        has_diff, has_t0 = mesh_consts.get(m.group(1), (False, False))
+        if has_diff:
+            return 0  # PBR vehicle - first
+        if has_t0:
+            return 3  # BASIC soldier - last
+        return 1
+
+    ordered = sorted(subs, key=classify)
+    if ordered != subs:
+        # rebuild the container body with the reordered SubObjects
+        head = container[:container.index('<SubObject')] if '<SubObject' in container else ''
+        tail = ''
+        if head:
+            # everything after the last SubObject (closing </W3DContainer>)
+            idx = container.rfind('</SubObject>')
+            if idx >= 0:
+                tail = container[idx + len('</SubObject>'):]
+        return head + '\n'.join(ordered) + tail
+    return container
+
+
 def merge_element(path, content):
     """Insert a top-level XML element into an existing AssetDeclaration file
     (used when a skeleton/animation id collides with the container id, e.g.
@@ -102,7 +152,9 @@ def main():
     hierarchy = attr(container, 'Hierarchy')
     print('model=%s hierarchy=%s meshes=%d' % (game_model, hierarchy, len(meshes)))
 
-    # container file
+    # container file (D1: order PBR vehicle sub-meshes first so the model-wide
+    # shader stays on w3x_soviet.fx for mixed soldier+vehicle models)
+    container = reorder_container(container, meshes)
     cpath = os.path.join(out_dir, game_model + '.w3x')
     with open(cpath, 'w', encoding='utf-8') as f:
         f.write(wrap(container))
