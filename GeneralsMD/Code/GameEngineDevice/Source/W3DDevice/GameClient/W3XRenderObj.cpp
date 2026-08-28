@@ -813,7 +813,16 @@ static void BindW3XConstants(ID3DXEffect *effect, const std::vector<W3XShaderCon
 {
 	for (size_t ci = 0; ci < constants.size(); ci++) {
 		const W3XShaderConstant &c = constants[ci];
-		D3DXHANDLE h = effect->GetParameterByName(NULL, c.name.str());
+		// BASIC-convention "Texture_0" constant on a PBR (w3x_soviet.fx) mesh:
+		// the PBR shader has no Texture_0 param, so bind the value to its
+		// DiffuseTexture instead. This lets RA3 meshes that declare a single
+		// Texture_0 (rotor blades Fx_blades_G2, faction decals) render with the
+		// PBR shader WITHOUT editing the .w3x resource.
+		const char *paramName = c.name.str();
+		D3DXHANDLE h = effect->GetParameterByName(NULL, paramName);
+		if (!h && c.type == W3X_CONSTANT_TEXTURE && strcmp(paramName, "Texture_0") == 0) {
+			h = effect->GetParameterByName(NULL, "DiffuseTexture");
+		}
 		if (!h) continue;
 		switch (c.type) {
 			case W3X_CONSTANT_FLOAT: effect->SetFloat(h, c.floatValue); break;
@@ -830,9 +839,9 @@ static void BindW3XConstants(ID3DXEffect *effect, const std::vector<W3XShaderCon
 					if (tex && tex->Peek_D3D_Texture()) {
 						IDirect3DTexture9 *d3dt = static_cast<IDirect3DTexture9*>(tex->Peek_D3D_Texture());
 						HRESULT hrt = effect->SetTexture(h, d3dt);
-						if (FAILED(hrt)) DEBUG_LOG(("[W3X_P5]   TEXTURE '%s': SetTexture FAILED hr=0x%08X\n", c.name.str(), (int)hrt));
+						if (FAILED(hrt)) DEBUG_LOG(("[W3X_P5]   TEXTURE '%s': SetTexture FAILED hr=0x%08X\n", paramName, (int)hrt));
 					} else {
-						DEBUG_LOG(("[W3X_P5]   TEXTURE '%s': Get_Texture FAILED (tex=%p)\n", c.name.str(), (void*)tex));
+						DEBUG_LOG(("[W3X_P5]   TEXTURE '%s': Get_Texture FAILED (tex=%p)\n", paramName, (void*)tex));
 					}
 				}
 				break;
@@ -1381,11 +1390,19 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// "AlphaTestEnable = 0" state assignment would otherwise reset it.
 			{
 				bool alphaTest = false;
-				for (size_t ci = 0; ci < sm.constants.size(); ci++) {
-					if (sm.constants[ci].type == W3X_CONSTANT_BOOL
-						&& strcmp(sm.constants[ci].name.str(), "AlphaTestEnable") == 0) {
-						alphaTest = sm.constants[ci].boolValue;
-						break;
+				for (size_t ci = 0; ci < sm.constants.size() && !alphaTest; ci++) {
+					const W3XShaderConstant &cc = sm.constants[ci];
+					if (cc.type == W3X_CONSTANT_BOOL
+						&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
+						alphaTest = cc.boolValue;
+					}
+					// RA3 blade/rotor material marker: MultiTextureEnable=true
+					// (the rotor meshes declare Texture_0 + MultiTextureEnable +
+					// TexCoordTransform, no AlphaTestEnable). Treat it as an
+					// alpha-cutout so the Fx_blades alpha gaps are clipped.
+					if (cc.type == W3X_CONSTANT_BOOL
+						&& strcmp(cc.name.str(), "MultiTextureEnable") == 0) {
+						if (cc.boolValue) alphaTest = true;
 					}
 				}
 				if (alphaTest) {
