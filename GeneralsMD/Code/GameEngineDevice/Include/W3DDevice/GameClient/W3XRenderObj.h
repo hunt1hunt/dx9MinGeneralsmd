@@ -210,6 +210,20 @@ public:
 	IDirect3DIndexBuffer9 *GetSubMeshIB(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].ib : NULL; }
 	int GetSubMeshVertexCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].vertexCount : 0; }
 	int GetSubMeshTriangleCount(int i) const { return (i >= 0 && i < (int)m_meshes.size()) ? m_meshes[i].triangleCount : 0; }
+	// True when the sub-mesh's material declares AlphaTestEnable=true (alpha-cutout
+	// texture: wire fence, rotor blades). Such a mesh must NOT contribute a solid
+	// silhouette to the volumetric shadow - the transparent gaps should not cast a
+	// shadow block, so the shadow builder skips these sub-meshes.
+	bool GetSubMeshAlphaTest(int i) const {
+		if (i < 0 || i >= (int)m_meshes.size()) return false;
+		const std::vector<W3XShaderConstant> &c = m_meshes[i].constants;
+		for (size_t ci = 0; ci < c.size(); ci++) {
+			if (c[ci].type == W3X_CONSTANT_BOOL
+				&& strcmp(c[ci].name.str(), "AlphaTestEnable") == 0)
+				return c[ci].boolValue;
+		}
+		return false;
+	}
 
 	// Name (used as the shadow-geometry cache key by W3DShadowGeometryManager).
 	// The base RenderObjClass::Set_Name is a no-op and Get_Name returns "UNNAMED",

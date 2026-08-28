@@ -1437,6 +1437,19 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 		if (m_customPassMode == SCENE_PASS_GBUFFER && isSkyboxRenderObjName(robj->Get_Name()))
 			continue;
 
+		// G-Buffer pass: skip alpha / translucent / additive render objects. Their
+		// blend (rotor blades, semi-transparent windows, additive FX) cannot be
+		// captured by the G-Buffer, so they must render in the forward pass with
+		// their real material. Forcing them through the G-Buffer's opaque shader
+		// loses the blend and they go black/invisible - e.g. the old W3D Chinook
+		// rotor after the deferred upgrade (its geometry still casts a shadow
+		// because the shadow-map pass is geometry-only, independent of material).
+		// W3X models do NOT set these flags (they are alpha-tested in-render), so
+		// only legacy W3D alpha objects are routed to the forward pass.
+		if (m_customPassMode == SCENE_PASS_GBUFFER
+			&& (robj->Is_Alpha() || robj->Is_Translucent() || robj->Is_Additive()))
+			continue;
+
 		// DIAG: trace all non-terrain objects during G-Buffer pass
 		if (m_customPassMode == SCENE_PASS_GBUFFER) {
 			static int _go = 0;

@@ -891,6 +891,15 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 		int tcount = w3x->GetSubMeshTriangleCount(si);
 		if (!vb || !ib || vcount <= 0 || tcount <= 0 || vcount > MAX_SHADOW_VOLUME_VERTS)
 			continue;
+		// Skip alpha-cutout sub-meshes (material declares AlphaTestEnable=true:
+		// wire fences, rotor blades). Their transparent gaps must not cast a solid
+		// shadow block; the volumetric silhouette cannot alpha-test per-pixel, so
+		// these meshes contribute no shadow geometry at all (better than a solid
+		// block). Mirrors the legacy W3D path's Is_Alpha/Is_Translucent skip.
+		if (w3x->GetSubMeshAlphaTest(si)) {
+			DEBUG_LOG(("[W3X_SIL_DIAG]   shadow submesh[%d] alpha-test (AlphaTestEnable) - skipped\n", si));
+			continue;
+		}
 		if (w3x->Get_Name() && strstr(w3x->Get_Name(), "APATAVGATT") != NULL) {
 			DEBUG_LOG(("[W3X_SIL_DIAG]   shadow submesh[%d] verts=%d tris=%d\n", si, vcount, tcount));
 		}
