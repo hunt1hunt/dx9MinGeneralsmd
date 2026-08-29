@@ -1119,6 +1119,19 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				LARGE_INTEGER pf; QueryPerformanceFrequency(&pf);
 				if (TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
 				{
+					// Refresh the scene visibility flags BEFORE the shadow-map
+					// pass. The pass gates its render on Is_Really_Visible(),
+					// but Visibility_Check normally runs inside Customized_Render
+					// (the G-Buffer pass) which happens AFTER this point — so the
+					// flags were stale from the previous frame (or unset) and
+					// EVERY object was skipped, leaving the shadow map empty
+					// (SHADOW_PASS: rendered 0 => no texture shadows for
+					// anything). Visibility_Check is a cheap sphere-vs-frustum
+					// pass on the main camera; reset Visibility_Checked afterward
+					// so the G-Buffer pass re-checks exactly as it always did.
+					if (!Visibility_Checked) {
+						Visibility_Check(&rinfo.Camera);
+					}
 					DIAG_LOG(("PIPELINE: === Shadow Map Pass ===\n"));
 					LARGE_INTEGER shS,shE; QueryPerformanceCounter(&shS);
 					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,camPos)) {
@@ -1134,16 +1147,21 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						}
 						}
 						TheDX8MeshRenderer.Flush();
-						// DIAG (one-shot): 0 objects => the shadow map is guaranteed empty
-						// (nothing was ever rasterized), which combined with DebugDumpShadowMap
-						// splits "shadow pass empty" from "pass has content but sampling fails".
-						{ static bool s_smObjDiag=false; if (!s_smObjDiag) { s_smObjDiag=true;
+						// DIAG (every 60 frames = ~2s): the object count rasterized
+						// into the shadow map. 0 => the map is empty (no texture shadows).
+						// Periodic instead of one-shot: the first frame is often the menu/
+						// scene-load with no objects and would falsely report an empty map.
+						{ static int s_smDiagFrames=0; if ((s_smDiagFrames++ % 60) == 0) {
 							DIAG_LOG(("SHADOW_PASS: rendered %d visible non-terrain objects into shadow map\n", smObjCount)); } }
 					}
 					g_theW3DDeferredRenderer->endShadowMapPass();
 					QueryPerformanceCounter(&shE);
 					DIAG_LOG(("PIPELINE: Shadow Map Pass took %.2f ms\n",(float)(shE.QuadPart-shS.QuadPart)*1000.0f/(float)pf.QuadPart));
 					ShaderClass::Invalidate();
+					// Let the G-Buffer pass re-run Visibility_Check as it always
+					// did (the shadow pass's check above was just to give the
+					// shadow-map pass a fresh Is_Really_Visible).
+					Visibility_Checked = false;
 				}
 				{
 					DIAG_LOG(("PIPELINE: === G-Buffer Pass ===\n"));

@@ -33,6 +33,28 @@
 #include "wwmemlog.h"
 #include <d3d9.h>
 #include <d3dx9effect.h>
+#include <cstdio>
+#include <cstdarg>
+
+//=============================================================================
+// Always-on diagnostic logger (survives Release builds, where DEBUG_LOG is
+// compiled out by NO_RELEASE_DEBUG_LOGGING). Writes to E:\GeneralsMD_W3XShadow.log.
+// Used to verify each node of the W3X texture-shadow (RA3 shadow-map) chain:
+// shadow-map pass detection (CAST) and receive-side bindings (RECEIVE).
+//=============================================================================
+static void W3XShadowDiag(const char *fmt, ...)
+{
+	static FILE *s_log = NULL;
+	if (!s_log) {
+		s_log = fopen("E:\\GeneralsMD_W3XShadow.log", "a");
+		if (s_log) setvbuf(s_log, NULL, _IONBF, 0);
+	}
+	if (!s_log) return;
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(s_log, fmt, args);
+	va_end(args);
+}
 
 // Forward decls for the RA3 WorldBones quaternion helpers (defined later in
 // this file). Needed by Get_Bone_Transform which appears before their defs.
@@ -877,12 +899,15 @@ static const char *W3XConstantTextureName(const std::vector<W3XShaderConstant> &
 
 //=============================================================================
 // BindW3XMatrices: bind the shared object->world->clip matrices plus the
-// ShadowMapWorldToShadow identity and the RA3 RecolorColor faction color.
+// ShadowMapWorldToShadow matrix, the RA3 shadow-map receive gates (HasShadow /
+// ShadowMap / texel-size) and the RecolorColor faction color.
 // Called for BOTH the model-wide effect and any per-sub-mesh override effect,
 // since each D3DXEffect instance keeps its own parameter values.
 //=============================================================================
 static void BindW3XMatrices(ID3DXEffect *effect, const Matrix4x4 &world,
-	const Matrix4x4 &vp, const Matrix4x4 &wvp, const Matrix4x4 &shadowW2S, unsigned int recolorHex)
+	const Matrix4x4 &vp, const Matrix4x4 &wvp, const Matrix4x4 &shadowW2S,
+	unsigned int recolorHex, bool receiveShadow = false,
+	IDirect3DBaseTexture9 *shadowTex = NULL)
 {
 	D3DXHANDLE hWorld = effect->GetParameterByName(NULL, "World");
 	if (hWorld) effect->SetMatrix(hWorld, (const D3DXMATRIX*)&world);
@@ -891,10 +916,33 @@ static void BindW3XMatrices(ID3DXEffect *effect, const Matrix4x4 &world,
 	D3DXHANDLE hWVP = effect->GetParameterByName(NULL, "WorldViewProj");
 	if (hWVP) effect->SetMatrix(hWVP, (const D3DXMATRIX*)&wvp);
 
-	// ShadowMapWorldToShadow — bind identity so the skinned VS's ShadowCS
-	// output isn't garbage/NaN (which could cause the draw to be rejected).
+	// ShadowMapWorldToShadow — the RA3 world->shadow-space matrix. In the main
+	// (receive) pass this is sunVP*bias (sun NDC -> [0,1] map UV + [0,1] depth)
+	// so the skinned VS's ShadowCS feeds the PCF; in the shadow-map (cast) pass
+	// it is the raw sun VP. A stale/identity matrix sends every shadow sample to
+	// the wrong texel and the model reads as unshaded.
 	D3DXHANDLE hShadowW2S = effect->GetParameterByName(NULL, "ShadowMapWorldToShadow");
 	if (hShadowW2S) effect->SetMatrix(hShadowW2S, (const D3DXMATRIX*)&shadowW2S);
+
+	// RA3 shadow-map receive gates. HasShadow is the master on/off for the
+	// hp_invshadow_* PCF functions (they return 1 = full sunlight when off, so
+	// W3X had NO texture shadow at all — HasShadow was never set). ShadowMap is
+	// the sampler input (the D24X8 sun-depth texture). The texel-size constant
+	// drives the PCF offsets — always set it so a stale (0,0,0,0) can't divide
+	// by zero in the shader when the map is unavailable.
+	{
+		D3DXHANDLE hHas = effect->GetParameterByName(NULL, "HasShadow");
+		if (hHas) effect->SetBool(hHas, (receiveShadow && shadowTex) ? TRUE : FALSE);
+		if (receiveShadow && shadowTex) {
+			D3DXHANDLE hMap = effect->GetParameterByName(NULL, "ShadowMap");
+			if (hMap) effect->SetTexture(hMap, shadowTex);
+		}
+		D3DXHANDLE hTexel = effect->GetParameterByName(NULL, "Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize");
+		if (hTexel) {
+			float smt[4] = { 0, 0, 1.0f/2048.0f, 1.0f/2048.0f };
+			effect->SetVector(hTexel, (const D3DXVECTOR4*)smt);
+		}
+	}
 
 	// Faction color (RA3 RecolorColor) from the owning player's team color.
 	D3DXHANDLE hRecolor = effect->GetParameterByName(NULL, "RecolorColor");
@@ -1104,36 +1152,115 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	world = world.Transpose();
 	Matrix4x4 view;
 	Matrix4x4 proj;
+	bool inShadowPass = false;
 	{
 		DWORD smCWE = 0;
 		IDirect3DDevice9 *smDev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
 		if (smDev) smDev->GetRenderState(D3DRS_COLORWRITEENABLE, &smCWE);
-		if (smCWE == 0) {
-			// Deferred shadow-map pass: the W3X casts via the W3D volumetric soft
-			// shadow (SHADOW_VOLUME). The deferred shadow map did not capture the W3X
-			// (no shadows at all when routed there), so skip the pass and let the
-			// volumetric shadow drive.
-			return;
+		// Detect the deferred shadow-map pass. PRIMARY signal: the deferred
+		// renderer's explicit in-pass flag (set by beginShadowMapPass/cleared by
+		// endShadowMapPass). FALLBACK: COLORWRITEENABLE==0 (the sun camera is live
+		// on the device and the RT is the sun-depth map). The W3X RASTERIZES
+		// SUN-SPACE DEPTH HERE — the RA3 texture-shadow CAST — instead of
+		// skipping. (The earlier skip was forced by device-state leaks to the next
+		// object; that is fixed by the save/restore around the draw loop below.)
+		// Guard on the deferred renderer: without it the pass never runs, so keep
+		// the old skip behavior.
+		inShadowPass = (g_theW3DDeferredRenderer != NULL)
+			&& (g_theW3DDeferredRenderer->isInShadowMapPass() || (smCWE == 0));
+		if (smCWE == 0 && !g_theW3DDeferredRenderer) {
+			return;	// no deferred renderer -> nothing to cast into
 		}
-		view.Init(rinfo.Camera.Get_View_Matrix());
-		rinfo.Camera.Get_D3D_Projection_Matrix(&proj);
-		view = view.Transpose();	// engine column-major -> D3D row-major
-		proj = proj.Transpose();
+		if (inShadowPass) {
+			// Sun camera VP is already D3D row-major (D3DXMatrixLookAtLH/OrthoLH
+			// stored verbatim by beginShadowMapPass). Do NOT transpose.
+			view = g_theW3DDeferredRenderer->getShadowView();
+			proj = g_theW3DDeferredRenderer->getShadowProj();
+		} else {
+			view.Init(rinfo.Camera.Get_View_Matrix());
+			rinfo.Camera.Get_D3D_Projection_Matrix(&proj);
+			view = view.Transpose();	// engine column-major -> D3D row-major
+			proj = proj.Transpose();
+		}
 	}
 	Matrix4x4 vp = Multiply(view, proj);
 	Matrix4x4 wvp = Multiply(world, vp);
-	// The RA3 skinned VS writes ShadowCS from ShadowMapWorldToShadow. The W3X no
-	// longer samples a deferred shadow map (it casts the W3D volumetric soft shadow
-	// instead), so bind identity — a non-degenerate matrix keeps the VS output
-	// finite (a garbage/NaN ShadowCS could reject the draw).
+	// ShadowMapWorldToShadow: in the CAST pass bind the raw sun VP (the shadow
+	// VS writes sun clip space). In the RECEIVE pass bind sunVP * bias, where the
+	// bias maps sun NDC (x,y in [-1,1], D3D z in [0,1]) to a direct [0,1] shadow-
+	// map UV + [0,1] depth — the RA3 PCF (hp_invshadow_*) samples at that UV
+	// directly. The deferred SunLightShadow PS does the same 0.5x+0.5 remap by
+	// hand; here it is baked into the matrix. Identity (or garbage) would send
+	// every shadow sample to the wrong texel and the model reads as unshaded.
 	Matrix4x4 shadowW2S;
-	shadowW2S.Make_Identity();
+	if (g_theW3DDeferredRenderer) {
+		if (inShadowPass) {
+			shadowW2S = g_theW3DDeferredRenderer->getShadowViewProj();
+		} else if (g_theW3DDeferredRenderer->isShadowMapAvailable()) {
+			Matrix4x4 bias;
+			bias.Make_Identity();
+			bias[0] = Vector4(0.5f, 0.0f, 0.0f, 0.0f);
+			bias[1] = Vector4(0.0f, 0.5f, 0.0f, 0.0f);
+			bias[2] = Vector4(0.0f, 0.0f, 1.0f, 0.0f);
+			bias[3] = Vector4(0.5f, 0.5f, 0.0f, 1.0f);
+			shadowW2S = Multiply(g_theW3DDeferredRenderer->getShadowViewProj(), bias);
+		} else {
+			// Shadow map not available (INI off / no D24X8): identity so the VS's
+			// ShadowCS output stays finite (a garbage W2S could feed NaN through the
+			// draw). HasShadow stays 0 -> no shadow, matching the pre-fix behavior.
+			shadowW2S.Make_Identity();
+		}
+	} else {
+		shadowW2S.Make_Identity();
+	}
+	// Receive-side texture-shadow bindings (main forward pass only): the W3X
+	// samples the D24X8 sun-depth texture the deferred SunLightShadow PS also
+	// samples — the same map the cast above and the W3D buildings/terrain wrote.
+	// Only when the deferred renderer + its shadow map are available; otherwise
+	// HasShadow stays 0 and the shader's PCF functions return "full sunlight"
+	// (the previous no-shadow behavior).
+	bool receiveShadow = (!inShadowPass && g_theW3DDeferredRenderer
+		&& g_theW3DDeferredRenderer->isShadowMapAvailable());
+	IDirect3DBaseTexture9 *shadowTex = receiveShadow
+		? g_theW3DDeferredRenderer->getShadowMapTexture() : NULL;
+
+	// DIAG (one-shot, always-on in Release): report the texture-shadow chain
+	// state at this node — pass (CAST vs RECEIVE), shadow-map availability, and
+	// whether the effect exposes the RA3 shadow parameters.
+	if (inShadowPass) {
+		static bool s_castDiag = false;
+		if (!s_castDiag) {
+			s_castDiag = true;
+			W3XShadowDiag("[W3X_SHDW] CAST '%s' sunVP r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f) submeshes=%d\n",
+				m_name, shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
+				shadowW2S[3].X, shadowW2S[3].Y, shadowW2S[3].Z, shadowW2S[3].W,
+				(int)m_meshes.size());
+		}
+	} else {
+		static bool s_recvDiag = false;
+		if (!s_recvDiag) {
+			s_recvDiag = true;
+			D3DXHANDLE hHas = effect->GetParameterByName(NULL, "HasShadow");
+			D3DXHANDLE hMap = effect->GetParameterByName(NULL, "ShadowMap");
+			D3DXHANDLE hTexel = effect->GetParameterByName(NULL, "Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize");
+			W3XShadowDiag("[W3X_SHDW] RECEIVE '%s' deferred=%p avail=%d receive=%d\n",
+				m_name, (void*)g_theW3DDeferredRenderer,
+				(g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isShadowMapAvailable()) ? 1 : 0,
+				receiveShadow ? 1 : 0);
+			W3XShadowDiag("[W3X_SHDW]   params HasShadow=%p ShadowMap=%p SMtexel=%p shadowTex=%p\n",
+				(void*)hHas, (void*)hMap, (void*)hTexel, (void*)shadowTex);
+			W3XShadowDiag("[W3X_SHDW]   W2S r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
+				shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
+				shadowW2S[3].X, shadowW2S[3].Y, shadowW2S[3].Z, shadowW2S[3].W);
+		}
+	}
 
 	// RA3 shaders use World (object→world) and ViewProjection (world→clip);
 	// some shaders take WorldViewProj directly. Set whichever the effect
 	// exposes, overriding the DX8Wrapper-based bindings (which return
-	// identity for World in this render context).
-	BindW3XMatrices(effect, world, vp, wvp, shadowW2S, m_recolorHex);
+	// identity for World in this render context). Pass the shadow-map receive
+	// state (HasShadow / ShadowMap texture) — only bound in the main pass.
+	BindW3XMatrices(effect, world, vp, wvp, shadowW2S, m_recolorHex, receiveShadow, shadowTex);
 
 	// DIAG: dump matrices once to verify camera/view correctness
 	{
@@ -1217,10 +1344,70 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	if (hTech) { effect->SetTechnique(hTech); effect->ValidateTechnique(hTech); }
 	effect->CommitChanges();
 
+	// Shadow-map (CAST) pass: save the raw-device states this draw overrides and
+	// restore them after the loop, so NOTHING leaks to the next object in the
+	// shadow-pass loop (buildings/dozer) — the documented cause of the earlier
+	// shadow-map corruption / War-Factory crash. D3DXEffect Begin/End restores the
+	// technique's own render states; these are the manual states set after
+	// BeginPass (CullMode, AlphaTest, ...) that bypass DX8Wrapper's state cache.
+	D3DVIEWPORT9 savedVP;
+	DWORD savedZen = 1, savedCull = 1, savedScissor = 0, savedStencil = 0;
+	DWORD savedAlphaBlend = 0, savedAlphaTest = 0, savedAlphaRef = 0, savedAlphaFunc = 8;
+	DWORD savedZWrite = 1;
+	IDirect3DVertexBuffer9 *savedStream = NULL;
+	UINT savedStreamOffset = 0, savedStreamStride = 0;
+	IDirect3DIndexBuffer9 *savedIndices = NULL;
+	IDirect3DVertexDeclaration9 *savedDecl = NULL;
+	if (inShadowPass && dev9) {
+		dev9->GetViewport(&savedVP);
+		dev9->GetRenderState(D3DRS_ZENABLE, &savedZen);
+		dev9->GetRenderState(D3DRS_CULLMODE, &savedCull);
+		dev9->GetRenderState(D3DRS_SCISSORTESTENABLE, &savedScissor);
+		dev9->GetRenderState(D3DRS_STENCILENABLE, &savedStencil);
+		dev9->GetRenderState(D3DRS_ALPHABLENDENABLE, &savedAlphaBlend);
+		dev9->GetRenderState(D3DRS_ALPHATESTENABLE, &savedAlphaTest);
+		dev9->GetRenderState(D3DRS_ALPHAREF, &savedAlphaRef);
+		dev9->GetRenderState(D3DRS_ALPHAFUNC, &savedAlphaFunc);
+		dev9->GetRenderState(D3DRS_ZWRITEENABLE, &savedZWrite);
+		// Geometry bindings are NOT in D3DXEffect's saved state block (only the
+		// VS/PS/decl/FVF are), so the W3X cast's stream source / indices would
+		// otherwise leak to the NEXT object in the shadow loop — the classic
+		// DX8Wrapper-desync crash. Save them explicitly and restore below.
+		dev9->GetStreamSource(0, &savedStream, &savedStreamOffset, &savedStreamStride);
+		dev9->GetIndices(&savedIndices);
+		dev9->GetVertexDeclaration(&savedDecl);
+		{ static bool s_castStateDiag = false;
+			if (!s_castStateDiag) {
+				s_castStateDiag = true;
+				W3XShadowDiag("[W3X_SHDW]   CAST states saved: zen=%u zwrite=%u cull=%u atest=%u stream=%p ib=%p decl=%p\n",
+					savedZen, savedZWrite, savedCull, savedAlphaTest,
+					(void*)savedStream, (void*)savedIndices, (void*)savedDecl);
+			}
+		}
+	}
+
 	UINT totalFailed = 0;
 	for (size_t si = 0; si < m_meshes.size(); si++) {
 		SubMesh &sm = m_meshes[si];
 		if (!sm.vb || !sm.ib) continue;
+
+		// Shadow-map (CAST) pass: skip the genuinely-transparent meshes, matching
+		// the volumetric shadow's exclusions (GetSubMeshAlphaTest/IsMuzzleflash):
+		//  - muzzleflash/rotor meshes (large flat quads) would cast a solid square
+		//    into the map and swallow the fuselage shadow.
+		//  - objectsgeneric lattice (wire-fence mesh) would cast a wire-grate
+		//    pattern that shows up as a net shadow on other W3X models (the 发电厂/
+		//    指挥中心 fence shadows). The fence renders transparent in the main
+		//    pass, so it casting no shadow at all is the correct behavior.
+		if (inShadowPass) {
+			const AsciiString &os = sm.origShader;
+			bool isTransparent = !os.isEmpty()
+				&& (strstr(os.str(), "muzzle") != NULL
+				 || strstr(os.str(), "objectsgeneric") != NULL);
+			if (isTransparent) {
+				continue;
+			}
+		}
 
 		// Per-sub-mesh shader override: a sub-mesh with its own fxName uses a
 		// different effect (e.g. w3x_tread.fx for scrolling treads). Bind its
@@ -1239,7 +1426,8 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				// Engine constants (sun/ambient/camera) from the real scene camera
 				W3XEffectManager::Instance()->BindEngineConstants(drawEffect, rinfo);
 				// Object->world->clip matrices + ShadowMapWorldToShadow + RecolorColor
-				BindW3XMatrices(drawEffect, world, vp, wvp, shadowW2S, m_recolorHex);
+				// (+ shadow-map receive state for per-sub-mesh override effects)
+				BindW3XMatrices(drawEffect, world, vp, wvp, shadowW2S, m_recolorHex, receiveShadow, shadowTex);
 				// This sub-mesh's shader constants (textures etc.)
 				BindW3XConstants(drawEffect, sm.constants);
 				// WorldBones + NumJointsPerVertex for this effect (skinned mesh).
@@ -1437,6 +1625,28 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			drawEffect->EndPass();
 		}
 		drawEffect->End();
+	}
+
+	// Shadow-map (CAST) pass: restore the raw-device states saved above so the
+	// next object in the shadow-pass loop renders with its own state.
+	if (inShadowPass && dev9) {
+		dev9->SetViewport(&savedVP);
+		dev9->SetRenderState(D3DRS_ZENABLE, savedZen);
+		dev9->SetRenderState(D3DRS_CULLMODE, savedCull);
+		dev9->SetRenderState(D3DRS_SCISSORTESTENABLE, savedScissor);
+		dev9->SetRenderState(D3DRS_STENCILENABLE, savedStencil);
+		dev9->SetRenderState(D3DRS_ALPHABLENDENABLE, savedAlphaBlend);
+		dev9->SetRenderState(D3DRS_ALPHATESTENABLE, savedAlphaTest);
+		dev9->SetRenderState(D3DRS_ALPHAREF, savedAlphaRef);
+		dev9->SetRenderState(D3DRS_ALPHAFUNC, savedAlphaFunc);
+		dev9->SetRenderState(D3DRS_ZWRITEENABLE, savedZWrite);
+		dev9->SetStreamSource(0, savedStream, savedStreamOffset, savedStreamStride);
+		dev9->SetIndices(savedIndices);
+		dev9->SetVertexDeclaration(savedDecl);
+		// Release the refs acquired by GetStreamSource/GetIndices/GetVertexDeclaration.
+		if (savedStream) savedStream->Release();
+		if (savedIndices) savedIndices->Release();
+		if (savedDecl) savedDecl->Release();
 	}
 
 	// NOTE: do NOT reset device state here. The W3X render uses the raw D3D9

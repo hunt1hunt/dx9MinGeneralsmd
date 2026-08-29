@@ -158,6 +158,17 @@ public:
 	/// Whether shadow map is ready (D24X8 depth-stencil must be available).
 	bool isShadowMapAvailable() const { return m_shadowMapAvailable && m_shadowDepthStencilAvailable; }
 
+	/// Whether the deferred shadow-map pass is currently active. The W3X render
+	/// reads this (in addition to COLORWRITEENABLE==0) to know it must rasterize
+	/// into the shadow map using the SUN camera's VP — the RA3-style texture-shadow
+	/// cast. Only true between beginShadowMapPass() and endShadowMapPass().
+	bool isInShadowMapPass() const { return m_shadowMapPassActive; }
+
+	/// The D24X8 depth-stencil texture that stores the sun-space depth (this is
+	/// the texture the deferred SunLightShadow PS samples as s4). The W3X forward
+	/// PBR shader binds it to its RA3 ShadowMapSampler to RECEIVE texture shadows.
+	IDirect3DBaseTexture9 *getShadowMapTexture() const { return m_shadowDepthStencilTex; }
+
 private:
 
 	/// Create (or re-create) the G-Buffer render target textures.
@@ -241,6 +252,7 @@ private:
 	TextureClass *m_shadowDepthRT;			///< Shadow map depth RT (1024x1024 color RT).
 	IDirect3DTexture9 *m_shadowDepthSampler; ///< Plain sampler copy of the shadow map (StretchRect'd each frame, reliable RT->SRV under dgVoodoo2).
 	bool m_shadowMapAvailable;				///< Shadow map resources OK.
+	bool m_shadowMapPassActive;			///< beginShadowMapPass()..endShadowMapPass() active (W3X casts into it).
 	Matrix4x4 m_shadowViewProj;				///< Sun's view-projection matrix (for shader).
 	Matrix4x4 m_shadowView;					///< Sun's view matrix (shadow camera).
 	Matrix4x4 m_shadowProj;					///< Sun's projection matrix (shadow camera).

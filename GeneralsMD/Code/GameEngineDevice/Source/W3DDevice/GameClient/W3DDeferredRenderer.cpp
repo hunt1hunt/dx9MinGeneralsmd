@@ -190,6 +190,7 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_shadowDepthRT(NULL),
 	m_shadowDepthSampler(NULL),
 	m_shadowMapAvailable(false),
+	m_shadowMapPassActive(false),
 	m_sunLightShadowPS(NULL),
 	m_shadowDepthStencilTex(NULL),
 	m_shadowDepthStencilAvailable(false),
@@ -1592,6 +1593,11 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	DX8Wrapper::Set_Transform(D3DTS_VIEW, m_shadowView);
 	DX8Wrapper::Set_Transform(D3DTS_PROJECTION, m_shadowProj);
 
+	// Flag that the deferred shadow-map pass is active so the W3X render
+	// (and other consumers) know to rasterize sun-space depth instead of
+	// skipping / using the main camera.
+	m_shadowMapPassActive = true;
+
 	return true;
 }
 
@@ -1691,6 +1697,12 @@ static void DebugDumpShadowMap(IDirect3DDevice9 *d9, TextureClass *rt)
 // ============================================================================
 void W3DDeferredRenderer::endShadowMapPass()
 {
+	// Clear the in-pass flag (set in beginShadowMapPass) so isInShadowMapPass()
+	// is only true while the sun-depth pass is actually active. Without this the
+	// flag stayed set forever and any consumer treating it as "cast pass" (the
+	// W3X) would render the forward pass with the sun camera.
+	m_shadowMapPassActive = false;
+
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (dev) {
 		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE,

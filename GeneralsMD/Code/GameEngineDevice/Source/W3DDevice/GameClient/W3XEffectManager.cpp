@@ -209,6 +209,62 @@ static void GetCameraProjectionMatrix(Matrix4x4 &projOut)
 }
 
 //=============================================================================
+// Custom #include handler for D3DXCreateEffect.
+//
+// The RA3 shaders' include chain is internally inconsistent: the entry .fx
+// (w3x_soviet.fx) does `#include "Shaders/RA3/PBR5-10-objects-ARPBR.FX"`
+// (a CWD-relative path that needs the game root), while PBR5-10 then does a
+// BARE `#include "head3-vsps.FXH"` that needs the Shaders/RA3 dir. No single
+// working directory satisfies both, so the D3DX default include handler (CWD
+// only) can NEVER resolve the chain — every W3X shader failed to compile and
+// every W3X model was invisible. This handler tries each include as-is, then
+// prefixed with "Shaders/RA3/", reading through the engine FileFactory so the
+// VFS (CWD + big files) is honored. It is agnostic to the include structure.
+//=============================================================================
+class W3XD3DXInclude : public ID3DXInclude
+{
+public:
+	STDMETHOD(Open)(D3DXINCLUDE_TYPE /*IncludeType*/, LPCSTR pFileName,
+		LPCVOID /*pParentData*/, LPCVOID *ppData, UINT *pBytes)
+	{
+		if (!pFileName || !ppData || !pBytes) return E_POINTER;
+		*ppData = NULL;
+		*pBytes = 0;
+
+		AsciiString candidates[2];
+		candidates[0] = pFileName;
+		candidates[1] = "Shaders/RA3/";
+		candidates[1].concat(pFileName);
+
+		for (int ci = 0; ci < 2; ci++) {
+			FileClass *file = _TheFileFactory->Get_File(candidates[ci].str());
+			if (file && file->Is_Available()) {
+				file->Open();
+				int size = file->Size();
+				if (size > 0) {
+					char *buf = new char[size];
+					file->Read(buf, size);
+					file->Close();
+					_TheFileFactory->Return_File(file);
+					*ppData = buf;
+					*pBytes = (UINT)size;
+					return S_OK;
+				}
+				file->Close();
+			}
+			if (file) _TheFileFactory->Return_File(file);
+		}
+		return E_FAIL;	// not found -> shader reports X1507
+	}
+
+	STDMETHOD(Close)(LPCVOID pData)
+	{
+		if (pData) delete[] (char*)pData;
+		return S_OK;
+	}
+};
+
+//=============================================================================
 // W3XEffectManager::W3XEffectManager
 //=============================================================================
 W3XEffectManager::W3XEffectManager(void) :
@@ -366,8 +422,12 @@ ID3DXEffect *W3XEffectManager::GetEffect(const char *fxPath)
 	// used; the model must use a technique that compiles the VS directly.
 	ID3DXEffect *effect = NULL;
 	ID3DXBuffer *errors = NULL;
+	// Custom include handler: resolves the RA3 shaders' mixed include paths
+	// (see W3XD3DXInclude above) so the W3X shaders actually compile. Without
+	// it every include fails (X1507) and every W3X model is invisible.
+	W3XD3DXInclude includeHandler;
 	HRESULT hr = D3DXCreateEffect(dev9, fxBuffer, (UINT)bytesRead,
-		NULL, NULL, 0, NULL, &effect, &errors);
+		NULL, &includeHandler, 0, NULL, &effect, &errors);
 
 	delete[] fxBuffer;
 

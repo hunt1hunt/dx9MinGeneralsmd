@@ -271,11 +271,13 @@ texture ShadowMap
     string SasBindAddress = "Sas.Shadow[0].ShadowMap";
     > = sampler_state {
     Texture = < ShadowMap > ;
-    MinFilter = 1 ; 
-    MagFilter = 1 ; 
+    MinFilter = 1 ;
+    MagFilter = 1 ;
     MipFilter = 0;
-    AddressU = 4; //3=clamp, 4=bordercolor
-    AddressV = 4;
+    AddressU = 3; //clamp. NOT border: an out-of-[0,1] shadow UV (a W3X unit at the
+    AddressV = 3; //edge of the sun camera's 1000x1000 box) samples border-black
+                 //(depth 0) and the whole model reads fully shadowed. Clamp keeps
+                 //it lit (edge texel = cleared far depth 1.0).
     //AddressW = 3;
 };
 
