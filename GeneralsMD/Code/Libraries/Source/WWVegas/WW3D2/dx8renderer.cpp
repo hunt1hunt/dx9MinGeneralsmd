@@ -1808,6 +1808,7 @@ void DX8TextureCategoryClass::Render(void)
 
 
 	bool renderTasksRemaining=false;
+	bool rotorBlade = false;	// vanilla rotor-blade mesh (force alpha blend + two-sided)
 
 	PolyRenderTaskClass * prt = render_task_head;
 	PolyRenderTaskClass * last_prt = NULL;
@@ -1819,13 +1820,27 @@ void DX8TextureCategoryClass::Render(void)
 		*/
 		DX8PolygonRendererClass * renderer = prt->Peek_Polygon_Renderer();
 		MeshClass * mesh = prt->Peek_Mesh();
-		
+
 		if (mesh->Get_Base_Vertex_Offset() == VERTEX_BUFFER_OVERFLOW)	//check if this mesh is valid
 		{	//skip this mesh so it gets rendered later after vertices are filled in.
 			last_prt = prt;
 			prt = prt->Get_Next_Visible();
 			renderTasksRemaining = true;
 			continue;
+		}
+
+		// Vanilla helicopter rotor blades (e.g. AVChinook PROPELLER01/02) carry a
+		// W3D shader whose SrcBlend is ZERO - the fragment contributes nothing to
+		// the frame, so the rendered rotor is invisible even though it animates and
+		// casts its (volumetric) shadow. Force a normal alpha blend + two-sided
+		// render for these specific meshes so the rotor shows as spinning blades.
+		// The blades use a unique material/texture so they form their own batch;
+		// the blend/cull is re-applied right before each Render below because the
+		// alpha-override path re-applies the shader (undoing this).
+		rotorBlade = false;
+		{
+			const char *mn = mesh->Get_Name();
+			if (mn && (strstr(mn, "PROPELLER") || strstr(mn, "PROPS"))) rotorBlade = true;
 		}
 
 					// Phase 3.5: Set legacy PBR shader constants
@@ -2163,14 +2178,55 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 					DX8Wrapper::Set_Shader(theAlphaShader);
 					DX8Wrapper::Apply_Render_State_Changes();
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,(int)((float)0x60*mesh->Get_Alpha_Override()));
+					if (rotorBlade) {
+						IDirect3DDevice9 *rdev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+						if (rdev) {
+							vmaterial->Set_Diffuse(0, 0, 0);	// dark blades, not sun-colored
+							vmaterial->Set_Opacity(0.1f);
+							// Darken-by-alpha: the blades SHADE the backdrop (their bright
+							// colour never reaches the frame) - a dark translucent blur.
+							rdev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
+							rdev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+							rdev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+						}
+					}
 					renderer->Render(mesh->Get_Base_Vertex_Offset());
+					if (rotorBlade) {
+						vmaterial->Set_Diffuse(1.0f, 1.0f, 1.0f);
+						vmaterial->Set_Opacity(1.0f);
+					}
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,0x60);
 					vmaterial->Set_Opacity(oldOpacity);	//restore previous value
 					vmaterial->Set_Diffuse(oldDiffuse.X,oldDiffuse.Y,oldDiffuse.Z);
 					DX8Wrapper::Set_Shader(theShader);	//restore previous value
 				}
-				else
+				else {
+					Vector3 rvOldDiff(0,0,0); float rvOldOp = 1.0f;
+					if (rotorBlade) {
+						// RA3 rotor-blur: dark translucent spinning blades. Force the
+						// material diffuse BLACK (the blade texture is bright, and lit
+						// it looks sun-colored - invisible on lit terrain) and blend by
+						// the texture alpha so the blade-cross pattern darkens the
+						// backdrop while the gaps stay clear, with some transparency.
+						IDirect3DDevice9 *rdev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+						if (rdev) {
+							vmaterial->Get_Diffuse(&rvOldDiff);
+							rvOldOp = vmaterial->Get_Opacity();
+							vmaterial->Set_Diffuse(0, 0, 0);
+							vmaterial->Set_Opacity(0.1f);
+							// Darken-by-alpha: the blades SHADE the backdrop (their bright
+							// colour never reaches the frame) - a dark translucent blur.
+							rdev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
+							rdev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+							rdev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+						}
+					}
 					renderer->Render(mesh->Get_Base_Vertex_Offset());
+					if (rotorBlade) {
+						vmaterial->Set_Diffuse(rvOldDiff.X, rvOldDiff.Y, rvOldDiff.Z);
+						vmaterial->Set_Opacity(rvOldOp);
+					}
+				}
 
 				if (oldMapper)	//did we override the uv offset?
 				{	oldMapper->Set_LastUsedSyncTime(oldUVOffsetSyncTime);

@@ -107,7 +107,8 @@ W3XRenderObjClass::W3XRenderObjClass() :
 	m_bones(NULL),
 	m_boneCount(0),
 	m_recolorHex(0),
-	m_valid(false)
+	m_valid(false),
+	m_inShadowMapPass(false)
 {
 	for (int i = 0; i < kMaxBones; i++) {
 		m_boneCtrlActive[i] = false;
@@ -1108,12 +1109,10 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		IDirect3DDevice9 *smDev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
 		if (smDev) smDev->GetRenderState(D3DRS_COLORWRITEENABLE, &smCWE);
 		if (smCWE == 0) {
-			// Deferred shadow-map pass: the W3X uses the W3D volumetric soft shadow
-			// (SHADOW_VOLUME), NOT the deferred shadow map. Rendering into the shadow
-			// pass here forced device states (DS=NULL, ZEnable=0, viewport 2048,
-			// scissor/stencil/alpha off) that LEAKED to the next objects
-			// (buildings/dozer), corrupting their shadows and crashing on some
-			// (War Factory). Skip the pass entirely.
+			// Deferred shadow-map pass: the W3X casts via the W3D volumetric soft
+			// shadow (SHADOW_VOLUME). The deferred shadow map did not capture the W3X
+			// (no shadows at all when routed there), so skip the pass and let the
+			// volumetric shadow drive.
 			return;
 		}
 		view.Init(rinfo.Camera.Get_View_Matrix());

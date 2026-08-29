@@ -1535,7 +1535,13 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
 		D3DVIEWPORT9 vp2 = { 0, 0, 2048, 2048, 0.0f, 1.0f };
 		DX8CALL(SetViewport(&vp2));
-		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, 0);
+		// Set COLORWRITEENABLE DIRECTLY on the device, not just via DX8Wrapper's
+		// deferred state cache: the W3X render reads the raw device state to detect
+		// the shadow-map pass (GetRenderState), and the cached value wasn't applied
+		// yet - so the W3X didn't skip the pass and its fence lattice got rasterized
+		// into the shadow map (the wire-fence solid shadow).
+		d9->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, 0);	// keep cache in sync
 		DIAG_LOG(("W3DDeferredRenderer: shadow pass started (D24X8 depth).\n"));
 	}
 

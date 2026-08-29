@@ -22,6 +22,7 @@
 #define W3XRENDEROBJ_H
 
 #include "always.h"
+#include <d3d9.h>	// D3DVIEWPORT9 (deferred shadow-map state save/restore - kept for future RA3-style shadow restart)
 #include "WW3D2/rendobj.h"
 #include "WW3D2/rinfo.h"
 #include "WWMath/vector3.h"
@@ -231,6 +232,18 @@ public:
 		if (os.isEmpty()) return false;
 		return strstr(os.str(), "objectsgeneric") != NULL;
 	}
+	// True when the sub-mesh is an RA3 muzzleflash shader (helicopter rotor
+	// blades SKIN_SCREW*, engine fans SKIN_ENGINE_*). These are large FLAT QUADS
+	// (the rotor disc is a ~75x75 square with the blade pattern in the texture);
+	// their raw quad casts a square silhouette that swallows the whole fuselage
+	// shadow. The volumetric shadow builder replaces them with a round rotor-disc
+	// polygon (see initFromW3X) so the rotor casts a natural disc shadow.
+	bool GetSubMeshIsMuzzleflash(int i) const {
+		if (i < 0 || i >= (int)m_meshes.size()) return false;
+		const AsciiString &os = m_meshes[i].origShader;
+		if (os.isEmpty()) return false;
+		return strstr(os.str(), "muzzle") != NULL;
+	}
 
 	// Name (used as the shadow-geometry cache key by W3DShadowGeometryManager).
 	// The base RenderObjClass::Set_Name is a no-op and Get_Name returns "UNNAMED",
@@ -294,6 +307,18 @@ private:
 	Matrix3D m_worldTransform;
 	bool m_valid;
 	char m_name[64];	// model name for shadow-geometry caching / identification
+
+	// Deferred shadow-map pass state (RA3-style): when rendering into the sun
+	// shadow map (COLORWRITEENABLE=0) the W3X uses the sun camera's VP and must
+	// restore the device states it overrides so nothing leaks to the next object.
+	bool m_inShadowMapPass;
+	D3DVIEWPORT9 m_savedShadowViewport;
+	DWORD m_savedShadowZen;
+	DWORD m_savedShadowScissor;
+	DWORD m_savedShadowStencil;
+	DWORD m_savedShadowCull;
+	DWORD m_savedShadowAlphaBlend;
+	DWORD m_savedShadowAlphaTest;
 };
 
 #endif /* W3XRENDEROBJ_H */

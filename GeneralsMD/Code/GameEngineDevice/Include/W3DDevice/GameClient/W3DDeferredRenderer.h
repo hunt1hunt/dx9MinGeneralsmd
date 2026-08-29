@@ -73,6 +73,14 @@ public:
 	/// Get the G-Buffer pass height (pixels).
 	int getHeight() const { return m_gbufferHeight; }
 
+	/// The sun (shadow-camera) view-projection matrix, used to rasterize the W3X
+	/// models into the deferred shadow map (RA3-style alpha-masked shadows).
+	const Matrix4x4 &getShadowViewProj() const { return m_shadowViewProj; }
+	/// The sun (shadow-camera) view matrix.
+	const Matrix4x4 &getShadowView() const { return m_shadowView; }
+	/// The sun (shadow-camera) projection matrix.
+	const Matrix4x4 &getShadowProj() const { return m_shadowProj; }
+
 	// ---- G-Buffer pass lifecycle ----
 
 	/// Bind the 3 G-Buffer RTs as MRT targets, clear them + depth-stencil.

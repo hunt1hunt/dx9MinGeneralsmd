@@ -731,15 +731,37 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 			** to get our tree shadows and other alpha textured shadows to work.
 			*/
 			bool render_base_passes = ((rinfo.Current_Override_Flags() & RenderInfoClass::RINFO_OVERRIDE_ADDITIONAL_PASSES_ONLY) == 0);
-			bool is_alpha =	(Model->Get_Single_Shader().Get_Alpha_Test() == ShaderClass::ALPHATEST_ENABLE) || 
+			bool is_alpha =	(Model->Get_Single_Shader().Get_Alpha_Test() == ShaderClass::ALPHATEST_ENABLE) ||
 									(Model->Get_Single_Shader().Get_Src_Blend_Func() == ShaderClass::SRCBLEND_SRC_ALPHA);
-			
-			if (	(rinfo.Current_Override_Flags() & RenderInfoClass::RINFO_OVERRIDE_SHADOW_RENDERING) && 
+
+			// Vanilla helicopter rotor blades (AVChinook PROPELLER01/02 / PROPS*)
+			// carry an ALPHA-CHANNEL texture but their W3D shader doesn't set the
+			// alpha-test/blend flags, so Is_Translucent() is false and they land in
+			// the deferred G-Buffer as opaque - rendering them invisible. Force them
+			// through FORWARD rendering (skipped from the G-Buffer) - forward
+			// rendering shows the spinning blades (verified by the user).
+			bool forceForward = false;
+			{
+				const char *mn = Get_Name();
+				if (mn && (strstr(mn, "PROPELLER") || strstr(mn, "PROPS"))) forceForward = true;
+			}
+
+			if (	(rinfo.Current_Override_Flags() & RenderInfoClass::RINFO_OVERRIDE_SHADOW_RENDERING) &&
 					(is_alpha == true))
 			{
 				render_base_passes = true;
 			}
-			
+
+			// Deferred G-Buffer pass: translucent (alpha-blended) meshes AND the
+			// force-forward rotor blades must NOT be written to the G-Buffer - they
+			// are forward-rendered after lighting. Writing them here as opaque also
+			// puts their DEPTH in the G-Buffer, which then depth-rejects the forward
+			// translucent draw (the vanilla helicopter rotor blades became invisible
+			// after the deferred upgrade).
+			if (g_gbufferActive && (forceForward || Is_Translucent())) {
+				render_base_passes = false;
+			}
+
 			if (render_base_passes) {
 
 				/*
@@ -764,7 +786,7 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 				
 				MaterialPassClass * matpass = rinfo.Peek_Additional_Pass(i);
 
-				if ((!Is_Translucent()) || (matpass->Is_Enabled_On_Translucent_Meshes())) {
+				if ((!forceForward && !Is_Translucent()) || (matpass->Is_Enabled_On_Translucent_Meshes())) {
 					
 					/*
 					** If the base pass for this mesh has been disabled, we have to make sure
@@ -1194,6 +1216,13 @@ WW3DErrorType MeshClass::Load_W3D(ChunkLoadClass & cload)
 		is_additive |= (shader.Get_Dst_Blend_Func() == ShaderClass::DSTBLEND_ONE &&
 									shader.Get_Src_Blend_Func() == ShaderClass::SRCBLEND_ONE);
 	}
+	// Alpha-blended and additive meshes ARE translucent - fold them into
+	// Is_Translucent() so the deferred G-Buffer pass skips them (they are
+	// forward-rendered after lighting). Previously only SORT/ALPHATEST meshes
+	// were flagged, so SRC_ALPHA rotor blades (vanilla helicopter rotors) were
+	// captured into the G-Buffer as opaque and rendered black/invisible.
+	is_translucent |= is_alpha;
+	is_translucent |= is_additive;
 	Set_Translucent(is_translucent);
 	Set_Alpha(is_alpha);
 	Set_Additive(is_additive);

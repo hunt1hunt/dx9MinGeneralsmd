@@ -87,13 +87,30 @@ DDSFileClass::DDSFileClass(const char* name,unsigned reduction_factor)
 		return;
 	}
 
-	Format=D3DFormat_To_WW3DFormat((D3DFORMAT)SurfaceDesc.PixelFormat.FourCC);
+	// Detect the source pixel format. DXT FourCC files map directly via the
+	// D3DFORMAT table. A DDS with NO DDPF_FOURCC flag and no/unknown FourCC is
+	// an UNCOMPRESSED RGB file - read it as raw 32/24-bit pixels instead of
+	// leaving the format UNKNOWN (which made the RA3 rotor blade texture
+	// Fx_blades_G2, an uncompressed A8R8G8B8 DDS, decode as garbage and render
+	// as an opaque black quad under the muzzle Multiply blend).
+	if (SurfaceDesc.PixelFormat.Flags & 0x00000004 /*DDPF_FOURCC*/) {
+		Format=D3DFormat_To_WW3DFormat((D3DFORMAT)SurfaceDesc.PixelFormat.FourCC);
+	}
+	if (Format==WW3D_FORMAT_UNKNOWN && SurfaceDesc.PixelFormat.RGBBitCount==32) {
+		Format=(SurfaceDesc.PixelFormat.RGBAlphaBitMask)? WW3D_FORMAT_A8R8G8B8 : WW3D_FORMAT_X8R8G8B8;
+	}
+	else if (Format==WW3D_FORMAT_UNKNOWN && SurfaceDesc.PixelFormat.RGBBitCount==24) {
+		Format=WW3D_FORMAT_R8G8B8;
+	}
 	WWASSERT(
 		Format==WW3D_FORMAT_DXT1 ||
 		Format==WW3D_FORMAT_DXT2 ||
 		Format==WW3D_FORMAT_DXT3 ||
 		Format==WW3D_FORMAT_DXT4 ||
-		Format==WW3D_FORMAT_DXT5);
+		Format==WW3D_FORMAT_DXT5 ||
+		Format==WW3D_FORMAT_A8R8G8B8 ||
+		Format==WW3D_FORMAT_X8R8G8B8 ||
+		Format==WW3D_FORMAT_R8G8B8);
 
 	MipLevels=SurfaceDesc.MipMapCount;
 	if (MipLevels==0) MipLevels=1;
@@ -230,7 +247,7 @@ unsigned DDSFileClass::Calculate_DXTC_Surface_Size
 )
 {
 	unsigned level_size=(width/4)*(height/4);
-	switch (format) 
+	switch (format)
 	{
 	case WW3D_FORMAT_DXT1:
 		level_size*=8;
@@ -240,6 +257,16 @@ unsigned DDSFileClass::Calculate_DXTC_Surface_Size
 	case WW3D_FORMAT_DXT4:
 	case WW3D_FORMAT_DXT5:
 		level_size*=16;
+		break;
+	// Uncompressed RGB surfaces store width*height*bytes-per-pixel (no 4x4
+	// block). Handles the RA3 W3X rotor blade textures (Fx_blades_G2 etc.),
+	// which are uncompressed 32-bit DDS and previously loaded as garbage.
+	case WW3D_FORMAT_R8G8B8:
+		level_size=width*height*3;
+		break;
+	case WW3D_FORMAT_A8R8G8B8:
+	case WW3D_FORMAT_X8R8G8B8:
+		level_size=width*height*4;
 		break;
 	}
 
@@ -482,6 +509,42 @@ void DDSFileClass::Copy_Level_To_Surface
 							*dest_ptr++=0xffffffff;		// Bytes 5-8 of alpha block
 							*dest_ptr++=*src_ptr++;		// Bytes 1-4 of color block
 							*dest_ptr++=*src_ptr++;		// Bytes 5-8 of color block
+						}
+					}
+				}
+			}
+			else if (Format==WW3D_FORMAT_A8R8G8B8 || Format==WW3D_FORMAT_X8R8G8B8 || Format==WW3D_FORMAT_R8G8B8) {
+				// Uncompressed source (A8R8G8B8 / X8R8G8B8 / R8G8B8 DDS): copy the
+				// raw pixels, converting per-pixel when the destination format
+				// differs (e.g. the 16-bit device fallback). The RA3 W3X rotor
+				// blade textures (Fx_blades_G2 etc.) are uncompressed 32-bit DDS
+				// and were previously fed to the DXT decoder as garbage -> black.
+				const unsigned char* src_level=Get_Memory_Pointer(level);
+				unsigned src_bpp=Get_Bytes_Per_Pixel(Format);
+				unsigned dest_bpp=Get_Bytes_Per_Pixel(dest_format);
+
+				// Same 32-bit layout -> fast row copy (bytes are already BGRA).
+				bool same_layout=
+					(dest_format==Format) ||
+					(dest_format==WW3D_FORMAT_A8R8G8B8 && Format==WW3D_FORMAT_X8R8G8B8) ||
+					(dest_format==WW3D_FORMAT_X8R8G8B8 && Format==WW3D_FORMAT_A8R8G8B8);
+				if (same_layout) {
+					unsigned row_bytes=dest_width*dest_bpp;
+					for (unsigned y=0;y<dest_height;y++) {
+						memcpy(dest_surface+y*dest_pitch, src_level+y*row_bytes, row_bytes);
+					}
+				} else {
+					for (unsigned y=0;y<dest_height;y++) {
+						const unsigned char* src_row=src_level+y*dest_width*src_bpp;
+						unsigned char* dst_row=dest_surface+y*dest_pitch;
+						for (unsigned x=0;x<dest_width;x++) {
+							unsigned pixel;
+							if (src_bpp==4) {
+								pixel=src_row[x*4] | (src_row[x*4+1]<<8) | (src_row[x*4+2]<<16) | (src_row[x*4+3]<<24);
+							} else {
+								pixel=src_row[x*3] | (src_row[x*3+1]<<8) | (src_row[x*3+2]<<16) | 0xff000000;
+							}
+							BitmapHandlerClass::Write_B8G8R8A8(dst_row+x*dest_bpp, dest_format, pixel);
 						}
 					}
 				}

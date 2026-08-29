@@ -167,6 +167,12 @@ RTS3DScene::RTS3DScene()
 	gbufMtl->Set_Emissive(0, 0, 0);
 	m_gbufferMaterialPass->Set_Material(gbufMtl);
 	m_gbufferMaterialPass->Set_Shader(ShaderClass::_PresetOpaqueShader);
+	// The G-Buffer pass must NOT capture translucent meshes - they are rendered in
+	// the forward transparent pass after lighting (MaterialPassClass defaults
+	// EnableOnTranslucentMeshes to true, which was writing the vanilla helicopter
+	// rotor blades into the G-Buffer as opaque; their depth then depth-rejected
+	// the forward translucent draw and the rotors became invisible).
+	m_gbufferMaterialPass->Enable_On_Translucent_Meshes(false);
 	gbufMtl->Release_Ref();
 
 //	VertexMaterialClass *frenzyMtl = NEW_REF(VertexMaterialClass,());

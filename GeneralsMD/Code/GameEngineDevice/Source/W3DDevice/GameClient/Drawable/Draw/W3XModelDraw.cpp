@@ -183,13 +183,9 @@ void W3XModelDraw::releaseShadows(void)
 
 void W3XModelDraw::allocateShadows(void)
 {
-	// SWITCHED to the engine's W3D soft shadow path: the deferred shadow-map could
-	// not rasterize the W3X into the shadow color RT under dgVoodoo2 (0 pixels),
-	// so use the engine shadow driven by the template's Shadow type
-	// (SHADOW_VOLUME). The shadow geometry is skinned from the render object's
-	// COMPOSED (animated) bones, so apply the current animation's frame 0 first —
-	// a humanoid's bind/T-pose (arms out, weapon 11 units to the side) would
-	// otherwise make the shadow ~3x the standing soldier.
+	// W3X shadows use the W3D volumetric soft shadow (SHADOW_VOLUME) driven by the
+	// template's Shadow type. The deferred shadow map does NOT capture the W3X
+	// (tried routing it there - no shadows at all), so keep the volumetric path.
 	const ThingTemplate *tmplate = getDrawable() ? getDrawable()->getTemplate() : NULL;
 	if (m_shadow == NULL && m_renderObj && TheW3DShadowManager
 		&& tmplate && tmplate->getShadowType() != SHADOW_NONE) {
@@ -1526,10 +1522,18 @@ Int W3XModelDraw::getPristineBonePositionsForConditionState(
 	if (!state || !positions) return 0;
 
 	Int count = 0;
-	for (Int i = startIndex; i < startIndex + maxBones && i < (Int)m_loadedModel.boneNames.size(); i++) {
-		// Match bone name prefix (suffix digits allowed, like W3D).
+	// Scan ALL bones from startIndex (not just a startIndex..startIndex+maxBones
+	// window): callers pass startIndex=0, maxBones=1 for a single-name lookup
+	// (e.g. ParkingPlaceBehavior's Runway%dPark%dHan), and the matching bone is
+	// NOT at index 0 (ROOTTRANSFORM is). The old window only checked the first
+	// bone, so every lookup fell through to the object centre and all four
+	// airfield aircraft parked on top of each other.
+	for (Int i = startIndex; i < (Int)m_loadedModel.boneNames.size() && count < maxBones; i++) {
+		// Match bone name prefix (suffix digits allowed, like W3D). Case-insensitive:
+		// loadHierarchy lowercases the stored bone names ("runway1park1han") while
+		// callers pass mixed case ("Runway1Park1Han").
 		if (boneNamePrefix && boneNamePrefix[0]) {
-			if (strncmp(m_loadedModel.boneNames[i].str(), boneNamePrefix, strlen(boneNamePrefix)) != 0)
+			if (_strnicmp(m_loadedModel.boneNames[i].str(), boneNamePrefix, strlen(boneNamePrefix)) != 0)
 				continue;
 		}
 		const float *bq = &m_loadedModel.boneMatrixArray[i * 8 + 0];
@@ -1562,10 +1566,12 @@ Int W3XModelDraw::getCurrentBonePositions(
 	// but without a condition (uses whatever model is currently loaded).
 	if (!positions) return 0;
 	Int count = 0;
-	for (Int i = startIndex; i < startIndex + maxBones && i < (Int)m_loadedModel.boneNames.size(); i++) {
+	// Scan ALL bones from startIndex (see getPristineBonePositionsForConditionState
+	// for why the old startIndex..startIndex+maxBones window missed the bone).
+	for (Int i = startIndex; i < (Int)m_loadedModel.boneNames.size() && count < maxBones; i++) {
 		const AsciiString &boneName = m_loadedModel.boneNames[i];
 		if (boneNamePrefix && boneNamePrefix[0]) {
-			if (strncmp(boneName.str(), boneNamePrefix, strlen(boneNamePrefix)) != 0)
+			if (_strnicmp(boneName.str(), boneNamePrefix, strlen(boneNamePrefix)) != 0)
 				continue;
 		}
 		const float *bq = &m_loadedModel.boneMatrixArray[i * 8 + 0];

@@ -372,6 +372,18 @@ protected:
 	W3DShadowGeometry *m_parentGeometry; // mesh hierarchy containing this mesh.
 	bool m_ownsShadowArrays;		// true when initFromW3X allocated m_verts/m_polygons
 
+	// Rotor-disc shadow spin (W3X muzzleflash rotor meshes). The vanilla W3D
+	// helicopters animate their rotor-blade mesh transforms, so the volumetric
+	// shadow re-transforms them every frame and the rotor shadow visibly spins.
+	// The W3X rotor is a static flat quad (the spin is faked in the muzzleflash
+	// UV), so initFromW3X generates a blade-cross silhouette and updateMeshVolume
+	// rotates it around m_rotorCenter over time to match that dynamic look.
+	bool m_isRotor;			///< this mesh is a rotating rotor disc
+	Vector3 m_rotorCenter;	///< disc centre (rotation pivot)
+	Vector3 m_rotorU;		///< disc plane basis U (pre-rotation)
+	Vector3 m_rotorV;		///< disc plane basis V (pre-rotation)
+	Vector3 *m_rotorBaseVerts;	///< un-rotated copy of the disc verts (owned)
+
 };	//end of meshInfo
 
 #ifdef DO_TERRAIN_SHADOW_VOLUMES
@@ -893,13 +905,18 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 			continue;
 		// Skip alpha-cutout sub-meshes (material declares AlphaTestEnable=true:
 		// wire fences, rotor blades). Their transparent gaps must not cast a solid
-		// shadow block; the volumetric silhouette cannot alpha-test per-pixel, so
-		// these meshes contribute no shadow geometry at all (better than a solid
-		// block). Mirrors the legacy W3D path's Is_Alpha/Is_Translucent skip.
-		if (w3x->GetSubMeshAlphaTest(si)) {
-			DEBUG_LOG(("[W3X_SIL_DIAG]   shadow submesh[%d] alpha-test (AlphaTestEnable) - skipped\n", si));
-			continue;
-		}
+		// Alpha-test cutout meshes (objectsgeneric wire fences) are transparent in
+		// the lattice but SOLID in the frame (posts + top rail). The volumetric
+		// silhouette cannot alpha-test per-pixel, so instead of skipping them (no
+		// shadow at all) we generate a FRAME shadow from the skinned vertices below
+		// (two end posts + top line), matching the RA3 alpha-masked fence shadow.
+		const bool isAlphaTest = w3x->GetSubMeshAlphaTest(si);
+		// Muzzleflash sub-meshes (rotor blades SKIN_SCREW*, engine fans) are big
+		// flat quads - the RA3 rotor disc is a ~75x75 square with the blade pattern
+		// in the texture (the muzzleflash VS rotates the UV). Their raw square
+		// silhouette swallows the whole helicopter body in the union shadow, so the
+		// volumetric geometry replaces them with a round rotor-disc polygon below.
+		const bool isMuzzleflash = w3x->GetSubMeshIsMuzzleflash(si);
 		if (w3x->Get_Name() && strstr(w3x->Get_Name(), "APATAVGATT") != NULL) {
 			DEBUG_LOG(("[W3X_SIL_DIAG]   shadow submesh[%d] verts=%d tris=%d\n", si, vcount, tcount));
 		}
@@ -962,61 +979,100 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 			if (maxZ > bodyCapZ) { delete[] verts; continue; }
 		}
 
-		// Read triangle indices (16-bit).
-		int icount = tcount * 3;
-		unsigned short *idx = NEW unsigned short[icount];
-		{
-			void *ptr = NULL;
-			if (FAILED(ib->Lock(0, 0, &ptr, D3DLOCK_READONLY))) { delete[] verts; delete[] idx; continue; }
-			unsigned short *src = (unsigned short *)ptr;
-			for (int i = 0; i < icount; i++) idx[i] = src[i];
-			ib->Unlock();
-		}
-
-		// Deduplicate vertices exactly like initFromMesh.
+		// ----------------------------------------------------------------------
+		// Build the shadow polygon set for this sub-mesh. Two paths:
+		//  - muzzleflash (rotor blades SKIN_SCREW*, engine fans): the mesh is a
+		//    large FLAT QUAD - the RA3 rotor disc is a ~75x75 square with the
+		//    blade pattern + spin baked into the texture/UV, not the geometry. A
+		//    raw square silhouette swallows the entire fuselage in the union
+		//    shadow (the body is inside the square), so replace it with a round
+		//    rotor-disc polygon: the inscribed circle of the quad's 2D bounding
+		//    box, laid in the quad's best-fit plane. This gives a natural round
+		//    rotor shadow instead of a hard square.
+		//  - everything else: the raw skinned triangles (existing behavior).
+		// ----------------------------------------------------------------------
 		UnsignedShort *vertParent = NEW UnsignedShort[vcount];
-		for (int i = 0; i < vcount; i++) vertParent[i] = 0xffff;
 		int newVertexCount = vcount;
-		for (int j = 0; j < vcount; j++)
-		{
-			if (vertParent[j] != 0xffff) continue;
-			const Vector3 *v_curr = &verts[j];
-			for (int k = j + 1; k < vcount; k++)
-			{
-				Vector3 len(*v_curr - verts[k]);
-				if (len.Length2() == 0) { vertParent[k] = j; newVertexCount--; }
-			}
-			vertParent[j] = j;
-		}
-
-		// Build the triangle array, dropping degenerate triangles. A flat/duplicate
-		// sub-mesh (e.g. the helicopter rotor quad) can contain zero-area or
-		// duplicate-index triangles (their cross product is the zero vector);
-		// buildPolygonNormal normalizes that -> NaN -> garbage silhouette edges.
-		// Skipping them keeps the valid boundary triangles (a square quad still
-		// yields its 4-edge silhouette) while the degenerate ones feed no NaN.
-		TriIndex *polys = NEW TriIndex[tcount];
+		TriIndex *polys = NULL;
 		int polyOut = 0;
-		for (int ti = 0; ti < tcount && polyOut < tcount; ti++)
-		{
-			unsigned short ia = idx[ti * 3 + 0];
-			unsigned short ib = idx[ti * 3 + 1];
-			unsigned short ic = idx[ti * 3 + 2];
-			if (ia == ib || ib == ic || ia == ic) continue;			// duplicate vertices
-			if (ia >= (unsigned)vcount || ib >= (unsigned)vcount || ic >= (unsigned)vcount) continue;
-			const Vector3 &va = verts[ia], &vb = verts[ib], &vc = verts[ic];
-			Vector3 e1 = vb - va;
-			Vector3 e2 = vc - va;
-			Vector3 cr;
-			Vector3::Cross_Product(e1, e2, &cr);	// (this codebase's Vector3 has only the 3-arg form)
-			if (cr.Length2() < 1e-14f) continue;					// zero-area (flat/collinear)
-			polys[polyOut].I = ia;
-			polys[polyOut].J = ib;
-			polys[polyOut].K = ic;
-			polyOut++;
+		// Rotor-spin metadata (copied onto the geomMesh after it is created).
+		// updateMeshVolume rotates the rotor silhouette around rotorCenter over
+		// time so the rotor shadow visibly spins like the vanilla helicopters.
+		bool rotorSpin = false;
+		Vector3 rotorCenter(0, 0, 0), rotorU(1, 0, 0), rotorV(0, 1, 0);
+		Vector3 *rotorBaseVerts = NULL;
+
+		if (isMuzzleflash) {
+			// RA3 helicopters cast NO rotor shadow - only the fuselage does
+			// (verified against the original RA3: the rotor blades are muzzleflash
+			// billboards that cast no shadow). Skip the rotor sub-meshes entirely so
+			// the helicopter's volumetric shadow is the body silhouette.
+			delete[] verts;
+			delete[] vertParent;
+			continue;
+		} else if (isAlphaTest) {
+			// Wire-fence (objectsgeneric): the lattice is transparent and must not
+			// cast a solid block. The volumetric silhouette cannot alpha-test
+			// per-pixel, so skip the fence entirely (no shadow) - the user confirmed
+			// the frame-shadow approach still produced a solid lattice shadow, so
+			// the fence casts nothing until a reliable alpha-masked path exists.
+			delete[] verts;
+			delete[] vertParent;
+			continue;
+		} else {
+			// Read triangle indices (16-bit).
+			int icount = tcount * 3;
+			unsigned short *idx = NEW unsigned short[icount];
+			{
+				void *ptr = NULL;
+				if (FAILED(ib->Lock(0, 0, &ptr, D3DLOCK_READONLY))) { delete[] verts; delete[] vertParent; delete[] idx; continue; }
+				unsigned short *src = (unsigned short *)ptr;
+				for (int i = 0; i < icount; i++) idx[i] = src[i];
+				ib->Unlock();
+			}
+
+			// Deduplicate vertices exactly like initFromMesh.
+			for (int i = 0; i < vcount; i++) vertParent[i] = 0xffff;
+			for (int j = 0; j < vcount; j++)
+			{
+				if (vertParent[j] != 0xffff) continue;
+				const Vector3 *v_curr = &verts[j];
+				for (int k = j + 1; k < vcount; k++)
+				{
+					Vector3 len(*v_curr - verts[k]);
+					if (len.Length2() == 0) { vertParent[k] = j; newVertexCount--; }
+				}
+				vertParent[j] = j;
+			}
+
+			// Build the triangle array, dropping degenerate triangles. A flat/duplicate
+			// sub-mesh (e.g. the helicopter rotor quad) can contain zero-area or
+			// duplicate-index triangles (their cross product is the zero vector);
+			// buildPolygonNormal normalizes that -> NaN -> garbage silhouette edges.
+			// Skipping them keeps the valid boundary triangles (a square quad still
+			// yields its 4-edge silhouette) while the degenerate ones feed no NaN.
+			polys = NEW TriIndex[tcount];
+			for (int ti = 0; ti < tcount && polyOut < tcount; ti++)
+			{
+				unsigned short ia = idx[ti * 3 + 0];
+				unsigned short ib = idx[ti * 3 + 1];
+				unsigned short ic = idx[ti * 3 + 2];
+				if (ia == ib || ib == ic || ia == ic) continue;			// duplicate vertices
+				if (ia >= (unsigned)vcount || ib >= (unsigned)vcount || ic >= (unsigned)vcount) continue;
+				const Vector3 &va = verts[ia], &vb = verts[ib], &vc = verts[ic];
+				Vector3 e1 = vb - va;
+				Vector3 e2 = vc - va;
+				Vector3 cr;
+				Vector3::Cross_Product(e1, e2, &cr);	// (this codebase's Vector3 has only the 3-arg form)
+				if (cr.Length2() < 1e-14f) continue;					// zero-area (flat/collinear)
+				polys[polyOut].I = ia;
+				polys[polyOut].J = ib;
+				polys[polyOut].K = ic;
+				polyOut++;
+			}
+			tcount = polyOut;
+			delete[] idx;
 		}
-		tcount = polyOut;
-		delete[] idx;
 
 		W3DShadowGeometryMesh *geomMesh = &m_meshList[m_meshCount];
 		geomMesh->m_mesh = (MeshClass *)robj;	// Get_Transform/Get_Bounding_Box are
@@ -1028,6 +1084,14 @@ Int W3DShadowGeometry::initFromW3X(RenderObjClass *robj)
 		geomMesh->m_parentVerts = vertParent;
 		geomMesh->m_parentGeometry = this;
 		geomMesh->m_ownsShadowArrays = true;
+		if (rotorSpin) {
+			geomMesh->m_isRotor = true;
+			geomMesh->m_rotorCenter = rotorCenter;
+			geomMesh->m_rotorU = rotorU;
+			geomMesh->m_rotorV = rotorV;
+			geomMesh->m_rotorBaseVerts = rotorBaseVerts;
+			rotorBaseVerts = NULL;	// ownership moved to the geomMesh
+		}
 
 		m_meshCount++;
 		m_numTotalsVerts += newVertexCount;
@@ -1102,6 +1166,8 @@ W3DShadowGeometryMesh::W3DShadowGeometryMesh( void )
 	m_numPolygons = 0;
 	m_polygons = NULL;
 	m_parentGeometry = NULL;
+	m_isRotor = false;
+	m_rotorBaseVerts = NULL;
 }  // end W3DShadowGeometry
 
 // ~W3DShadowGeometry ============================================================
@@ -1118,6 +1184,10 @@ W3DShadowGeometryMesh::~W3DShadowGeometryMesh( void )
 	if (m_ownsShadowArrays) {
 		delete [] const_cast<Vector3*>(m_verts);
 		delete [] const_cast<TriIndex*>(m_polygons);
+	}
+	if (m_rotorBaseVerts) {
+		delete [] m_rotorBaseVerts;
+		m_rotorBaseVerts = NULL;
 	}
 
 }  // end ~W3DShadowGeometry
@@ -2296,6 +2366,13 @@ void W3DVolumetricShadow::updateMeshVolume(Int meshIndex, Int lightIndex, const 
 #endif	//near light source
 #endif // CNC3
 
+	// Rotor-disc mesh: the silhouette is rotated below, so it MUST be rebuilt
+	// every frame (the object itself doesn't rotate - the W3X rotor spin is faked
+	// in the muzzleflash UV - so the normal transform-diff test would cache it).
+	if (meshIndex >= 0 && meshIndex < m_geometry->getMeshCount()
+		&& m_geometry->getMesh(meshIndex)->m_isRotor)
+		isMeshRotating = true;
+
 	// get the light
 	lightPosWorld = TheW3DShadowManager->getLightPosWorld(lightIndex);
 
@@ -2419,6 +2496,36 @@ void W3DVolumetricShadow::updateMeshVolume(Int meshIndex, Int lightIndex, const 
 			// reset the silhouette data and build a new one from this light
 			// source perspective
 			//
+
+			// Rotor-disc mesh: rotate the blade-cross silhouette around the disc
+			// centre over time so the rotor shadow visibly spins (matching the
+			// vanilla helicopters' animated rotor-blade shadows). The normals stay
+			// the same under a disc-plane rotation (all +Z for the horizontal
+			// rotor), so only the vertex POSITIONS need updating. Done before the
+			// silhouette rebuild below reads them. m_rotorBaseVerts is the pristine
+			// copy; m_verts is mutated in place (shared cached geometry - all
+			// instances of the same rotor spin in sync, which is correct).
+			{
+				W3DShadowGeometryMesh *rotorMesh = m_geometry->getMesh(meshIndex);
+				if (rotorMesh->m_isRotor && rotorMesh->m_rotorBaseVerts) {
+					const float kRotorSpinSpeed = 6.0f;	// rad/s (~1 rev/sec) - visible spin, not a blur
+					// GetTickCount (declared in windows.h, always available) rather
+					// than timeGetTime: mmsystem.h is a modern-SDK header VC6 cannot
+					// parse (MMVERSION C2146).
+					float spinAngle = (float)::GetTickCount() * 0.001f * kRotorSpinSpeed;
+					float cs = (float)cos(spinAngle), sn = (float)sin(spinAngle);
+					Vector3 *rverts = const_cast<Vector3*>(rotorMesh->m_verts);
+					const Vector3 *base = rotorMesh->m_rotorBaseVerts;
+					for (int rv = 0; rv < rotorMesh->m_numVerts; rv++) {
+						Vector3 rel(base[rv] - rotorMesh->m_rotorCenter);
+						float a = rel.X * rotorMesh->m_rotorU.X + rel.Y * rotorMesh->m_rotorU.Y + rel.Z * rotorMesh->m_rotorU.Z;
+						float b = rel.X * rotorMesh->m_rotorV.X + rel.Y * rotorMesh->m_rotorV.Y + rel.Z * rotorMesh->m_rotorV.Z;
+						rverts[rv] = rotorMesh->m_rotorCenter
+							+ rotorMesh->m_rotorU * (a * cs - b * sn)
+							+ rotorMesh->m_rotorV * (a * sn + b * cs);
+					}
+				}
+			}
 
 			if (m_numSilhouetteIndices[meshIndex] != 0)
 			{	//this silhouette was built before and is being updated.
