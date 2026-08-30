@@ -916,6 +916,10 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 		// Authoring FXShader name for the volumetric shadow (tells a transparent
 		// generic fence from a solid body/rotor that must cast a shadow).
 		robj->SetSubMeshOrigShader((int)i, sm.origShader.str());
+		// Sub-mesh render name (e.g. "...SKIN_G01") — the cast pass uses the
+		// SKIN_G* prefix to recognize building grille/lattice meshes and exclude
+		// them from writing a wire-mesh pattern into the shadow map.
+		robj->SetSubMeshName((int)i, sm.name.str());
 		// Per-sub-mesh shader override: route each sub-mesh to the SAS-free
 		// variant matching its RA3 FXShader, whenever it differs from the
 		// model-wide shader. Buildings stay opaque (w3x_buildings.fx

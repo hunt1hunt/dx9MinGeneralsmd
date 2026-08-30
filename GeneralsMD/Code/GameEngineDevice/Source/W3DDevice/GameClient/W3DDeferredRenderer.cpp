@@ -35,6 +35,7 @@
 #include "Common/Debug.h"
 #include "WW3D2/formconv.h"
 #include <vector>
+#include <d3dx9effect.h>
 
 // ----------------------------------------------------------------------------
 // Diagnostic logging — always compiled, writes to fixed path on E: drive.
@@ -1567,6 +1568,35 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	m_shadowView = *(Matrix4x4*)&d3dV;
 	m_shadowProj = *(Matrix4x4*)&d3dP;
 
+	// DIAG (one-shot): dump the RAW d3dV / d3dP / d3dVP floats vs the reinterpreted
+	// Matrix4x4 rows. THE decisive test for the "sunVP matrix mismatch" mystery —
+	// if D3DXMATRIX layout differs from Vector4 Row[4] (16-byte alignment / member
+	// order), the reinterpreted m_shadowViewProj is garbage and every shadow depth
+	// is wrong -> blocky overlay. Theory (sunDir=(0,0,1), camPos=(-151,-555,310)):
+	//   d3dV  row3 = (151, 555, 500, 1)   (matches shadowView r3 log)
+	//   d3dVP row0 = (0.002, 0, 0, 0)     (ortho 2/1000)
+	//   d3dVP row3 = (0.302, 1.11, 0.25, 1)
+	// W3X log shows sunVP r0=(0,-0.001,0,0) r3=(-1.126,2.079,-0.615,1) — matches
+	// NONE of these -> layout/multiply mismatch. This dump settles it.
+	static bool s_vpDiag = false;
+	if (!s_vpDiag) {
+		s_vpDiag = true;
+		DIAG_LOG(("W3DDeferredRenderer: [VP] d3dV: %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f\n",
+			d3dV._11, d3dV._12, d3dV._13, d3dV._14, d3dV._21, d3dV._22, d3dV._23, d3dV._24,
+			d3dV._31, d3dV._32, d3dV._33, d3dV._34, d3dV._41, d3dV._42, d3dV._43, d3dV._44));
+		DIAG_LOG(("W3DDeferredRenderer: [VP] d3dP: %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f\n",
+			d3dP._11, d3dP._12, d3dP._13, d3dP._14, d3dP._21, d3dP._22, d3dP._23, d3dP._24,
+			d3dP._31, d3dP._32, d3dP._33, d3dP._34, d3dP._41, d3dP._42, d3dP._43, d3dP._44));
+		DIAG_LOG(("W3DDeferredRenderer: [VP] d3dVP: %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f\n",
+			d3dVP._11, d3dVP._12, d3dVP._13, d3dVP._14, d3dVP._21, d3dVP._22, d3dVP._23, d3dVP._24,
+			d3dVP._31, d3dVP._32, d3dVP._33, d3dVP._34, d3dVP._41, d3dVP._42, d3dVP._43, d3dVP._44));
+		DIAG_LOG(("W3DDeferredRenderer: [VP] m_shadowViewProj r0=(%.6f,%.6f,%.6f,%.6f) r1=(%.6f,%.6f,%.6f,%.6f) r2=(%.6f,%.6f,%.6f,%.6f) r3=(%.6f,%.6f,%.6f,%.6f)\n",
+			m_shadowViewProj[0].X, m_shadowViewProj[0].Y, m_shadowViewProj[0].Z, m_shadowViewProj[0].W,
+			m_shadowViewProj[1].X, m_shadowViewProj[1].Y, m_shadowViewProj[1].Z, m_shadowViewProj[1].W,
+			m_shadowViewProj[2].X, m_shadowViewProj[2].Y, m_shadowViewProj[2].Z, m_shadowViewProj[2].W,
+			m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W));
+	}
+
 	// DIAG (one-shot): verify the sun LookAt inputs and resulting view matrix
 	// (row0 must be a non-zero unit "right" vector, else the depth pass is empty).
 	// Written to BOTH logs: DIAG_LOG (deferred RT log, [NEW] marker makes it
@@ -1731,12 +1761,170 @@ void W3DDeferredRenderer::endShadowMapPass()
 	}
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
 
-	// One-shot diagnostic: does the shadow-map color RT actually contain depth?
-	DebugDumpShadowMap(static_cast<IDirect3DDevice9*>(dev), m_shadowDepthRT);
+	// DEBUG one-shot: save the ACTUAL shadow-map content (the D24X8 depth, sampled
+	// through an effect's sampler_state — the only reliable D24X8 sample path under
+	// dgVoodoo2) as a viewable PPM. The old DebugDumpShadowMap read the COLOR RT,
+	// which the cast pass NEVER writes (CWE=0) so it always reported "empty" — a
+	// false negative that misdirected earlier debugging. See the implementation for
+	// the decisive "is the wire-mesh in the map, or in the receive sampling?" test.
+	dumpShadowD24ToPPM("E:\\shadowmap_dump.ppm");
 
 	// Restore main camera view/proj transforms.
 	DX8Wrapper::Set_Transform(D3DTS_VIEW, m_savedView);
 	DX8Wrapper::Set_Transform(D3DTS_PROJECTION, m_savedProj);
+}
+
+// ============================================================================
+// W3DDeferredRenderer::dumpShadowD24ToPPM
+// ============================================================================
+// DEBUG one-shot: render the D24X8 sun-depth shadow map into the shadow COLOR RT
+// as grayscale, read it back and save a PPM. Lets us SEE the ACTUAL shadow-map
+// content to decide whether the "wire-mesh" overlay on W3X surfaces is a pattern
+// INSIDE the map (cast wrote lattice/fence geometry) or produced by the receive
+// sampling (the hp_invshadow_trilinear compare/PCF). Does not change any
+// rendering behavior; fires once at ~60 frames in (2s, scene populated).
+//
+// The D24X8 depth texture is ONLY sampleable through D3DXEffect's sampler_state
+// (the .fx receive path) under dgVoodoo2 — a standalone compiled PS returns 1.0,
+// so a plain-shader dump would come out all-white. Build a tiny effect with the
+// exact RA3 ShadowMapSampler declaration instead.
+// ----------------------------------------------------------------------------
+void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
+{
+	static int s_count = 0;
+	static bool s_dumped = false;
+	if (++s_count < 60 || s_dumped) return;
+	s_dumped = true;
+
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev || !m_shadowDepthRT || !m_shadowDepthStencilTex || !m_quadVB || !m_quadIB) return;
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// Build a tiny effect with the exact RA3 ShadowMapSampler declaration.
+	ID3DXEffect *fx = NULL;
+	{
+		static const char fxsrc[] =
+			"texture ShadowMapTex;\n"
+			"sampler2D ShadowMapSampler = sampler_state {\n"
+			"    Texture = <ShadowMapTex>;\n"
+			"    MinFilter = Point;\n"
+			"    MagFilter = Point;\n"
+			"    MipFilter = None;\n"
+			"    AddressU = Clamp;\n"
+			"    AddressV = Clamp;\n"
+			"};\n"
+			"float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
+			"    float d = tex2D(ShadowMapSampler, uv).x;\n"
+			"    return float4(d, d, d, 1.0);\n"
+			"}\n"
+			"technique T {\n"
+			"    pass p0 {\n"
+			"        PixelShader = compile ps_3_0 main();\n"
+			"    }\n"
+			"}\n";
+		ID3DXBuffer *err = NULL;
+		D3DXCreateEffect(d9, fxsrc, (UINT)strlen(fxsrc), NULL, NULL, 0, NULL, &fx, &err);
+		if (err) { DIAG_LOG(("SHADOWD24: effect create failed: %s\n", (const char*)err->GetBufferPointer())); err->Release(); }
+	}
+	if (!fx) return;
+
+	// Save the render states the debug draw touches.
+	D3DVIEWPORT9 savedVP; d9->GetViewport(&savedVP);
+	DWORD savZen, savZWrite, savBlend, savATest, savCull, savMag, savMin, savMip;
+	dev->GetRenderState(D3DRS_ZENABLE, &savZen);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &savZWrite);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &savBlend);
+	dev->GetRenderState(D3DRS_ALPHATESTENABLE, &savATest);
+	dev->GetRenderState(D3DRS_CULLMODE, &savCull);
+	d9->GetSamplerState(0, D3DSAMP_MAGFILTER, &savMag);
+	d9->GetSamplerState(0, D3DSAMP_MINFILTER, &savMin);
+	d9->GetSamplerState(0, D3DSAMP_MIPFILTER, &savMip);
+
+	// Render the D24X8 into the shadow COLOR RT as grayscale.
+	IDirect3DSurface8 *surf = m_shadowDepthRT->Get_D3D_Surface_Level();
+	IDirect3DTexture9 *dstTex = (IDirect3DTexture9*)m_shadowDepthRT->Peek_D3D_Texture();
+	if (!surf || !dstTex) { if (surf) surf->Release(); return; }
+
+	DX8Wrapper::Set_Render_Target(0, surf);
+	surf->Release();
+	{
+		D3DVIEWPORT9 vp; vp.X = 0; vp.Y = 0;
+		vp.Width = m_gbufferWidth; vp.Height = m_gbufferHeight;
+		vp.MinZ = 0.0f; vp.MaxZ = 1.0f;
+		d9->SetViewport(&vp);
+		dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+		dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+		dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+		dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+		dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+		d9->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+		d9->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+		d9->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+		d9->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+		d9->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+		fx->SetTexture("ShadowMapTex", m_shadowDepthStencilTex);
+		UINT passes = 0;
+		fx->SetTechnique("T");
+		fx->Begin(&passes, 0);
+		for (UINT p = 0; p < passes; p++) {
+			fx->BeginPass(p);
+			dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+			dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+			dev->SetIndices(m_quadIB);
+			dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+			fx->EndPass();
+		}
+		fx->End();
+	}
+	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+	d9->SetViewport(&savedVP);
+	dev->SetRenderState(D3DRS_ZENABLE, savZen);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, savZWrite);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, savBlend);
+	dev->SetRenderState(D3DRS_ALPHATESTENABLE, savATest);
+	dev->SetRenderState(D3DRS_CULLMODE, savCull);
+	d9->SetSamplerState(0, D3DSAMP_MAGFILTER, savMag);
+	d9->SetSamplerState(0, D3DSAMP_MINFILTER, savMin);
+	d9->SetSamplerState(0, D3DSAMP_MIPFILTER, savMip);
+	fx->Release();
+
+	// Read the shadow COLOR RT back and save as a grayscale PPM (A8R8G8B8 -> R).
+	IDirect3DSurface9 *src = NULL;
+	if (FAILED(dstTex->GetSurfaceLevel(0, &src))) return;
+	D3DSURFACE_DESC desc; src->GetDesc(&desc);
+	IDirect3DSurface9 *sys = NULL;
+	if (FAILED(d9->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &sys, NULL))) { src->Release(); return; }
+	if (FAILED(d9->GetRenderTargetData(src, sys))) { sys->Release(); src->Release(); return; }
+	D3DLOCKED_RECT lr;
+	if (FAILED(sys->LockRect(&lr, NULL, D3DLOCK_READONLY))) { sys->Release(); src->Release(); return; }
+
+	FILE *fp = fopen(path, "wb");
+	if (fp) {
+		// The shadow COLOR RT is SM_SIZE x SM_SIZE (2048), but the debug draw's
+		// viewport is the G-Buffer size — the D24X8 content (sampled with UV 0..1)
+		// fills only that top-left region; the rest of the RT is leftover clear
+		// (1,1,1 white). Write only the viewport-sized top-left block so the PPM
+		// is the full shadow map scaled to the viewport, not mostly blank.
+		int w = (int)desc.Width, h = (int)desc.Height;
+		int vw = m_gbufferWidth, vh = m_gbufferHeight;
+		if (w > vw) w = vw;
+		if (h > vh) h = vh;
+		fprintf(fp, "P6\n%d %d\n255\n", w, h);
+		const unsigned char *row = (const unsigned char*)lr.pBits;
+		for (int y = 0; y < h; y++) {
+			const unsigned char *p = row + (size_t)y * lr.Pitch;
+			for (int x = 0; x < w; x++) {
+				unsigned char r = p[x * 4 + 2];	// A8R8G8B8: R at byte 2
+				fputc(r, fp); fputc(r, fp); fputc(r, fp);
+			}
+		}
+		fclose(fp);
+		DIAG_LOG(("SHADOWD24: wrote %dx%d to %s (RT %dx%d, viewport %dx%d)\n",
+			w, h, path, (int)desc.Width, (int)desc.Height, m_gbufferWidth, m_gbufferHeight));
+	}
+	sys->UnlockRect();
+	sys->Release();
+	src->Release();
 }
 
 // ============================================================================

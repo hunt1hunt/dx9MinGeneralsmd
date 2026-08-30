@@ -1137,10 +1137,20 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,camPos)) {
 						RefRenderObjListIterator si(&RenderList);
 						int smObjCount = 0;	// DIAG: objects actually rasterized into the shadow map
+						static bool s_objListOnce = false;	// DIAG: one-shot name list
+						static char s_objNames[15][128];
+						static int s_objNamesN = 0;
 						for (si.First(); !si.Is_Done(); si.Next()) {
 						RenderObjClass *r=si.Peek_Obj();
 						if (r->Class_ID()==RenderObjClass::CLASSID_TILEMAP) continue;
 						if (r->Is_Really_Visible()) {
+						if (!s_objListOnce && s_objNamesN < 15) {
+							const char *nm = r->Get_Name();
+							if (nm) {
+								strncpy(s_objNames[s_objNamesN], nm, 127); s_objNames[s_objNamesN][127]=0;
+								s_objNamesN++;
+							}
+						}
 						Matrix4x4 ident(true); DX8Wrapper::Set_Transform(D3DTS_WORLD,ident);
 						r->Render(rinfo);
 						smObjCount++;
@@ -1153,6 +1163,17 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						// scene-load with no objects and would falsely report an empty map.
 						{ static int s_smDiagFrames=0; if ((s_smDiagFrames++ % 60) == 0) {
 							DIAG_LOG(("SHADOW_PASS: rendered %d visible non-terrain objects into shadow map\n", smObjCount)); } }
+						// DIAG one-shot: the NAMES of the objects rasterized into the
+						// shadow map. Tells us whether any wire-fence/lattice mesh
+						// (objectsgeneric / alpha-cutout) is still writing geometry —
+						// cross-check with the D24X8 dump PPM.
+						if (!s_objListOnce && smObjCount > 0) {
+							s_objListOnce = true;
+							DIAG_LOG(("SHADOW_CAST_OBJS: %d objects cast (first %d):\n", smObjCount, s_objNamesN));
+							for (int _oi = 0; _oi < s_objNamesN; _oi++) {
+								DIAG_LOG(("  cast obj[%d] = \"%s\"\n", _oi, s_objNames[_oi]));
+							}
+						}
 					}
 					g_theW3DDeferredRenderer->endShadowMapPass();
 					QueryPerformanceCounter(&shE);

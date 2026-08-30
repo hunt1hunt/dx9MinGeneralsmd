@@ -209,6 +209,12 @@ void W3XRenderObjClass::SetSubMeshOrigShader(int subMeshIndex, const char *shade
 	m_meshes[subMeshIndex].origShader = shader ? shader : "";
 }
 
+void W3XRenderObjClass::SetSubMeshName(int subMeshIndex, const char *name)
+{
+	if (subMeshIndex < 0 || subMeshIndex >= (int)m_meshes.size()) return;
+	m_meshes[subMeshIndex].name = name ? name : "";
+}
+
 void W3XRenderObjClass::SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants)
 {
 	m_fxName = fxName ? fxName : "";
@@ -1213,16 +1219,18 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	} else {
 		shadowW2S.Make_Identity();
 	}
-	// Receive-side texture-shadow bindings (main forward pass only): the W3X
-	// samples the D24X8 sun-depth texture the deferred SunLightShadow PS also
-	// samples — the same map the cast above and the W3D buildings/terrain wrote.
-	// Only when the deferred renderer + its shadow map are available; otherwise
-	// HasShadow stays 0 and the shader's PCF functions return "full sunlight"
-	// (the previous no-shadow behavior).
+	// Receive-side texture-shadow bindings (main forward pass only). The W3X
+	// samples the shadow-map COLOR RT (m_shadowDepthRT) that the W3X CAST wrote
+	// its sun-depth grayscale into via the RA3 ShadowDepth technique — this is
+	// the RA3-style COLOR-RT shadow map (A8R8G8B8, PS_ShadowDepth returned clip
+	// z/w into the RED channel). The W3D buildings/units keep sampling the D24X8
+	// (their SunLightShadow PS path is unchanged). Only when the deferred renderer
+	// + its shadow map are available; otherwise HasShadow stays 0 and the PCF
+	// functions return "full sunlight".
 	bool receiveShadow = (!inShadowPass && g_theW3DDeferredRenderer
 		&& g_theW3DDeferredRenderer->isShadowMapAvailable());
 	IDirect3DBaseTexture9 *shadowTex = receiveShadow
-		? g_theW3DDeferredRenderer->getShadowMapTexture() : NULL;
+		? g_theW3DDeferredRenderer->getShadowColorMapTexture() : NULL;
 
 	// DIAG (one-shot, always-on in Release): report the texture-shadow chain
 	// state at this node — pass (CAST vs RECEIVE), shadow-map availability, and
@@ -1337,10 +1345,28 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// the device. D3DX9 requires CommitChanges after SetX before drawing.
 	effect->CommitChanges();
 
-	// Main pass: ensure the Default technique (0) is active. The RA3 ShadowDepth
-	// technique is no longer used — the W3X casts a volumetric soft shadow, not a
-	// deferred shadow-map depth.
-	D3DXHANDLE hTech = effect->GetTechnique(0);	// Default
+	// Select the technique for THIS pass. In the deferred shadow-map (CAST) pass
+	// the W3X must rasterize SUN-SPACE DEPTH, exactly like RA3's _CreateShadowMap
+	// technique: VS_H_11skin outputs o.Position = mul(World, ViewProjection) with
+	// ViewProjection = sun VP, and PS_ShadowDepth returns clip z/w as a grayscale
+	// written into the shadow COLOR RT (the W3X W2S matrix is the raw sun VP). In
+	// the main pass use the Default technique (index 0, full PBR). Previously the
+	// code forced Default unconditionally, so the cast wrote PBR color that CWE=0
+	// suppressed — the shadow COLOR RT stayed empty (white) and receive sampled
+	// wrong depth -> the blocky "rectangle-tile" overlay on surfaces.
+	D3DXHANDLE hTech = NULL;
+	if (inShadowPass) {
+		// RA3-style shadow-map depth cast. ShadowDepth is present on the building/
+		// vehicle shaders (w3x_buildings.fx / w3x_soviet.fx). Sub-mesh override
+		// effects WITHOUT it (w3x_infantry.fx, w3x_tread.fx, w3x_muzzle.fx) don't
+		// cast texture shadows — draw nothing here rather than fall back to Default
+		// (whose PBR color would be written into the shadow COLOR RT under the
+		// RED-only CWE and pollute the depth map). They keep their volumetric shadow.
+		hTech = effect->GetTechniqueByName("ShadowDepth");
+		if (!hTech) return;	// no shadow-depth cast technique -> skip cast entirely
+	} else {
+		hTech = effect->GetTechnique(0);	// Default
+	}
 	if (hTech) { effect->SetTechnique(hTech); effect->ValidateTechnique(hTech); }
 	effect->CommitChanges();
 
@@ -1354,6 +1380,7 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	DWORD savedZen = 1, savedCull = 1, savedScissor = 0, savedStencil = 0;
 	DWORD savedAlphaBlend = 0, savedAlphaTest = 0, savedAlphaRef = 0, savedAlphaFunc = 8;
 	DWORD savedZWrite = 1;
+	DWORD savedCWE = 0;
 	IDirect3DVertexBuffer9 *savedStream = NULL;
 	UINT savedStreamOffset = 0, savedStreamStride = 0;
 	IDirect3DIndexBuffer9 *savedIndices = NULL;
@@ -1369,6 +1396,14 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		dev9->GetRenderState(D3DRS_ALPHAREF, &savedAlphaRef);
 		dev9->GetRenderState(D3DRS_ALPHAFUNC, &savedAlphaFunc);
 		dev9->GetRenderState(D3DRS_ZWRITEENABLE, &savedZWrite);
+		// The deferred shadow pass sets CWE=0 globally (so W3D objects that don't
+		// know the shadow map don't paint color into the shadow COLOR RT). The W3X
+		// CAST must write its depth grayscale INTO that COLOR RT (RA3 ShadowMaker
+		// style), so save the CWE and re-enable RED channel for our draw; restore
+		// afterwards so the W3D objects in the same pass stay color-suppressed.
+		dev9->GetRenderState(D3DRS_COLORWRITEENABLE, &savedCWE);
+		dev9->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);	// keep cache in sync
 		// Geometry bindings are NOT in D3DXEffect's saved state block (only the
 		// VS/PS/decl/FVF are), so the W3X cast's stream source / indices would
 		// otherwise leak to the NEXT object in the shadow loop — the classic
@@ -1399,11 +1434,53 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		//    pattern that shows up as a net shadow on other W3X models (the 发电厂/
 		//    指挥中心 fence shadows). The fence renders transparent in the main
 		//    pass, so it casting no shadow at all is the correct behavior.
+		//  - ANY alpha-cutout lattice mesh (SKIN_G00 with AlphaTestEnable=true on
+		//    发电厂/兵营/指挥中心/战争工厂 etc.): in the cast it would alpha-test,
+		//    discarding the lattice gaps and writing a wire-mesh pattern into the
+		//    shadow map that every W3X surface samples as the "net" overlay. Skip
+		//    them entirely — the solid bodies (NOT alpha-tested) still cast. Only
+		//    the fence/grille meshes carry AlphaTestEnable=true (verified in the
+		//    .w3x), so this does not remove any solid-body shadow.
 		if (inShadowPass) {
 			const AsciiString &os = sm.origShader;
+			const char *smeshName = sm.name.str();
+			// A mesh is excluded from writing into the shadow map (it casts a
+			// "transparent" shadow = no solid silhouette / no wire-grate pattern)
+			// when it is:
+			//  - muzzleflash/rotor meshes (large flat quads -> solid square).
+			//  - ANY SKIN_G* grille/lattice mesh. Building grilles are authored as
+			//    open wireframe geometry (SKIN_G00..G03 on APACONSTRUCTIONYARD,
+			//    EUWARFACTORY, etc.) — their lattice must NOT rasterize into the
+			//    shadow map or every receive-sampling surface picks up the
+			//    "wire-mesh" overlay. This is the ONLY reliable marker: grilles may
+			//    use EITHER objectsgeneric.fx (APACONSTRUCTIONYARD.SKIN_G00) OR
+			//    buildingsallied.fx (EUWARFACTORY.SKIN_G01), and BOTH shaders are
+			//    ALSO used by solid BODY meshes (humvee body/wheels use
+			//    objectsgeneric.fx, factory body uses buildingsallied.fx), so a
+			//    shader-name test can't distinguish them. BODY meshes (SKIN_BODY*)
+			//    stay solid and keep casting.
+			//  NOTE: objectsgeneric.fx must NOT be excluded by shader name alone —
+			//    it is the RA3 generic-object shader used by solid vehicle bodies
+			//    (EUTEVHUMVEE SKIN_BODY02 / SKIN_WHEEL), not just wire fences.
 			bool isTransparent = !os.isEmpty()
-				&& (strstr(os.str(), "muzzle") != NULL
-				 || strstr(os.str(), "objectsgeneric") != NULL);
+				&& (strstr(os.str(), "muzzle") != NULL);
+			if (!isTransparent && smeshName
+				&& strstr(smeshName, "SKIN_G") != NULL) {
+				isTransparent = true;
+			}
+			// DIAG one-shot (first 12 sub-meshes, any object): dump each sub-mesh's
+			// name + origShader + skip state so we can CONFIRM the SKIN_G* grilles
+			// are excluded while BODY/other solid meshes still cast.
+			{
+				static int s_castMeshDiag = 0;
+				if (s_castMeshDiag < 12) {
+					s_castMeshDiag++;
+					W3XShadowDiag("[W3X_SHDW] CAST_MESH obj='%s' mesh='%s' fx='%s' origShader='%s' skip=%d consts=%d\n",
+						m_name, smeshName ? smeshName : "(none)",
+						sm.fxName.isEmpty() ? "(shared)" : sm.fxName.str(), os.str(),
+						isTransparent ? 1 : 0, (int)sm.constants.size());
+				}
+			}
 			if (isTransparent) {
 				continue;
 			}
@@ -1417,8 +1494,11 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		if (!sm.fxName.isEmpty() && sm.fxName.compare(m_fxName.str()) != 0) {
 			drawEffect = W3XEffectManager::Instance()->GetEffect(sm.fxName.str());
 			if (drawEffect) {
-				// Technique first, then bind all shared params.
-				D3DXHANDLE hTech = drawEffect->GetTechnique(sm.technique);
+				// Technique first, then bind all shared params. In the CAST pass
+				// select the RA3 ShadowDepth technique (skip the sub-mesh if the
+				// override effect lacks it — same rule as the model-wide effect).
+				D3DXHANDLE hTech = inShadowPass
+					? drawEffect->GetTechniqueByName("ShadowDepth") : drawEffect->GetTechnique(sm.technique);
 				if (hTech) {
 					drawEffect->SetTechnique(hTech);
 					drawEffect->ValidateTechnique(hTech);
@@ -1640,6 +1720,12 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		dev9->SetRenderState(D3DRS_ALPHAREF, savedAlphaRef);
 		dev9->SetRenderState(D3DRS_ALPHAFUNC, savedAlphaFunc);
 		dev9->SetRenderState(D3DRS_ZWRITEENABLE, savedZWrite);
+		// Restore the shadow pass's color-write suppression (CWE=0 set globally by
+		// beginShadowMapPass). The W3X cast temporarily enabled RED to write depth
+		// grayscale into the shadow COLOR RT; the next W3D object in the pass must
+		// stay color-suppressed so it doesn't paint into that RT.
+		dev9->SetRenderState(D3DRS_COLORWRITEENABLE, savedCWE);
+		DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, savedCWE);
 		dev9->SetStreamSource(0, savedStream, savedStreamOffset, savedStreamStride);
 		dev9->SetIndices(savedIndices);
 		dev9->SetVertexDeclaration(savedDecl);

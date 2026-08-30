@@ -105,6 +105,12 @@ public:
 	// muzzleflash.fx ...) so the volumetric shadow can tell genuinely-transparent
 	// generic meshes (fence lattice) from solid bodies that must cast shadows.
 	void SetSubMeshOrigShader(int subMeshIndex, const char *shader);
+	// Authoring sub-mesh render name (e.g. "APACONSTRUCTIONYARD_SKN.SKIN_G01").
+	// The cast pass uses the SKIN_G* prefix to recognize building grille/lattice
+	// meshes (fence wireframes authored as open geometry, rendered opaque via
+	// w3x_buildings.fx FORBID_CLIPPING, so they carry no AlphaTestEnable bool) and
+	// exclude them from writing a wire-mesh pattern into the shadow map.
+	void SetSubMeshName(int subMeshIndex, const char *name);
 	void SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants);
 	void SetBones(float *bones, int boneCount);
 	// Skin-bone access for the volumetric shadow system. The shadow geometry is
@@ -276,6 +282,9 @@ private:
 		int technique;
 		std::vector<W3XShaderConstant> constants;
 		bool softBinding;	// true = dual position/normal/bone (RA3 soft skin), 128-byte stride
+		// Authoring sub-mesh render name (e.g. "...SKIN_G01"). Used by the cast
+		// pass to recognize grille/lattice meshes via the SKIN_G* prefix.
+		AsciiString name;
 	};
 
 	enum { kMaxBones = 64 };	// must match BindW3XBones' 64-bone array

@@ -147,6 +147,13 @@ public:
 	/// Restore default RT after shadow map rendering.
 	void endShadowMapPass();
 
+	/// DEBUG one-shot: render the D24X8 sun-depth shadow map into the shadow
+	/// COLOR RT as grayscale, read it back and save a PPM so the ACTUAL shadow-map
+	/// content can be seen. Decides whether the "wire-mesh" overlay is a pattern
+	/// inside the shadow map (cast wrote lattice geometry) or produced by the
+	/// receive sampling. Does not change any rendering behavior.
+	void dumpShadowD24ToPPM(const char *path);
+
 	/// Recompile the sunlight PS with shadow-map variant.
 	bool compileSunLightShadowShader();
 
@@ -168,6 +175,12 @@ public:
 	/// the texture the deferred SunLightShadow PS samples as s4). The W3X forward
 	/// PBR shader binds it to its RA3 ShadowMapSampler to RECEIVE texture shadows.
 	IDirect3DBaseTexture9 *getShadowMapTexture() const { return m_shadowDepthStencilTex; }
+
+	/// The shadow-map COLOR RT (A8R8G8B8) that the W3X cast writes its sun-depth
+	/// grayscale into via the RA3 ShadowDepth technique (PS_ShadowDepth returns
+	/// clip z/w). The W3X RECEIVE samples THIS (RA3-style COLOR-RT shadow map)
+	/// instead of the D24X8 the W3D path uses. Returns NULL when unavailable.
+	IDirect3DBaseTexture9 *getShadowColorMapTexture() const { return m_shadowDepthRT ? (IDirect3DBaseTexture9*)m_shadowDepthRT->Peek_D3D_Texture() : NULL; }
 
 private:
 
