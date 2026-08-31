@@ -340,7 +340,13 @@ float4 PS_H_ARPBR (PS_H_input i) : COLOR
     SUNcolor *= (vertex_suntilt > 0 )? 1 : 0 ; 
 
     //if(HasShadow){
-    float3 ShadowMapUV = i.ShadowCS.xyz / i.ShadowCS.w ;
+    // W3X NORMAL BIAS: recompute the shadow-map query from a world position
+    // pushed along the surface normal, so a sun-facing (near-light-parallel)
+    // surface stops self-shadowing — the standard acne fix. Only the RECEIVE PS
+    // does this (the cast renders true depth); W3XNormalBias is engine-set.
+    float3 shadowQueryPos = i.WorldP + i.WorldN * W3XNormalBias;
+    float4 shadowCS = mul(float4(shadowQueryPos, 1), ShadowMapWorldToShadow);
+    float3 ShadowMapUV = shadowCS.xyz / shadowCS.w ;
     float transition_range_mult = 2 - vertex_suntilt ;
     float transition_start_bias_mult = 1 ;
     #ifdef SHADOW_DITHER

@@ -39,10 +39,27 @@ technique Default
 // as color (D16 depth textures are not reliably sampleable under dgVoodoo2, so
 // depth is rendered into the color RT instead of relying on the depth texture).
 // ----------------------------------------------------------------------------
-float4 PS_ShadowDepth(float4 shadowCS : TEXCOORD1) : COLOR
+// RA3-style shadow-map cast PS, matching PS_ShadowMaker_*: RA3 selects between
+// PS_ShadowMaker_NoAlphaTest (plain depth, no clip) and PS_ShadowMaker_ARPBR
+// (clip by diffuse alpha) via SMPSchooserExpr() == AlphaTestEnable. Match that:
+// only when the mesh declares AlphaTestEnable=true (wire fences / grille
+// lattices) do we sample the diffuse alpha and clip transparent pixels, so a
+// LATTICE casts a lattice shadow (gaps don't write depth) while solid bodies
+// (AlphaTestEnable=false -> extra_alpha stays 1) keep their full silhouette.
+// Without this gate, sampling DiffuseEasySampler on a mesh whose DiffuseTexture
+// is unbound returned 0 -> clip(-0.375) discarded EVERY pixel -> shadow COLOR
+// RT stayed empty (the all-white dump).
+float4 PS_ShadowDepth(float4 MainTexUV : TEXCOORD0, float4 shadowCS : TEXCOORD1) : COLOR
 {
-    // shadowCS = mul(worldPos, ShadowMapWorldToShadow); the sun camera is
-    // orthographic so w == 1 and ndcZ is already the [0,1] depth value.
+    float extra_alpha = 1;
+    // RA3 SMPSchooserExpr(): clip only for alpha-test meshes (fence/grille).
+    if (AlphaTestEnable) {
+        extra_alpha *= tex2D(DiffuseEasySampler, MainTexUV.xy).w;
+        clip(extra_alpha - 0.375);
+    }
+
+    // shadowCS = mul(worldPos, ShadowMapWorldToShadow); orthographic so w == 1
+    // and ndcZ is already the [0,1] depth value.
     float ndcZ = shadowCS.z / max(shadowCS.w, 1e-6f);
     return float4(ndcZ, ndcZ, ndcZ, 1.0f);
 }

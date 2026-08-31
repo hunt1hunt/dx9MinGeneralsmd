@@ -230,40 +230,40 @@ float hp_invshadow_bilinear ( float3 SMUV )
     return lightmid ;
 }
 
+// RA3 official shadow() from ShadowMap_win32.fxh — the reference implementation:
+//   4 samples (center + 3 offsets of OneOverMapSize), compare (shadowDepth >=
+//   objdepth), average. The old custom code did saturate((shadowDepth-objdepth)
+//   *1024 + 1) which AMPLIFIED sub-texel depth differences into hard blocks —
+//   the "rectangle-tile" overlay and the shadow that sweeps as the camera orbits.
+//   SMUV.z is the objdepth; the RA3 CalculateShadowMapTexCoord applies a 0.0015
+//   shadowZBias to it (objdepth -= bias) to avoid self-shadow acne — do the same
+//   here so we match the reference exactly.
 float hp_invshadow_trilinear(float3 SMUV, float transition_range_mult, float transition_start_bias_mult)
 {
-    if(! HasShadow) {return 1;}; 
+    if(! HasShadow) {return 1;};
 
-    float2 SM01T = float2(0, Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize.w);
-    float2 UVlerpw = frac(SMUV.xy / SM01T.y);
-    float objdepth = SMUV.z;
-    // objdepth + : more likely to have shadow
+    float2 OMS = Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize.zw; // (1/MapSize, 1/MapSize)
+    // W3X safety net: a surface whose shadow UV falls outside the (camera-following)
+    // shadow map would sample clamped/wrapped garbage that reads as a shadow band
+    // SWEEPING across the model as the camera moves. Treat out-of-map UVs as fully
+    // lit (the volumetric soft shadow still applies). 1-texel margin so the map-edge
+    // texels (which may hold a neighbor's depth) are ignored too. The primary fix
+    // (shadow map centered on the camera's look-at point) keeps the orbited model
+    // inside the map; this guard removes the artifact for any off-center model too.
+    if (SMUV.x < OMS.x || SMUV.x > 1.0f - OMS.x ||
+        SMUV.y < OMS.y || SMUV.y > 1.0f - OMS.y) { return 1; }
+    float2 t = SMUV.xy;
+    float depth = SMUV.z;
+    depth -= 0.0015;                       // RA3 shadowZBias (acne guard)
 
-    float4 fourSamples = float4(   //shadowmap depth
-        tex2D(ShadowMapSampler, (SMUV.xy + SM01T.xx)).x ,
-        tex2D(ShadowMapSampler, (SMUV.xy + SM01T.xy)).x ,
-        tex2D(ShadowMapSampler, (SMUV.xy + SM01T.yx)).x ,
-        tex2D(ShadowMapSampler, (SMUV.xy + SM01T.yy)).x 
-    );  // LU,LD,RU,RD (00,01,10,11) 
+    float4 samples = float4(
+        tex2D(ShadowMapSampler, t).x,
+        tex2D(ShadowMapSampler, t + float2(OMS.x, 0)).x,      // +zx
+        tex2D(ShadowMapSampler, t + float2(0, OMS.y)).x,      // +yz
+        tex2D(ShadowMapSampler, t + float2(OMS.x, OMS.y)).x); // +wz
 
-    // shadowmapdepth + : more likely to have sunlight
-    fourSamples -= objdepth ;
-    //shadowmapdepth - objdepth = sunlight likelyness
-        //fourSamples /= SM01T.y * transition_range_mult ; 
-    //default transition range: 1/1024 (ooms)
-    //divider smaller = sharper, larger = smoother
-        //fourSamples += transition_start_bias_mult ;
-    //increase sunlight likelyness, avoid self shadow
-    fourSamples = saturate(fourSamples * 1024 + 1); //???
-    //bilinear 2x2 interpolate
-    float2 bLR = lerp(fourSamples.xy , fourSamples.zw , UVlerpw.x);
-    float  bUD = lerp(bLR.x   , bLR.y   , UVlerpw.y);
-    float lightmid = bUD ;
-    #ifndef SHADOW_DITHER
-        lightmid = hp_cubic_hermit(bUD) ; //???
-    #endif
-
-    return lightmid ;
+    bool4 bits = (samples - depth >= 0);   // shadowDepth >= objdepth -> lit
+    return dot(1.0, bits) / 4.0;
 }
 
 

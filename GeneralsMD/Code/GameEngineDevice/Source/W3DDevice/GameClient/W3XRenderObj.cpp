@@ -948,6 +948,13 @@ static void BindW3XMatrices(ID3DXEffect *effect, const Matrix4x4 &world,
 			float smt[4] = { 0, 0, 1.0f/2048.0f, 1.0f/2048.0f };
 			effect->SetVector(hTexel, (const D3DXVECTOR4*)smt);
 		}
+		// W3X shadow NORMAL BIAS (world units): push the receive shadow-map query
+		// along the surface normal to kill the acne band that sweeps across
+		// sun-facing surfaces when the camera moves perpendicular to the sun.
+		// ~2 shadow-map texels (window 4000 / 2048 = 1.95 units -> ~4.0). The cast
+		// renders true depth (PS_ShadowDepth ignores this param).
+		D3DXHANDLE hNB = effect->GetParameterByName(NULL, "W3XNormalBias");
+		if (hNB) effect->SetFloat(hNB, 4.0f);
 	}
 
 	// Faction color (RA3 RecolorColor) from the owning player's team color.
@@ -1160,21 +1167,17 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	Matrix4x4 proj;
 	bool inShadowPass = false;
 	{
-		DWORD smCWE = 0;
-		IDirect3DDevice9 *smDev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
-		if (smDev) smDev->GetRenderState(D3DRS_COLORWRITEENABLE, &smCWE);
-		// Detect the deferred shadow-map pass. PRIMARY signal: the deferred
-		// renderer's explicit in-pass flag (set by beginShadowMapPass/cleared by
-		// endShadowMapPass). FALLBACK: COLORWRITEENABLE==0 (the sun camera is live
-		// on the device and the RT is the sun-depth map). The W3X RASTERIZES
-		// SUN-SPACE DEPTH HERE — the RA3 texture-shadow CAST — instead of
-		// skipping. (The earlier skip was forced by device-state leaks to the next
-		// object; that is fixed by the save/restore around the draw loop below.)
-		// Guard on the deferred renderer: without it the pass never runs, so keep
-		// the old skip behavior.
+		// Detect the deferred shadow-map (CAST) pass using ONLY the deferred
+		// renderer's explicit in-pass flag (set by beginShadowMapPass, cleared by
+		// endShadowMapPass). The old fallback `smCWE == 0` (COLORWRITEENABLE==0)
+		// could ALSO be true in the MAIN pass if any earlier stage left CWE=0 —
+		// then the W3X wrongly entered the CAST branch, used the SUN camera VP to
+		// rasterize the main pass (ShadowDepth technique), and every surface shadow
+		// swept across the model as the camera orbited. RA3 gates on an explicit
+		// HasShadow/Sas binding, never on device CWE — match that here.
 		inShadowPass = (g_theW3DDeferredRenderer != NULL)
-			&& (g_theW3DDeferredRenderer->isInShadowMapPass() || (smCWE == 0));
-		if (smCWE == 0 && !g_theW3DDeferredRenderer) {
+			&& g_theW3DDeferredRenderer->isInShadowMapPass();
+		if (!g_theW3DDeferredRenderer) {
 			return;	// no deferred renderer -> nothing to cast into
 		}
 		if (inShadowPass) {
@@ -1227,6 +1230,12 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// (their SunLightShadow PS path is unchanged). Only when the deferred renderer
 	// + its shadow map are available; otherwise HasShadow stays 0 and the PCF
 	// functions return "full sunlight".
+	// 方案B (RA3-aligned stable self-shadow, 2026-08-31): the W3X surface MUST
+	// receive the texture shadow (COLOR RT) — this is the RA3 model self-shadow
+	// (own geometry occludes the sun + shadows from other objects). The sweeping
+	// artifact was NOT the receive itself but the camera-following shadow map's
+	// texel grid swimming; that is fixed by texel snapping in beginShadowMapPass.
+	// So the receive is RE-ENABLED.
 	bool receiveShadow = (!inShadowPass && g_theW3DDeferredRenderer
 		&& g_theW3DDeferredRenderer->isShadowMapAvailable());
 	IDirect3DBaseTexture9 *shadowTex = receiveShadow
@@ -1239,10 +1248,20 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		static bool s_castDiag = false;
 		if (!s_castDiag) {
 			s_castDiag = true;
+			const Matrix4x4 &rawVP = g_theW3DDeferredRenderer->getShadowViewProj();
 			W3XShadowDiag("[W3X_SHDW] CAST '%s' sunVP r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f) submeshes=%d\n",
 				m_name, shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
 				shadowW2S[3].X, shadowW2S[3].Y, shadowW2S[3].Z, shadowW2S[3].W,
 				(int)m_meshes.size());
+			// DECISIVE: compare shadowW2S (what we bind) vs getShadowViewProj()
+			// (the deferred renderer's m_shadowViewProj, verified correct by [VP]).
+			// If rawVP r0=(0.002,0,0,0) but shadowW2S r0=(0,-0.001,0,0), the copy
+			// or the inShadowPass routing is wrong; if BOTH are (0,-0.001,0,0),
+			// then m_shadowViewProj is stale at this moment (beginShadowMapPass
+			// not run / different instance).
+			W3XShadowDiag("[W3X_SHDW] CAST_RAW getShadowViewProj r0=(%.4f,%.4f,%.4f,%.4f) r3=(%.4f,%.4f,%.4f,%.4f)\n",
+				rawVP[0].X, rawVP[0].Y, rawVP[0].Z, rawVP[0].W,
+				rawVP[3].X, rawVP[3].Y, rawVP[3].Z, rawVP[3].W);
 		}
 	} else {
 		static bool s_recvDiag = false;
@@ -1260,6 +1279,16 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			W3XShadowDiag("[W3X_SHDW]   W2S r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
 				shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
 				shadowW2S[3].X, shadowW2S[3].Y, shadowW2S[3].Z, shadowW2S[3].W);
+			// DECISIVE: the receive shadowW2S must be the SAME sunVP*bias the CAST
+			// wrote depth with (same frame). If receive's rawVP r3 differs from the
+			// CAST_RAW r3 logged earlier, cast and receive used different sun cameras
+			// -> surface shadow UV shifts as the camera orbits = the "sweep".
+			if (g_theW3DDeferredRenderer) {
+				const Matrix4x4 &rVP = g_theW3DDeferredRenderer->getShadowViewProj();
+				W3XShadowDiag("[W3X_SHDW]   RECV_RAW getShadowViewProj r0=(%.4f,%.4f,%.4f,%.4f) r3=(%.4f,%.4f,%.4f,%.4f)\n",
+					rVP[0].X, rVP[0].Y, rVP[0].Z, rVP[0].W,
+					rVP[3].X, rVP[3].Y, rVP[3].Z, rVP[3].W);
+			}
 		}
 	}
 
@@ -1567,6 +1596,12 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		// Soft-bound sub-mesh: select the 2-bone soft-skin technique (DefaultSoft =
 		// VS_H_Unified(2) in w3x_infantry.fx) and set NumJointsPerVertex=2. Non-soft
 		// sub-meshes reset to the 1-bone Default technique / hard-skin joints.
+		// MAIN PASS ONLY — in the shadow-map CAST pass the technique was already
+		// set to ShadowDepth above (RA3-style depth-to-COLOR-RT); re-selecting
+		// Default here would throw away the cast depth and write PBR color (that
+		// CWE=RED then corrupts the shadow COLOR RT -> empty/white map -> the
+		// "shadow sweeps / uniform shadow" artifacts).
+		if (!inShadowPass)
 		{
 			const char *techName = sm.softBinding ? "DefaultSoft" : "Default";
 			D3DXHANDLE hTech = drawEffect->GetTechniqueByName(techName);
@@ -1652,6 +1687,15 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// so disable culling AFTER BeginPass (BeginPass re-applies the pass
 			// render states and would otherwise undo this).
 			dev9->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+			// CAST: re-enable RED channel color-write AFTER BeginPass — D3DX9
+			// BeginPass re-applies the pass's render states, which would otherwise
+			// restore the deferred shadow pass's CWE=0 and the ShadowDepth PS's
+			// depth grayscale would never reach the shadow COLOR RT (stays white).
+			// Must match RA3: the shadow map COLOR RT is written by the cast PS.
+			if (inShadowPass) {
+				dev9->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
+				DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
+			}
 			// Per-mesh alpha test: meshes whose material declares
 			// AlphaTestEnable=true (alpha-cutout textures - wire fences,
 			// helicopter rotor blades) discard transparent pixels in the
@@ -1668,23 +1712,34 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				// the transposed UV" (RA3 muzzleflash), NOT an alpha-cutout. Forcing
 				// the test would clip the rotor on its near-zero texture alpha, so
 				// leave the technique's AlphaTestEnable=0 standing.
-				bool isMuzzleflash = (!sm.fxName.isEmpty()
-					&& strcmp(sm.fxName.str(), "Shaders\\RA3\\w3x_muzzle.fx") == 0);
+				// In the shadow-map CAST pass (ShadowDepth technique) the mesh must
+				// write its full sun-depth silhouette into the COLOR RT — NO device
+				// alpha test, matching RA3's _CreateShadowMap pass (AlphaTestEnable=0).
+				// The building/vehicle BODY sub-meshes declare AlphaTestEnable=true for
+				// small transparent details (glass, vents) but are essentially SOLID;
+				// enabling the rasterizer alpha test in the cast would discard most of
+				// their pixels and leave the shadow COLOR RT empty (the all-white dump
+				// we saw -> receive samples empty depth -> shadow sweeps across the
+				// model as the camera orbits). Alpha test is a MAIN-pass concern only.
 				bool alphaTest = false;
-				if (!isMuzzleflash) {
-					for (size_t ci = 0; ci < sm.constants.size() && !alphaTest; ci++) {
-						const W3XShaderConstant &cc = sm.constants[ci];
-						if (cc.type == W3X_CONSTANT_BOOL
-							&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
-							alphaTest = cc.boolValue;
-						}
-						// RA3 blade/rotor material marker: MultiTextureEnable=true
-						// (the rotor meshes declare Texture_0 + MultiTextureEnable +
-						// TexCoordTransform, no AlphaTestEnable). Treat it as an
-						// alpha-cutout so the Fx_blades alpha gaps are clipped.
-						if (cc.type == W3X_CONSTANT_BOOL
-							&& strcmp(cc.name.str(), "MultiTextureEnable") == 0) {
-							if (cc.boolValue) alphaTest = true;
+				if (!inShadowPass) {
+					bool isMuzzleflash = (!sm.fxName.isEmpty()
+						&& strcmp(sm.fxName.str(), "Shaders\\RA3\\w3x_muzzle.fx") == 0);
+					if (!isMuzzleflash) {
+						for (size_t ci = 0; ci < sm.constants.size() && !alphaTest; ci++) {
+							const W3XShaderConstant &cc = sm.constants[ci];
+							if (cc.type == W3X_CONSTANT_BOOL
+								&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
+								alphaTest = cc.boolValue;
+							}
+							// RA3 blade/rotor material marker: MultiTextureEnable=true
+							// (the rotor meshes declare Texture_0 + MultiTextureEnable +
+							// TexCoordTransform, no AlphaTestEnable). Treat it as an
+							// alpha-cutout so the Fx_blades alpha gaps are clipped.
+							if (cc.type == W3X_CONSTANT_BOOL
+								&& strcmp(cc.name.str(), "MultiTextureEnable") == 0) {
+								if (cc.boolValue) alphaTest = true;
+							}
 						}
 					}
 				}

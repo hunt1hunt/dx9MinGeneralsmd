@@ -1105,6 +1105,44 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					sunColor.X*=intens; sunColor.Y*=intens; sunColor.Z*=intens;
 				}
 				Vector3 camPos=rinfo.Camera.Get_Position();
+				// Shadow-map camera center: follow the CAMERA'S LOOK-AT POINT (the
+				// tactical view's m_pos = the point the camera is looking at / orbits
+				// around), NOT the camera position. Centering on camPos put a model you
+				// orbit at the ORBIT RADIUS from the window center; when that radius
+				// exceeds the 1000-unit window half-size the model leaves the shadow map
+				// and its self-shadow UV reads garbage (clamped/wrapped) that sweeps
+				// across the model as the camera orbits (log evidence: construction yard
+				// at UV (-0.06,1.54)/(1.06,1.54) = outside [0,1]). The looked-at model is
+				// the orbit center, so centering the window there keeps it at the map
+				// CENTER at ANY orbit distance -> stable self-shadow, no sweep. The W3D
+				// deferred ground shadows use the same map and shift their coverage from
+				// "around the camera" to "around what the camera looks at" — a strict
+				// improvement for the visible scene.
+				Vector3 shadowCenter = camPos;
+				// The tactical view's public getPosition(Coord3D*) returns the camera's
+				// look-at point (m_pos, z=0) — use THAT overload; the const getPosition()
+				// (returns const Coord3D*) is PROTECTED in View.h (fixes C2248).
+				Coord3D viewLookAt;
+				viewLookAt.x = viewLookAt.y = viewLookAt.z = 0.0f;
+				bool haveLookAt = (TheTacticalView != NULL);
+				if (haveLookAt) {
+					TheTacticalView->getPosition(&viewLookAt);
+					shadowCenter.Set(viewLookAt.x, viewLookAt.y, 0);
+				}
+				// DIAG (one-shot): confirm the shadow camera now centers on the look-at
+				// point, not the camera position. Both print on the first shadow pass;
+				// they should DIFFER when the camera looks toward a distant model.
+				{
+					static bool s_centerDiag = false;
+					if (!s_centerDiag) {
+						s_centerDiag = true;
+						DEBUG_LOG(("[W3X_DIAG] SHADOW_CENTER camPos=(%.1f,%.1f,%.1f) lookAt=(%.1f,%.1f) -> center=(%.1f,%.1f,%.1f)\n",
+							camPos.X, camPos.Y, camPos.Z,
+							haveLookAt ? viewLookAt.x : -999.0f,
+							haveLookAt ? viewLookAt.y : -999.0f,
+							shadowCenter.X, shadowCenter.Y, shadowCenter.Z));
+					}
+				}
 				Matrix4x4 viewMatrix,projMatrix,viewProj,invViewProj;
 				{
 					Matrix3D v3d=rinfo.Camera.Get_View_Matrix();
@@ -1134,7 +1172,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					}
 					DIAG_LOG(("PIPELINE: === Shadow Map Pass ===\n"));
 					LARGE_INTEGER shS,shE; QueryPerformanceCounter(&shS);
-					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,camPos)) {
+					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,shadowCenter)) {
 						RefRenderObjListIterator si(&RenderList);
 						int smObjCount = 0;	// DIAG: objects actually rasterized into the shadow map
 						static bool s_objListOnce = false;	// DIAG: one-shot name list

@@ -174,8 +174,16 @@ bool HasRecolorColors
 <   string UIWidget="None"; string SasBindAddress = "WW3D.HasRecolorColors";> =1 ;
 
 //全局画质和每个MESH是否接受阴影 预览没有影子，默认值0 // register b1 ?  shader array?
-bool HasShadow 
+bool HasShadow
 <   string UIWidget="None"; string SasBindAddress = "Sas.HasShadow";> = 0 ;
+
+// W3X shadow NORMAL BIAS (world units). The shadow-map receive query position is
+// offset along the surface normal before sampling, so a sun-facing (near-light-
+// parallel) surface does not self-shadow — the STANDARD fix for the shadow-acne
+// band that sweeps across a model when the camera moves PERPENDICULAR to the sun.
+// Set from the engine (W3XRenderObj BindW3XMatrices): a few world units (~1-2
+// shadow-map texels). Only the receive PS (PS_H_ARPBR) uses it.
+float W3XNormalBias = 3.0;
 
 #ifndef FORBID_CLIPPING_CONSTANT
     //bool AlphaBlendEnable < string UIName = "Alpha Blend Enable";> ;//= 0;

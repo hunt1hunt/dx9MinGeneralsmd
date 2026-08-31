@@ -142,7 +142,10 @@ public:
 
 	/// Bind the shadow map RT, set orthographic camera from sun direction.
 	/// Returns true if shadow map is available and pass started.
-	bool beginShadowMapPass(const Vector3 &sunDir, const Matrix4x4 &camView, const Vector3 &camPos);
+	/// shadowCenter = world point the shadow camera is centered on (the camera's
+	/// look-at / orbit target projected to the ground, NOT the camera position) —
+	/// centering there keeps the viewed/orbited model inside the shadow window.
+	bool beginShadowMapPass(const Vector3 &sunDir, const Matrix4x4 &camView, const Vector3 &shadowCenter);
 
 	/// Restore default RT after shadow map rendering.
 	void endShadowMapPass();
@@ -178,9 +181,12 @@ public:
 
 	/// The shadow-map COLOR RT (A8R8G8B8) that the W3X cast writes its sun-depth
 	/// grayscale into via the RA3 ShadowDepth technique (PS_ShadowDepth returns
-	/// clip z/w). The W3X RECEIVE samples THIS (RA3-style COLOR-RT shadow map)
-	/// instead of the D24X8 the W3D path uses. Returns NULL when unavailable.
-	IDirect3DBaseTexture9 *getShadowColorMapTexture() const { return m_shadowDepthRT ? (IDirect3DBaseTexture9*)m_shadowDepthRT->Peek_D3D_Texture() : NULL; }
+	/// clip z/w). The W3X RECEIVE samples the StretchRect'd SAMPLER COPY
+	/// (m_shadowDepthSampler) — directly sampling a texture that was a render
+	/// target earlier in the frame is unreliable under dgVoodoo2 (RT->SRV needs
+	/// the explicit StretchRect resolve, done in endShadowMapPass). Returns NULL
+	/// when unavailable.
+	IDirect3DBaseTexture9 *getShadowColorMapTexture() const { return m_shadowDepthSampler; }
 
 private:
 

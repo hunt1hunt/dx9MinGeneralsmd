@@ -1431,11 +1431,29 @@ bool W3DDeferredRenderer::createShadowResources()
 	const int SM_SIZE = 2048;
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	// The shadow map is a COLOR RT that stores the sun-space depth as color.
-	// Original (pre-W3X) values: A8R8G8B8, 2048, D24X8 — reverted so the deferred
-	// lighting's SunLightShadow PS (buildings/units) samples the same format it
-	// was authored for.
+	// RA3-ALIGNED (Shadow.scrapeh): RA3's shadow map is R32F (32-bit float) — full
+	// float depth precision, no quantization. A8R8G8B8 (8-bit) had ~7.8 units/level,
+	// A16B16G16R16F (half-float) ~0.5 units/level; R32F has ~0.0001 units/level at
+	// the model's depth. Combined with the RA3 shadow-map post-process blur
+	// (endShadowMapPass) this gives stable, soft RA3-style self-shadow.
+	// The deferred SunLightShadow PS samples the D24X8 (not this COLOR RT), so the
+	// format change only affects the W3X receive. Fallback chain: R32F ->
+	// A16B16G16R16F -> A8R8G8B8.
+	WW3DFormat shadowFmt = WW3D_FORMAT_R32F;
 	m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
-		SM_SIZE, SM_SIZE, WW3D_FORMAT_A8R8G8B8, true);
+		SM_SIZE, SM_SIZE, shadowFmt, true);
+	if (!m_shadowDepthRT) {
+		DIAG_LOG(("W3DDeferredRenderer: shadow map R32F RT failed, trying A16B16G16R16F.\n"));
+		shadowFmt = WW3D_FORMAT_A16B16G16R16F;
+		m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
+			SM_SIZE, SM_SIZE, shadowFmt, true);
+	}
+	if (!m_shadowDepthRT) {
+		DIAG_LOG(("W3DDeferredRenderer: shadow map float RT failed, falling back to A8R8G8B8.\n"));
+		shadowFmt = WW3D_FORMAT_A8R8G8B8;
+		m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
+			SM_SIZE, SM_SIZE, shadowFmt, true);
+	}
 	if (!m_shadowDepthRT) {
 		DIAG_LOG(("W3DDeferredRenderer: shadow map RT creation failed.\n"));
 		m_shadowMapAvailable = false;
@@ -1474,11 +1492,33 @@ bool W3DDeferredRenderer::createShadowResources()
 		HRESULT hr = D3DXCreateTexture(dev9, SM_SIZE, SM_SIZE, 1, D3DUSAGE_RENDERTARGET,
 			fmt, D3DPOOL_DEFAULT, &m_shadowDepthSampler);
 		if (FAILED(hr) || !m_shadowDepthSampler) {
-			DIAG_LOG(("W3DDeferredRenderer: shadow sampler texture creation failed (hr=0x%08x).\n", hr));
+			// Float sampler copy failed: roll the whole shadow map back to A8R8G8B8
+			// so the W3X receive never binds a NULL texture (which samples black and
+			// reads as "everything in shadow").
+			if ((fmt == D3DFMT_R32F || fmt == D3DFMT_A16B16G16R16F) && m_shadowDepthRT) {
+				DIAG_LOG(("W3DDeferredRenderer: float sampler failed (hr=0x%08x), rolling shadow map back to A8R8G8B8.\n", hr));
+				REF_PTR_RELEASE(m_shadowDepthRT);
+				shadowFmt = WW3D_FORMAT_A8R8G8B8;
+				m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
+					SM_SIZE, SM_SIZE, shadowFmt, true);
+				if (m_shadowDepthRT) {
+					hr = D3DXCreateTexture(dev9, SM_SIZE, SM_SIZE, 1, D3DUSAGE_RENDERTARGET,
+						D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &m_shadowDepthSampler);
+				}
+			}
+			if (!m_shadowDepthSampler) {
+				DIAG_LOG(("W3DDeferredRenderer: shadow sampler texture creation failed (hr=0x%08x).\n", hr));
+			}
 		}
 	}
 	m_shadowMapAvailable = true;
-	DIAG_LOG(("W3DDeferredRenderer: shadow map resources created (%dx%d).\n", SM_SIZE, SM_SIZE));
+	{
+		const char *fmtName = "A8R8G8B8";
+		if (shadowFmt == WW3D_FORMAT_R32F) fmtName = "R32F";
+		else if (shadowFmt == WW3D_FORMAT_A16B16G16R16F) fmtName = "A16B16G16R16F";
+		DIAG_LOG(("W3DDeferredRenderer: shadow map resources created (%dx%d, %s).\n",
+			SM_SIZE, SM_SIZE, fmtName));
+	}
 	return true;
 }
 
@@ -1504,7 +1544,7 @@ void W3DDeferredRenderer::releaseShadowResources()
 // W3DDeferredRenderer::beginShadowMapPass
 // ============================================================================
 bool W3DDeferredRenderer::beginShadowMapPass(
-	const Vector3 &sunDir, const Matrix4x4 &camView, const Vector3 &camPos)
+	const Vector3 &sunDir, const Matrix4x4 &camView, const Vector3 &shadowCenter)
 {
 	// Save main camera view/proj before overriding for shadow rendering.
 	DX8Wrapper::Get_Transform(D3DTS_VIEW, m_savedView);
@@ -1547,22 +1587,38 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		DIAG_LOG(("W3DDeferredRenderer: shadow pass started (D24X8 depth).\n"));
 	}
 
-	// Center the shadow camera on the player camera (RA3-style): the shadow
-	// map covers the visible area, not just the world origin.
+	// Center the shadow camera on the CAMERA'S LOOK-AT POINT (shadowCenter), not
+	// the camera position. The caller (W3DScene) passes the tactical view's m_pos
+	// (the point the camera looks at / orbits around, projected to the ground).
+	// RA3-style: the shadow map covers the visible area, but centering on the
+	// look-at point keeps a model you orbit AT THE MAP CENTER at any orbit
+	// distance — the old camPos-centering put it at the orbit radius, and when
+	// that radius exceeded the window half-size the model's self-shadow UV read
+	// garbage that swept across it as the camera orbited.
 	// Guard: a zero sunDir makes D3DXMatrixLookAtLH degenerate (row0 all zeros,
 	// row3=(0,0,0,1)), collapsing every vertex into the origin and emptying the
 	// shadow map. Normalize so the eye distance below is a true 500-unit offset.
 	Vector3 lightDir = sunDir;
 	if (lightDir.Length2() < 1e-6f) { lightDir.Set(0, 0, -1); }
 	lightDir.Normalize();
-	Vector3 target(camPos.X, camPos.Y, 0);
+	Vector3 target(0, 0, 0);	// FIXED shadow-map center (world origin, NOT the camera)
 	Vector3 up(0, 0, 1);
 	if (fabsf(lightDir.Z) > 0.99f) { up.Set(0, 1, 0); }
 	Vector3 eye = target - lightDir * 500.0f;
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
-	D3DXMatrixOrthoLH(&d3dP, 1000.0f, 1000.0f, 0.1f, 2000.0f);
+	// DEFINITIVE anti-sweep fix (user-approved 2026-08-31): the shadow map is FIXED
+	// in world space (target = world origin), it does NOT follow the camera. The
+	// sweep was caused by the camera-following map: every pan/zoom shifted the
+	// sampling texel grid, so the self-shadow acne/edge boundary crawled across
+	// sun-facing surfaces (worst when moving perpendicular to the sun). With a
+	// fixed map every world point maps to a CONSTANT UV -> its sampled depth is
+	// constant -> the self-shadow is COMPLETELY STATIC, no sweep, guaranteed.
+	// Window 4000 (±2000) keeps the user's tested resolution (~1.95 units/texel);
+	// R32F depth stays. Models beyond ±2000 of the origin are outside the map
+	// (they lose their self-shadow — acceptable, they are off the play area).
+	D3DXMatrixOrthoLH(&d3dP, 4000.0f, 4000.0f, 0.1f, 3000.0f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
@@ -1596,6 +1652,26 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 			m_shadowViewProj[2].X, m_shadowViewProj[2].Y, m_shadowViewProj[2].Z, m_shadowViewProj[2].W,
 			m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W));
 	}
+	// DIAG (every 60 frames): does m_shadowViewProj's TRANSLATION (r3) change as
+	// the camera orbits? The shadow camera is centered on the LOOK-AT POINT
+	// (shadowCenter, = the tactical view's m_pos projected to the ground). When
+	// you ORBIT a model the look-at point stays fixed, so r3 stays fixed and the
+	// model's self-shadow UV is stable at the map center (no sweep). When you PAN
+	// or ZOOM the look-at point moves and r3 follows. If W3X receive samples with
+	// a per-frame matrix while the cast used a different one, the surface shadow
+	// UV would shift every frame — cast/receive both read m_shadowViewProj this
+	// frame, so they agree (log-verified: receive W2S = cast sunVP * bias). W3D's
+	// SunLightShadow PS uses the same m_shadowViewProj but its effect is a
+	// projected ground shape, so it tolerates the follow.
+	{
+		static int s_vpFrame = 0;
+		if ((s_vpFrame++ % 60) == 0) {
+			DIAG_LOG(("W3DDeferredRenderer: [VPFOLLOW] FIXED map (origin) sunDir=(%.3f,%.3f,%.3f) shadowVP r3=(%.4f,%.4f,%.4f,%.4f) eye=(%.1f,%.1f,%.1f)\n",
+				sunDir.X, sunDir.Y, sunDir.Z,
+				m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W,
+				eye.X, eye.Y, eye.Z));
+		}
+	}
 
 	// DIAG (one-shot): verify the sun LookAt inputs and resulting view matrix
 	// (row0 must be a non-zero unit "right" vector, else the depth pass is empty).
@@ -1606,8 +1682,8 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	static bool s_sunDiag = false;
 	if (!s_sunDiag) {
 		s_sunDiag = true;
-		DIAG_LOG(("W3DDeferredRenderer: [NEW] sunDir(raw)=%.3f,%.3f,%.3f lightDir=%.3f,%.3f,%.3f camPos=(%.1f,%.1f,%.1f)\n",
-			sunDir.X, sunDir.Y, sunDir.Z, lightDir.X, lightDir.Y, lightDir.Z, camPos.X, camPos.Y, camPos.Z));
+		DIAG_LOG(("W3DDeferredRenderer: [NEW] sunDir(raw)=%.3f,%.3f,%.3f lightDir=%.3f,%.3f,%.3f shadowCenter=(%.1f,%.1f,%.1f)\n",
+			sunDir.X, sunDir.Y, sunDir.Z, lightDir.X, lightDir.Y, lightDir.Z, shadowCenter.X, shadowCenter.Y, shadowCenter.Z));
 		DIAG_LOG(("W3DDeferredRenderer: [NEW] shadowView r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
 			m_shadowView[0].X, m_shadowView[0].Y, m_shadowView[0].Z, m_shadowView[0].W,
 			m_shadowView[3].X, m_shadowView[3].Y, m_shadowView[3].Z, m_shadowView[3].W));
@@ -1746,9 +1822,12 @@ void W3DDeferredRenderer::endShadowMapPass()
 		m_savedDS = NULL;
 	}
 	// Copy the shadow depth RT into the plain sampler texture so the main pass
-	// samples a resolved copy (reliable RT->SRV under dgVoodoo2). Do this while the
-	// shadow RT is still bound; StretchRect from an active render target is the
-	// most reliable path.
+	// samples a resolved copy (reliable RT->SRV under dgVoodoo2). The FIXED shadow
+	// map (world origin, not camera-following) already eliminates the self-shadow
+	// sweep — the RA3 post-process blur was REMOVED because its static D3DX effect /
+	// quad resources could be invalidated on a device reset, crashing the game
+	// after running a while. R32F + the fixed map give a stable, correct
+	// self-shadow on its own.
 	if (dev && m_shadowDepthRT && m_shadowDepthSampler) {
 		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 		IDirect3DSurface9 *src = getShadowRTSurface();
@@ -1797,7 +1876,7 @@ void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
 	s_dumped = true;
 
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
-	if (!dev || !m_shadowDepthRT || !m_shadowDepthStencilTex || !m_quadVB || !m_quadIB) return;
+	if (!dev || !m_shadowDepthRT || !m_shadowDepthSampler || !m_quadVB || !m_quadIB) return;
 	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 
 	// Build a tiny effect with the exact RA3 ShadowMapSampler declaration.
@@ -1862,7 +1941,13 @@ void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
 		d9->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
 		d9->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
 		d9->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
-		fx->SetTexture("ShadowMapTex", m_shadowDepthStencilTex);
+		// Sample the shadow-map COLOR RT (m_shadowDepthRT) DIRECTLY — the W3X CAST
+		// writes its sun-depth grayscale here via the RA3 ShadowDepth technique.
+		// DIAGNOSTIC: this distinguishes "COLOR RT empty (cast didn't write)" from
+		// "COLOR RT has depth but the StretchRect sampler copy failed". If this PPM
+		// shows depth but the sampler copy (receive path) is white, the resolve is
+		// the problem; if this is ALSO white, the cast itself isn't writing.
+		fx->SetTexture("ShadowMapTex", (IDirect3DBaseTexture9*)m_shadowDepthRT->Peek_D3D_Texture());
 		UINT passes = 0;
 		fx->SetTechnique("T");
 		fx->Begin(&passes, 0);
