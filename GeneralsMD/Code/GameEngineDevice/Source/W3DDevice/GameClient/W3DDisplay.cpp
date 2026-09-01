@@ -556,32 +556,38 @@ void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate
 }
 
 /*Giant hack in order to keep the game from getting stuck when alt-tabbing*/
-//void Reset_D3D_Device(bool active)
-//{
-//	if (TheDisplay && WW3D::Is_Initted() && !TheDisplay->getWindowed())
-//	{
-//		if (active)
-//		{	
-//			//switch back to desired mode when user alt-tabs back into game
-//			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),TheDisplay->getWindowed(),true, true);
-//			OSVERSIONINFO	osvi;
-//			osvi.dwOSVersionInfoSize=sizeof(OSVERSIONINFO);
-//			if (GetVersionEx(&osvi))
-//			{	//check if we're running Win9x variant since they have buggy alt-tab that requires
-				//reloading all textures.
-//				if (osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
-//				{	//only do this on Win9x boxes because it makes alt-tab very slow.
-//						WW3D::_Invalidate_Textures();
-//				}
-//			}
-//		}
-//		else
-//		{
-			//switch to windowed mode whenever the user alt-tabs out of game. Don't restore assets after reset since we'll do it when returning.
-//			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),1,true, true, false);
-//		}
-//	}
-//}
+// Plan B (2026-09-01): restore only the "switch back to fullscreen" half.
+// Original called Reset_D3D_Device in WM_ACTIVATEAPP: on active=true it rebuilt
+// the device with fullscreen params via Set_Render_Device; on active=false it
+// dropped to windowed mode. xezon 2025-11-05 removed the whole call + function
+// body because the "drop to windowed" path crashed under DXMaximizedWindowedMode,
+// but that left NO code to rebuild the fullscreen device when Alt+Tab returns,
+// so the game stayed in a windowed/maximized state. This version keeps ONLY the
+// active=true branch:
+//   - modern shim minimizes the window on Alt+Tab out, no windowed-downgrade needed;
+//   - Set_Render_Device returns false (no crash) if the device is still DEVICELOST,
+//     and it updates _PresentParameters to fullscreen first, so the later
+//     End_Scene/Flip_To_Primary DEVICENOTRESET path completes the restore.
+void Reset_D3D_Device(bool active)
+{
+	if (active && TheDisplay && WW3D::Is_Initted() && !TheDisplay->getWindowed())
+	{
+		// Only rebuild the device when it is actually lost and ready to reset.
+		// Forcing a reset of a HEALTHY device on Alt+Tab return crashes the
+		// D3D9-migrated build (access violation during Reset/asset reload, seen
+		// 2026-09-01 at 0x0FA03EC2) -- under DXMaximizedWindowedMode the device
+		// is never lost, so an unconditional reset there is unnecessary and fatal.
+		// When the device IS lost, D3DERR_DEVICENOTRESET lets us switch back to
+		// fullscreen present params; the render loop keeps retrying while it is
+		// still D3DERR_DEVICELOST.
+		IDirect3DDevice8 *d3ddev = DX8Wrapper::_Get_D3D_Device8();
+		if (d3ddev && d3ddev->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+		{
+			//switch back to desired mode when user alt-tabs back into game
+			WW3D::Set_Render_Device( WW3D::Get_Render_Device(),TheDisplay->getWidth(),TheDisplay->getHeight(),TheDisplay->getBitDepth(),TheDisplay->getWindowed(),true, true);
+		}
+	}
+}
 
 /** Set resolution of display */
 //=============================================================================
