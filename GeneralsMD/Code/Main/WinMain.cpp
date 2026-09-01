@@ -473,10 +473,13 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 						ShowWindow(ApplicationHWnd, SW_RESTORE);
 					// Fullscreen: the DXMaximizedWindowedMode shim can restore the
 					// window as a thin black strip, so force it back to the display
-					// size before bringing it to the foreground.
-					SetWindowPos(ApplicationHWnd, HWND_TOPMOST, 0, 0,
-						GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
-						SWP_SHOWWINDOW);
+					// size before bringing it to the foreground. (Skip in windowed
+					// debug mode -- leave the normal window size alone.)
+					if (!ApplicationIsWindowed) {
+						SetWindowPos(ApplicationHWnd, HWND_TOPMOST, 0, 0,
+							GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
+							SWP_SHOWWINDOW);
+					}
 					SetForegroundWindow(ApplicationHWnd);
 					SetFocus(ApplicationHWnd);
 				}
