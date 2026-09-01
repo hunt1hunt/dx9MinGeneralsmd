@@ -464,6 +464,23 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 					}
 				}
 
+				// Window restoration on Alt+Tab back: the deactivation guard above can
+				// return early and leave isWinMainActive TRUE, which would skip the
+				// activation block below -- so restore + foreground the window here on
+				// EVERY activation, independent of the isWinMainActive state.
+				if ((bool)wParam && ApplicationHWnd) {
+					if (IsIconic(ApplicationHWnd))
+						ShowWindow(ApplicationHWnd, SW_RESTORE);
+					// Fullscreen: the DXMaximizedWindowedMode shim can restore the
+					// window as a thin black strip, so force it back to the display
+					// size before bringing it to the foreground.
+					SetWindowPos(ApplicationHWnd, HWND_TOPMOST, 0, 0,
+						GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
+						SWP_SHOWWINDOW);
+					SetForegroundWindow(ApplicationHWnd);
+					SetFocus(ApplicationHWnd);
+				}
+
 //				DWORD threadId=GetCurrentThreadId();
 				if ((bool) wParam != isWinMainActive)
 //				{	isWinMainActive = (BOOL) wParam;
