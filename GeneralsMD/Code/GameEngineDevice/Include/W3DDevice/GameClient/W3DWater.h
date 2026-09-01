@@ -41,6 +41,11 @@
 #include "Common/GameType.h"
 #include "Common/Snapshot.h"
 #include "d3d8compat.h"
+#include <vector>
+#include <string.h>
+#include <math.h>
+#include "dx8wrapper.h"
+#include "GameLogic/PolygonTrigger.h"
 
 #define INVALID_WATER_HEIGHT 0.0f	///water height guaranteed to be below all terrain.
 //
@@ -55,6 +60,107 @@
 #define CV_WORLDVIEWPROJ_0 2
 #define CV_TEXPROJ_0 6
 #define CV_PATCH_SCALE_OFFSET 10
+
+#define SAFE_RELEASE(p)      { if(p) { (p)->Release(); (p)=NULL; } }
+
+//Data used in GeForce3 bump-mapped water (uses direct D3D resources for better
+//performance and compatibility (most of these featues are not supported by W3D).
+struct SEA_PATCH_VERTEX	//vertex structure passed to D3D
+{
+	float x,y,z;
+	unsigned int c;
+	float tu, tv;
+};
+typedef std::vector<SEA_PATCH_VERTEX>			SEA_PV_VEC;
+typedef std::vector<WORD>						SEA_IDX_VEC;
+
+// 倒影绘制方式
+enum Enum_ReflectDrawMethod
+{
+	REFDRAW_METHOD_XX = 0,					//关闭，不执行任何绘制，不产生倒影
+	REFDRAW_METHOD_PATCH = 1,				//格网平铺
+	REFDRAW_METHOD_PMSMP = 2,				//多边形均匀采样网格
+};
+
+// 倒影承载面信息（逐水域独立反射）
+struct ST_ReflectRenderInfo
+{
+	Int ID;											//水域ID
+	Real Level;										//水面高度
+	AsciiString Name;								//水域名称
+	AABoxClass SeaBox;								//倒影承载面
+	PolygonTrigger *Trigger;						//触发器指针
+	SEA_PV_VEC TriVerts;							//逐水域多边形均匀采样得到的多边形网格顶点
+	SEA_IDX_VEC TriIdxs;							//逐水域多边形均匀采样得到的多边形网格索引
+	TextureClass *ReflectTex;						//该水域的反射贴图
+
+	bool NeedToDraw;								//是否需要渲染
+
+	//水面渲染参数
+	BYTE DrawMethod;								//绘制方式，可选值参考 Enum_ReflectDrawMethod
+	bool ForceDraw;									//是否无视视野裁剪，永远强制渲染
+	Real WLOffsetX, WLOffsetY, WLOffsetZ;			//水域承载面偏移（其中XY值仅在格网平铺时有效，Z值任何模式下都有效）
+	Real PatchSize, PatchUVTiles, PatchScale;		//倒影承载面参数
+	Real PatchWidth, PatchUVScale;					//倒影承载面参数
+    Real PMeshRateU, PMeshRateV;					//倒影贴图UV缩放倍率，仅在均匀采样时有效
+	Int D3DSrcBlend, D3DDstBlend;					//倒影贴图混色方式
+	Int SubdivCellLV;								//均匀采样细分级别，值越大网格越细，仅在均匀采样时有效
+
+	//DX相关缓冲
+	Int	NumVertices;								//number of vertices in D3D vertex buffer
+	Int NumIndices;									//number of indices in D3D index buffer
+	Int	VertexBufferD3DOffset;						//location to start writing vertices
+	LPDIRECT3DVERTEXBUFFER8 VertexBufferD3D;		//D3D vertex buffer
+	LPDIRECT3DINDEXBUFFER8	IndexBufferD3D;			//D3D index buffer
+
+	ST_ReflectRenderInfo(void) : ID(-1), Level(-1.0), Name(""), Trigger(NULL), ReflectTex(NULL), NeedToDraw(true),
+	                             DrawMethod(REFDRAW_METHOD_PMSMP), ForceDraw(false),
+	                             WLOffsetX(0.0f), WLOffsetY(0.0f), WLOffsetZ(0.0f), PatchSize(15.0f), PatchUVTiles(42.0f), PatchScale(40.0f),
+								 D3DSrcBlend(D3DBLEND_SRCALPHA), D3DDstBlend(D3DBLEND_INVSRCALPHA), SubdivCellLV(256),
+	                             NumVertices(0), NumIndices(0), VertexBufferD3DOffset(0), VertexBufferD3D(NULL), IndexBufferD3D(NULL)
+	{
+	  memset(&SeaBox, 0, sizeof(AABoxClass));
+	  PatchWidth = PatchSize - 1;
+	  PatchUVScale = PatchUVTiles / PatchWidth;
+	}
+
+	void CreateRenderTarget(Int ReflectSize)
+	{ ReflectTex = DX8Wrapper::Create_Render_Target(ReflectSize, ReflectSize); }
+
+	void PolygonTriggerTo(PolygonTrigger *pTrig)
+	{
+	  ID = pTrig->getID();
+	  Level = pTrig->getPoint(0)->z;
+	  DrawMethod = 0;
+	  Name = pTrig->getTriggerName();
+	  Trigger = pTrig;
+
+	  IRegion2D WaterOBBox = pTrig->getBounds();
+	  //注意ICoord2D的x/y是Int，/2为整型除法会丢失0.5，需用浮点除法保证SeaBox中心/范围准确
+	  SeaBox.Extent.X = (Real)(WaterOBBox.hi.x - WaterOBBox.lo.x) / 2.0f;
+	  SeaBox.Extent.Y = (Real)(WaterOBBox.hi.y - WaterOBBox.lo.y) / 2.0f;
+	  SeaBox.Center.X = SeaBox.Extent.X + (Real)WaterOBBox.lo.x;
+	  SeaBox.Center.Y = SeaBox.Extent.Y + (Real)WaterOBBox.lo.y;
+	}
+
+	void SeaBoxOffset(void)
+	{
+	  SeaBox.Extent.X += fabs(WLOffsetX) * 2;
+	  SeaBox.Extent.Y += fabs(WLOffsetY) * 2;
+	  SeaBox.Center.X += WLOffsetX;
+	  SeaBox.Center.Y += WLOffsetY;
+	}
+
+	void Release(void)
+	{
+	  TriVerts.clear();
+	  TriIdxs.clear();
+	  REF_PTR_RELEASE(ReflectTex);
+	  SAFE_RELEASE(VertexBufferD3D); NumVertices = 0;
+	  SAFE_RELEASE(IndexBufferD3D); NumIndices = 0;
+	}
+};
+typedef std::vector<ST_ReflectRenderInfo>		REFECT_RENDER_VEC;
 
 class PolygonTrigger;
 class WaterTracksRenderSystem;
@@ -133,6 +239,17 @@ public:
 
 	void replaceSkyboxTexture(const AsciiString& oldTexName, const AsciiString& newTextName);
 
+	// ------------------------------------------------------------------
+	// 逐水域独立反射系统 (ported from download 20260530)
+	// ------------------------------------------------------------------
+	void ParseAllWaterTrigger(void);			//遍历当前地图所有水域，为每个水域创建独立反射承载面渲染信息
+	void ParseSeaBoxArgsFromMapINI(void);		//从地图map.ini中读取倒影承载面的全局缺省重定义参数
+	void SetDefaultSeaBoxArgs(void);			//用宏定义值填充缺省的倒影承载面参数
+	void ParseTriggerArgsFromMapINI(ST_ReflectRenderInfo &RRInf);		//从地图map.ini中读取指定水域专用重定义参数
+	void SetDefaultTriggerArgs(ST_ReflectRenderInfo &RRInf);			//用缺省参数填充指定水域的专用参数
+	Real GetOpacityRate20(void) { return m_OpacityRate20; }		//2号水时0号水基底纹理的透明度倍率
+	void ResetPreMapMane(void) { m_PreMapName.clear(); }
+
 protected:
 	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining quad
 	SceneClass							*m_parentScene;	///<scene to be reflected
@@ -156,13 +273,8 @@ protected:
 	Int			m_sortLevel;		///<sort order after main scene is rendered
 
 	//Data used in GeForce3 bump-mapped water (uses direct D3D resources for better
-	//performance and compatibility (most of these featues are not supported by W3D).
-	struct SEA_PATCH_VERTEX	//vertex structure passed to D3D
-	{
-		float x,y,z;
-		unsigned int c;
-		float tu, tv;
-	}; 
+	//performance and compatibility). SEA_PATCH_VERTEX is now declared at global scope
+	//(see top of this file) so ST_ReflectRenderInfo can hold SEA_PV_VEC.
 
 	LPDIRECT3DDEVICE8 m_pDev;						///<pointer to D3D Device
 	LPDIRECT3DVERTEXBUFFER8 m_vertexBufferD3D;		///<D3D vertex buffer
@@ -189,6 +301,14 @@ protected:
 	//
 	RenderObjClass	*m_skyBox;		///<box around level
 	WaterTracksRenderSystem *m_waterTrackSystem;	///<object responsible for rendering water wakes
+
+	// ------------------------------------------------------------------
+	// 逐水域独立反射系统 (ported from download 20260530)
+	// ------------------------------------------------------------------
+	Real m_OpacityRate20;			//2号水时0号水基底纹理的透明度倍率（缺省0.52），可被map.ini OpacityRate覆盖
+	AsciiString m_PreMapName;		//上一局使用的地图文件名（用于判断是否需要重新读取map.ini）
+	REFECT_RENDER_VEC m_ReflectRenderVec;	//逐水域反射承载面渲染信息列表
+	AsciiString m_MapINIData;		//当前地图map.ini的原始文本（用于逐水域/SeaBox参数解析）
 
 	enum WaterMeshStatus
 	{
@@ -277,6 +397,35 @@ protected:
 	//Methods used for GeForce3 specific water
 	HRESULT WaterRenderObjClass::generateIndexBuffer(int sizeX, int sizeY);	///<Generate static index buufer
 	HRESULT WaterRenderObjClass::generateVertexBuffer( Int sizeX, Int sizeY, Int vertexSize, Bool doFill);///<Generate static vertex buffer
+
+	// ------------------------------------------------------------------
+	// 逐水域独立反射系统 (ported from download 20260530)
+	// ------------------------------------------------------------------
+	//单水域独立模型缓冲（格网平铺）
+	HRESULT generateIndexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY);
+	HRESULT generateVertexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY, Int vertexSize, Bool doStatic);
+	//多边形网格生成（均匀采样）
+	HRESULT GeneratePolyMesh(ST_ReflectRenderInfo &RRInf);
+	HRESULT generateIndexBuffer(ST_ReflectRenderInfo &RRInf);
+	HRESULT generateVertexBuffer(ST_ReflectRenderInfo &RRInf, Int vertexSize, Bool doStatic);
+	//多边形几何辅助
+	BOOL PointInConvexPoly(const std::vector<Vector2> &poly, Vector2 pt);
+	BOOL PointInAnyPoly(const std::vector<Vector2> &poly, Vector2 pt);
+	bool IsPolygonIntersect(const std::vector<Vector2>& polyA, const std::vector<Vector2>& polyB);
+	//获取当前相机视野范围的四边形
+	void GetCameraViewPoly(std::vector<Vector2> &ViewPoly);
+	//判断指定水域是否在当前相机视野范围内
+	bool CanThisWaterTriggerBeSee(ST_ReflectRenderInfo &RRInf, std::vector<Vector2> &ViewPoly);
+	//在指定的倒影承载面上绘制倒影贴图（逐水域遍历版本）
+	void DrawReflectionOnSeaBox(RenderInfoClass &rinfo);
+	//逐水域反射烘焙
+	void renderMirror(CameraClass *cam, ST_ReflectRenderInfo &RRInf);
+	//地图边界挡水框 + 战争迷雾倒影遮罩
+	void RenderMapBorderCoverL(void);
+	void RenderMapBorderCoverR(void);
+	void RenderMapBorderCoverT(void);
+	void RenderMapBorderCoverB(void);
+	void RenderShroudCover(void);
 
 	// snapshot methods for save/load
 	virtual void crc( Xfer *xfer );

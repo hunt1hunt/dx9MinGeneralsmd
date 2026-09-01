@@ -769,11 +769,12 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 		pMapObj = pMapObj->getNext();
 	}
 
-	/*// reset water render object if present
+	// reset water render object if present (逐水域反射：加载地图相关水参数, ported from download 20260530)
 	if( m_waterRenderObject )
 	{
 		m_waterRenderObject->load();
 	}
+	/*
 // >>>>>> �������ڵر��� -50 ������ a.w3d ƽ��ģ���ڵ�ͼ������W3Dģ�� <<<<<<  
     {  
         // �ͷ���һ�ο��ܲ����Ķ��󣨵�ͼ����ʱ��  

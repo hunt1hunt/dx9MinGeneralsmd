@@ -1605,7 +1605,8 @@ void BaseHeightMapRenderObjClass::updateShorelineTile(Int i, Int j, Int border, 
 	//Figure out maximum depth of water before we reach the m_minWaterOpacity value.  Depths greater than this don't need
 	//custom shoreline tiles because they will get their opacity from the default value stored in the frame buffer during
 	//a screen clear operation.
-	Real transparentDepth=TheWaterTransparency->m_transparentWaterDepth*TheWaterTransparency->m_minWaterOpacity;
+	//此处乘上0号水透明度的调整倍率，GetOpacityRate20()可根据当前水类型动态调整（2号双层水缺省0.5）(ported from download 20260530)
+	Real transparentDepth=TheWaterTransparency->m_transparentWaterDepth*TheWaterTransparency->m_minWaterOpacity * (TheWaterRenderObj ? TheWaterRenderObj->GetOpacityRate20() : 1.0f);
 	Real depthScaleFactor = 1.0f/transparentDepth;
 
 	Real X0=(i-border)*MAP_XY_FACTOR;
@@ -1753,7 +1754,7 @@ void BaseHeightMapRenderObjClass::initDestAlphaLUT(void)
 		Int pitch;
 		UnsignedInt *pData=(UnsignedInt*)surf->Lock(&pitch);
 
-		Int maxOpacity=(Int)(TheWaterTransparency->m_minWaterOpacity * 255.0f);
+		Int maxOpacity=(Int)(TheWaterTransparency->m_minWaterOpacity * (TheWaterRenderObj ? TheWaterRenderObj->GetOpacityRate20() : 1.0f) * 255.0f);
 		Int alpha;
 
 		if (pData)
@@ -1773,7 +1774,7 @@ void BaseHeightMapRenderObjClass::initDestAlphaLUT(void)
 		m_destAlphaTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
 		m_destAlphaTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
 		REF_PTR_RELEASE(surf);
-		m_currentMinWaterOpacity = TheWaterTransparency->m_minWaterOpacity;
+		m_currentMinWaterOpacity = TheWaterTransparency->m_minWaterOpacity * (TheWaterRenderObj ? TheWaterRenderObj->GetOpacityRate20() : 1.0f);
 	}
 }
 
@@ -1832,9 +1833,13 @@ Int BaseHeightMapRenderObjClass::initHeightData(Int x, Int y, WorldHeightMap *pM
 			m_minHeight = minHt * MAP_HEIGHT_SCALE;
 			m_maxHeight = maxHt * MAP_HEIGHT_SCALE;
 
+			//此处重新读取一次map.ini，保证开局之后如果修改了0号水的透明度倍率也能生效 (ported from download 20260530)
+			if (TheWaterRenderObj)
+				TheWaterRenderObj->ParseSeaBoxArgsFromMapINI();
+
 			//Find all shoreline tiles so they can get extra alpha blend
 			updateShorelineTiles(0,0,m_mapDX-1,m_mapDY-1,pMap);
-			if (TheWaterTransparency->m_minWaterOpacity != m_currentMinWaterOpacity)
+			if (TheWaterTransparency->m_minWaterOpacity * (TheWaterRenderObj ? TheWaterRenderObj->GetOpacityRate20() : 1.0f) != m_currentMinWaterOpacity)
 				initDestAlphaLUT();
 		}
 	}

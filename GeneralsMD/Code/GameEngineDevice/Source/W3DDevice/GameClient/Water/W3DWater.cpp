@@ -79,6 +79,8 @@ static void WaterDiagF(const char *msg, float val)
 // === END WATER DIAGNOSTIC ===
 #include "Common/Xfer.h"
 #include "Common/GameLOD.h"
+#include "Common/FileSystem.h"
+#include "Common/file.h"
 
 #include "GameClient/Water.h"
 #include "GameClient/Snow.h"
@@ -94,6 +96,12 @@ static void WaterDiagF(const char *msg, float val)
 extern bool g_pbrInsideWaterRender;
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
+#include <map>
+#include <utility>
+#include <float.h>
+#include "GameClient/View.h"
+#include "Common/MultiplayerSettings.h"
+#include "textureloader.h"
 
 
 #ifdef _INTERNAL
@@ -106,7 +114,7 @@ extern bool g_pbrInsideWaterRender;
 
 // DEFINES ////////////////////////////////////////////////////////////////////////////////////////
 #define SKYPLANE_SIZE	(384.0f*MAP_XY_FACTOR)
-#define SKYPLANE_HEIGHT	(30.0f)
+#define SKYPLANE_HEIGHT	(160.0f)
 
 #define SKYBODY_TEXTURE	"TSMoonLarg.tga"
 #define SKYBODY_SIZE	45.0f		//extent or radius of sky body
@@ -199,7 +207,28 @@ static ShaderClass blendStagesShader(SC_DETAIL_BLEND);
 
 WaterRenderObjClass *TheWaterRenderObj=NULL; ///<global water rendering object
 
-#define SAFE_RELEASE(p)      { if(p) { (p)->Release(); (p)=NULL; } }
+// ------------------------------------------------------------------
+// 逐水域独立反射系统：全局静态参数 (ported from download 20260530)
+// ------------------------------------------------------------------
+static Real s_WLOffsetX = 0.0, s_WLOffsetY = 0.0, s_WLOffsetZ = -0.5;
+static Real s_PatchSize = PATCH_SIZE, s_PatchUVTiles = PATCH_UV_TILES, s_PatchScale = PATCH_SCALE;
+static Real s_PatchWidth = s_PatchSize - 1;
+static Real s_PatchUVScale = s_PatchUVTiles / s_PatchWidth;
+static Real s_PMeshRateU = 1.0, s_PMeshRateV = 1.0;
+static Real s_SkyPlaneExtX = 0.0, s_SkyPlaneExtY = 0.0;
+static Real s_WaterSCRate[2] = {1.0, 1.0};
+static Int s_D3DSrcBlend = D3DBLEND_SRCALPHA;
+static Int s_D3DDstBlend = D3DBLEND_INVSRCALPHA;
+static Int s_SubdivCellLV = 256;
+static Real s_MapVSX = 400 * MAP_XY_FACTOR, s_MapVSY = 400 * MAP_XY_FACTOR, s_MapVSB = 70 * MAP_XY_FACTOR;
+static Real s_ShroudVSX = 400 * MAP_XY_FACTOR, s_ShroudVSY = 400 * MAP_XY_FACTOR;
+static Real s_ShroudCOX = 0.0f, s_ShroudCOY = 0.0f;
+static Real s_SkyVCRate = 1.0f;
+static Real s_MapBWLevel = 7.2f;
+static Real s_WaterACRate = 1.0f;	//水面亮度倍率（WaterACRate，shader侧实现，建议1.5）
+static UnsignedInt s_SkyDiffuse = 0x00C8C8C8;
+
+
 
 void doSkyBoxSet(Bool startDraw)
 {
@@ -848,6 +877,549 @@ HRESULT WaterRenderObjClass::generateIndexBuffer(Int sizeX, Int sizeY)
 }
 
 //-------------------------------------------------------------------------------------------------
+// 逐水域独立反射系统 (ported from download 20260530)：多边形几何辅助
+//-------------------------------------------------------------------------------------------------
+static float Cross(const Vector2& a, const Vector2& b)
+{
+	return a.X * b.Y - a.Y * b.X;
+}
+
+static bool PointOnSegment(const Vector2& p, const Vector2& a, const Vector2& b)
+{
+	if (fabs(Cross(b - a, p - a)) > 1e-8f)
+		return false;
+
+	// 点在包围盒内
+	float minX = min(a.X, b.X) - 1e-8f;
+	float maxX = max(a.X, b.X) + 1e-8f;
+	float minY = min(a.Y, b.Y) - 1e-8f;
+	float maxY = max(a.Y, b.Y) + 1e-8f;
+	return (p.X >= minX && p.X <= maxX && p.Y >= minY && p.Y <= maxY);
+}
+
+static bool SegmentIntersect(const Vector2& a, const Vector2& b, const Vector2& c, const Vector2& d)
+{
+	float c1 = Cross(b - a, c - a);
+	float c2 = Cross(b - a, d - a);
+	float c3 = Cross(d - c, a - c);
+	float c4 = Cross(d - c, b - c);
+
+	// 标准跨立相交
+	if ((c1 * c2 < -1e-8f) && (c3 * c4 < -1e-8f))
+		return true;
+
+	// 端点落在线段上的情况
+	if (PointOnSegment(c, a, b)) return true;
+	if (PointOnSegment(d, a, b)) return true;
+	if (PointOnSegment(a, c, d)) return true;
+	if (PointOnSegment(b, c, d)) return true;
+
+	return false;
+}
+
+BOOL WaterRenderObjClass::PointInConvexPoly(const std::vector<Vector2> &poly, Vector2 pt)
+{
+	int ptCount = poly.size();
+	if (ptCount < 3)
+		return FALSE;
+
+	// 记录所有边叉积符号
+	BOOL hasPos = FALSE;
+	BOOL hasNeg = FALSE;
+	const float eps = 0.001f; // 浮点容错
+
+	for (int i = 0; i < ptCount; i++)
+	{
+		int j = (i + 1) % ptCount;
+		float edgeX = poly[j].X - poly[i].X;
+		float edgeY = poly[j].Y - poly[i].Y;
+		float vecX = pt.X - poly[i].X;
+		float vecY = pt.Y - poly[i].Y;
+
+		// 叉积 cross = E x V
+		float cross = edgeX * vecY - edgeY * vecX;
+
+		if (cross > eps)
+			hasPos = TRUE;
+		else if (cross < -eps)
+			hasNeg = TRUE;
+	}
+
+	// 凸多边形内部规则：所有叉积同号（允许接近0的边界点）
+	if (!(hasPos && hasNeg))
+		return TRUE;
+	return FALSE;
+}
+
+BOOL WaterRenderObjClass::PointInAnyPoly(const std::vector<Vector2> &poly, Vector2 pt)
+{
+	int n = (int)poly.size();
+	if (n < 3)
+		return FALSE;
+
+	const float eps = 0.0001f;
+	BOOL inside = FALSE;
+	float px = pt.X;
+	float py = pt.Y;
+
+	for (int i = 0, j = n - 1; i < n; j = i++)
+	{
+		float xi = poly[i].X;
+		float yi = poly[i].Y;
+		float xj = poly[j].X;
+		float yj = poly[j].Y;
+
+		// 当前边两个Y坐标上下边界
+		float yMin = min(yi, yj);
+		float yMax = max(yi, yj);
+
+		// 点Y不在边Y区间，跳过这条边
+		if (py < yMin - eps || py > yMax + eps)
+			continue;
+
+		// 水平射线与边交点X
+		float dy = yj - yi;
+		// 水平边，跳过（避免除0）
+		if (fabs(dy) < eps)
+			continue;
+
+		float t = (py - yi) / dy;
+		float xCross = xi + t * (xj - xi);
+
+		// 射线向右，交点X大于采样点X才算相交
+		if (px < xCross - eps)
+		{
+			inside = !inside;
+		}
+	}
+	return inside;
+}
+
+bool WaterRenderObjClass::IsPolygonIntersect(const std::vector<Vector2>& polyA, const std::vector<Vector2>& polyB)
+{
+	// 合法性校验：多边形至少3个顶点
+	if (polyA.size() < 3 || polyB.size() < 3)
+		return false;
+
+	// 条件1：遍历所有边，检测线段是否相交
+	size_t aCount = polyA.size();
+	size_t bCount = polyB.size();
+	for (size_t i = 0; i < aCount; ++i)
+	{
+		size_t iNext = (i + 1) % aCount;
+		const Vector2& a0 = polyA[i];
+		const Vector2& a1 = polyA[iNext];
+
+		for (size_t j = 0; j < bCount; ++j)
+		{
+			size_t jNext = (j + 1) % bCount;
+			const Vector2& b0 = polyB[j];
+			const Vector2& b1 = polyB[jNext];
+
+			if (SegmentIntersect(a0, a1, b0, b1))
+			{
+				return true;
+			}
+		}
+	}
+
+	// 条件2：B任意顶点在A内部（A包住B）
+	for (size_t bi = 0; bi < bCount; ++bi)
+	{
+		if (PointInAnyPoly(polyA, polyB[bi]))
+			return true;
+	}
+
+	// 条件3：A任意顶点在B内部（B包住A）
+	for (size_t ai = 0; ai < aCount; ++ai)
+	{
+		if (PointInAnyPoly(polyB, polyA[ai]))
+			return true;
+	}
+
+	// 无任何相交条件
+	return false;
+}
+
+void WaterRenderObjClass::GetCameraViewPoly(std::vector<Vector2> &ViewPoly)
+{
+	ViewPoly.clear();
+	//防御：TheTacticalView为NULL时无法获取相机视野四边形，直接返回空（调用方会跳过该帧的可见性判断）
+	if (TheTacticalView == NULL)
+	{
+		WaterDiag("GETCAMERAVIEWPOLY: TheTacticalView is NULL!");
+		return;
+	}
+	Coord3D ViewCorner[4] = {0};
+	TheTacticalView->getScreenCornerWorldPointsAtZ(&ViewCorner[0], &ViewCorner[1], &ViewCorner[2], &ViewCorner[3], 0.0f);
+	Vector2 ViewPt;
+	//按凸四边形顺序压入顶点：TL(0), TR(1), BR(3), BL(2)。getScreenCornerWorldPointsAtZ返回TL/TR/BL/BR，直接顺序会形成自交的弓形四边形
+	Int cornerOrder[4] = {0, 1, 3, 2};
+	for (Int i=0; i<4; ++i)
+	{
+		ViewPt.X = ViewCorner[cornerOrder[i]].x; ViewPt.Y = ViewCorner[cornerOrder[i]].y;
+		ViewPoly.push_back(ViewPt);
+	}
+}
+
+bool WaterRenderObjClass::CanThisWaterTriggerBeSee(ST_ReflectRenderInfo &RRInf, std::vector<Vector2> &ViewPoly)
+{
+	//防御：确认触发器仍存在于当前地图的触发器链表中。TerrainLogic::reset/deleteTriggers会销毁触发器，
+	//此时RRInf.Trigger为悬垂指针，m_points已被析构置NULL，直接getPoint会解引用崩溃。
+	if (RRInf.Trigger == NULL)
+	   { return false; }
+	Bool triggerStillExists = false;
+	for (PolygonTrigger *pt = PolygonTrigger::getFirstPolygonTrigger(); pt; pt = pt->getNext())
+	{
+		if (pt == RRInf.Trigger) { triggerStillExists = true; break; }
+	}
+	if (!triggerStillExists)
+	   {
+		//记录一次：触发器已被deleteTriggers销毁但m_ReflectRenderVec未刷新（悬垂指针防御生效）
+		static Bool diagDanglingOnce = FALSE;
+		if (!diagDanglingOnce) { diagDanglingOnce = TRUE; WaterDiag("CANSEEWATER: dangling trigger rejected (trigger deleted, ParseAllWaterTrigger not rerun)"); }
+		return false;
+	   }
+	if (RRInf.Trigger->getNumPoints() == 0)
+	   { return false; }
+
+	Vector2 WTPt;
+	std::vector<Vector2> WTPoly;
+	Int TotalPt = RRInf.Trigger->getNumPoints();
+	for (Int i=0; i<TotalPt; ++i)
+	{
+		WTPt.X = RRInf.Trigger->getPoint(i)->x;
+		WTPt.Y = RRInf.Trigger->getPoint(i)->y;
+		WTPoly.push_back(WTPt);
+	}
+
+	return IsPolygonIntersect(ViewPoly, WTPoly);
+}
+
+//-------------------------------------------------------------------------------------------------
+// 逐水域独立反射系统：单水域独立模型缓冲（格网平铺）
+//-------------------------------------------------------------------------------------------------
+HRESULT WaterRenderObjClass::generateIndexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY)
+{
+	RRInf.NumIndices = (sizeY-1) * (sizeX*2+2) - 2;
+	WORD* pIndices;
+	HRESULT hr;
+
+	if (FAILED(hr=m_pDev->CreateIndexBuffer((RRInf.NumIndices+2)*sizeof(WORD), D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_MANAGED, &RRInf.IndexBufferD3D, NULL)))
+		return hr;
+
+	if (FAILED(hr=RRInf.IndexBufferD3D->Lock(0, RRInf.NumIndices*sizeof(WORD), (void**)&pIndices, 0)))
+		return hr;
+
+	Int i,j,k;
+	for (i=0,j=0,k=0; i<RRInf.NumIndices; j++)
+	{
+		for (;k<(sizeX*(j+1)); k++,i+=2)
+		{
+			pIndices[i] = (UnsignedShort) k+sizeX;
+			pIndices[i+1] = (UnsignedShort) k;
+		}
+
+		if (i<RRInf.NumIndices)
+		{
+			pIndices[i] = k-1;
+			pIndices[i+1] = k+sizeX;
+			i += 2;
+		}
+	}
+
+	if (FAILED(hr=RRInf.IndexBufferD3D->Unlock()))
+		return hr;
+
+	return S_OK;
+}
+
+HRESULT WaterRenderObjClass::generateVertexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY, Int vertexSize, Bool doStatic)
+{
+	RRInf.NumVertices = sizeX * sizeY;
+	SEA_PATCH_VERTEX *pVertices;
+	Setting *setting = &m_settings[m_tod];
+	HRESULT hr;
+
+	//default setting for a dynamic vertex buffer
+	D3DPOOL pool = D3DPOOL_DEFAULT;
+	DWORD usage = D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC;
+	DWORD fvf = WATER_MESH_FVF;
+
+	if (doStatic)
+	{
+		pool = D3DPOOL_MANAGED;
+		usage = D3DUSAGE_WRITEONLY;
+		fvf=0;
+		RRInf.NumVertices = sizeX * sizeY;
+	}
+
+	if (RRInf.VertexBufferD3D == NULL)
+	{
+		if (FAILED(hr=m_pDev->CreateVertexBuffer(RRInf.NumVertices * vertexSize, usage, fvf, pool, &RRInf.VertexBufferD3D, NULL)))
+			return hr;
+	}
+
+	RRInf.VertexBufferD3DOffset = 0;
+
+	if (!doStatic)
+		return S_OK;
+
+	if (FAILED(hr=RRInf.VertexBufferD3D->Lock(0, RRInf.NumVertices * sizeof(SEA_PATCH_VERTEX), (void**)&pVertices, 0)))
+		return hr;
+
+	Int x,z;
+	for (z=0; z<sizeY; z++)
+	{
+		for (x=0; x<sizeX; x++)
+		{
+			pVertices->x=(float)x;
+			pVertices->y=RRInf.Level + RRInf.WLOffsetZ;	//此处最好降低0.5，使倒影承载面比0号水和BONB水镜都略低一些，避免出现水岸白边或黑边
+			pVertices->z=(float)z;
+
+			pVertices->tu=(float)x * RRInf.PatchUVScale;
+			pVertices->tv=(float)z * RRInf.PatchUVScale;
+			pVertices->c=setting->transparentWaterDiffuse;	//vertex alpha/color
+			pVertices++;
+		}
+	}
+
+	if (FAILED(hr=RRInf.VertexBufferD3D->Unlock()))
+		return hr;
+
+	return S_OK;
+}
+
+//-------------------------------------------------------------------------------------------------
+// 逐水域独立反射系统：多边形均匀采样网格生成
+//-------------------------------------------------------------------------------------------------
+HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
+{
+	//防御：确认触发器仍存在于当前地图的触发器链表中（防止deleteTriggers销毁后的悬垂指针）
+	if (RRInf.Trigger == NULL)
+	{ return S_FALSE; }
+	Bool triggerStillExists = false;
+	for (PolygonTrigger *pt = PolygonTrigger::getFirstPolygonTrigger(); pt; pt = pt->getNext())
+	{
+		if (pt == RRInf.Trigger) { triggerStillExists = true; break; }
+	}
+	if (!triggerStillExists)
+	{ return S_FALSE; }
+
+	if (RRInf.Trigger->getNumPoints() < 3)
+	{
+		return S_FALSE;
+	}
+
+	if (RRInf.DrawMethod == REFDRAW_METHOD_PATCH)
+	{
+		SAFE_RELEASE(RRInf.VertexBufferD3D);
+		SAFE_RELEASE(RRInf.IndexBufferD3D);
+		HRESULT hr = generateIndexBuffer(RRInf, RRInf.PatchSize, RRInf.PatchSize);
+		if (FAILED(hr)) return hr;
+		return generateVertexBuffer(RRInf, RRInf.PatchSize, RRInf.PatchSize, sizeof(SEA_PATCH_VERTEX), true);
+	}
+
+	Int polyPtCount = RRInf.Trigger->getNumPoints();
+
+	// 1. 读取多边形世界坐标
+	std::vector<Vector2> convexPoly;
+	Real minX = FLT_MAX, maxX = -FLT_MAX;
+	Real minY = FLT_MAX, maxY = -FLT_MAX;
+	Real origMinX = FLT_MAX, origMaxX = -FLT_MAX;
+	Real origMinY = FLT_MAX, origMaxY = -FLT_MAX;
+	for (Int p = 0; p < polyPtCount; p++)
+	{
+		const ICoord3D* gridPt = RRInf.Trigger->getPoint(p);
+		float wx = (float)gridPt->x;
+		float wy = (float)gridPt->y;
+
+		Vector2 v2(wx, wy);
+		convexPoly.push_back(v2);
+		if (wx < minX) minX = wx;
+		if (wx > maxX) maxX = wx;
+		if (wy < minY) minY = wy;
+		if (wy > maxY) maxY = wy;
+
+		origMinX = min(origMinX, wx);
+		origMaxX = max(origMaxX, wx);
+		origMinY = min(origMinY, wy);
+		origMaxY = max(origMaxY, wy);
+	}
+
+	// 清空旧网格缓存
+	RRInf.TriVerts.clear();
+	RRInf.TriIdxs.clear();
+
+	// 2. AABB内均匀细分采样
+	float stepX = (maxX - minX) / RRInf.SubdivCellLV;
+	float stepY = (maxY - minY) / RRInf.SubdivCellLV;
+	std::vector<Vector2> validPoints;
+
+	for (Int y = 0; y <= RRInf.SubdivCellLV; y++)
+	{
+		float wy = minY + y * stepY;
+		for (Int x = 0; x <= RRInf.SubdivCellLV; x++)
+		{
+			float wx = minX + x * stepX;
+			Vector2 p(wx, wy);
+
+			if (PointInAnyPoly(convexPoly, p))
+			{
+				validPoints.push_back(p);
+			}
+		}
+	}
+
+	// 3. 生成水面顶点
+	Real rangeX = maxX - minX;
+	Real rangeY = maxY - minY;
+	Real PointRateU = RRInf.PatchUVScale * RRInf.PatchUVTiles * RRInf.PMeshRateU;
+	Real PointRateV = RRInf.PatchUVScale * RRInf.PatchUVTiles * RRInf.PMeshRateV;
+	Setting *setting = &m_settings[m_tod];
+	for (size_t vpi = 0; vpi < validPoints.size(); vpi++)
+	{
+		const Vector2 &p = validPoints[vpi];
+		SEA_PATCH_VERTEX v;
+		v.x = p.X;
+		v.y = p.Y;
+		v.z = RRInf.Level + RRInf.WLOffsetZ;
+		// UV归一化，和原有纹理缩放保持一致
+		float tu = ((p.X - minX) / rangeX) * PointRateU;
+		float tv = ((p.Y - minY) / rangeY) * PointRateV;
+		v.tu = tu;
+		v.tv = tv;
+		v.c = setting->transparentWaterDiffuse;
+		RRInf.TriVerts.push_back(v);
+	}
+
+	// 4. 建立坐标到顶点索引映射，注意此处validPoints的容量可能会超出65535上限，必须进行截断
+	std::map<std::pair<int, int>, WORD> posToIdx;
+	WORD MaxPoints = (validPoints.size() < 65535) ? (WORD)validPoints.size() : 65535;
+	for (WORD idx = 0; idx < MaxPoints; idx++)
+	{
+		int xi = (int)((validPoints[idx].X - minX) / stepX + 0.5f);
+		int yi = (int)((validPoints[idx].Y - minY) / stepY);
+		posToIdx[std::make_pair(xi, yi)] = idx;
+	}
+
+	// 5. 网格生成三角形索引
+	//注：VC6把for循环初始化变量视为函数级作用域，此处改用gy/gx避免与上面采样循环的y/x重定义
+	for (Int gy = 0; gy < RRInf.SubdivCellLV; gy++)
+	{
+		for (Int gx = 0; gx < RRInf.SubdivCellLV; gx++)
+		{
+			std::map<std::pair<int, int>, WORD>::iterator p0 = posToIdx.find(std::make_pair(gx, gy));
+			std::map<std::pair<int, int>, WORD>::iterator p1 = posToIdx.find(std::make_pair(gx+1, gy));
+			std::map<std::pair<int, int>, WORD>::iterator p2 = posToIdx.find(std::make_pair(gx, gy+1));
+			std::map<std::pair<int, int>, WORD>::iterator p3 = posToIdx.find(std::make_pair(gx+1, gy+1));
+
+			if (p0 == posToIdx.end() || p1 == posToIdx.end() || p2 == posToIdx.end())
+				continue;
+
+			// 三角 0,1,2
+			RRInf.TriIdxs.push_back(p0->second);
+			RRInf.TriIdxs.push_back(p1->second);
+			RRInf.TriIdxs.push_back(p2->second);
+
+			if (p3 == posToIdx.end()) continue;
+			// 三角 1,3,2
+			RRInf.TriIdxs.push_back(p1->second);
+			RRInf.TriIdxs.push_back(p3->second);
+			RRInf.TriIdxs.push_back(p2->second);
+		}
+	}
+
+	Int vertCount = (Int)RRInf.TriVerts.size();
+	Int idxCount = (Int)RRInf.TriIdxs.size();
+
+	// 若前面找不到有效的顶点或索引，则不能使用均匀采样法，只能按默认的矩形网格法来创建缓冲区
+	if (vertCount == 0 || idxCount == 0)
+	{
+		RRInf.DrawMethod = REFDRAW_METHOD_PATCH;
+		SAFE_RELEASE(RRInf.VertexBufferD3D);
+		SAFE_RELEASE(RRInf.IndexBufferD3D);
+		HRESULT hr = generateIndexBuffer(RRInf, RRInf.PatchSize, RRInf.PatchSize);
+		if (FAILED(hr)) return hr;
+		return generateVertexBuffer(RRInf, RRInf.PatchSize, RRInf.PatchSize, sizeof(SEA_PATCH_VERTEX), true);
+	}
+
+	// 释放旧缓冲
+	SAFE_RELEASE(RRInf.VertexBufferD3D);
+	SAFE_RELEASE(RRInf.IndexBufferD3D);
+
+	// 创建均匀采样缓冲区
+	HRESULT hr = generateVertexBuffer(RRInf, sizeof(SEA_PATCH_VERTEX), TRUE);
+	if (FAILED(hr)) return hr;
+	return generateIndexBuffer(RRInf);
+}
+
+HRESULT WaterRenderObjClass::generateVertexBuffer(ST_ReflectRenderInfo &RRInf, Int vertexSize, Bool doStatic)
+{
+	RRInf.NumVertices = (Int)RRInf.TriVerts.size();
+	if (RRInf.NumVertices == 0) return S_OK;
+
+	SEA_PATCH_VERTEX *pVertices;
+	HRESULT hr;
+	D3DPOOL pool = D3DPOOL_DEFAULT;
+	DWORD usage = D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC;
+	DWORD fvf = WATER_MESH_FVF;
+
+	if (doStatic)
+	{
+		pool = D3DPOOL_MANAGED;
+		usage = D3DUSAGE_WRITEONLY;
+		fvf = 0;
+	}
+
+	if (RRInf.VertexBufferD3D == NULL)
+	{
+		hr = m_pDev->CreateVertexBuffer(
+			RRInf.NumVertices * vertexSize,
+			usage,
+			fvf,
+			pool,
+			&RRInf.VertexBufferD3D,
+			NULL
+		);
+		if (FAILED(hr)) return hr;
+	}
+
+	RRInf.VertexBufferD3DOffset = 0;
+	if (!doStatic) return S_OK;
+
+	hr = RRInf.VertexBufferD3D->Lock(0, RRInf.NumVertices * sizeof(SEA_PATCH_VERTEX), (void**)&pVertices, 0);
+	if (FAILED(hr)) return hr;
+	memcpy(pVertices, &RRInf.TriVerts[0], RRInf.NumVertices * sizeof(SEA_PATCH_VERTEX));
+	RRInf.VertexBufferD3D->Unlock();
+	return S_OK;
+}
+
+HRESULT WaterRenderObjClass::generateIndexBuffer(ST_ReflectRenderInfo &RRInf)
+{
+	RRInf.NumIndices = (Int)RRInf.TriIdxs.size();
+	if (RRInf.NumIndices == 0) return S_OK;
+
+	WORD* pIndices;
+	HRESULT hr;
+	hr = m_pDev->CreateIndexBuffer(
+		RRInf.NumIndices * sizeof(WORD),
+		D3DUSAGE_WRITEONLY,
+		D3DFMT_INDEX16,
+		D3DPOOL_MANAGED,
+		&RRInf.IndexBufferD3D,
+		NULL
+	);
+	if (FAILED(hr)) return hr;
+
+	hr = RRInf.IndexBufferD3D->Lock(0, RRInf.NumIndices * sizeof(WORD), (void**)&pIndices, 0);
+	if (FAILED(hr)) return hr;
+	memcpy(pIndices, &RRInf.TriIdxs[0], RRInf.NumIndices * sizeof(WORD));
+	RRInf.IndexBufferD3D->Unlock();
+	return S_OK;
+}
+
+//-------------------------------------------------------------------------------------------------
 /** Releases all w3d assets, to prepare for Reset device call. */
 //-------------------------------------------------------------------------------------------------
 void WaterRenderObjClass::ReleaseResources(void)
@@ -893,6 +1465,11 @@ void WaterRenderObjClass::ReleaseResources(void)
 	m_waterPixelShader = NULL;
 	m_trapezoidWaterPixelShader=NULL;
 	m_riverWaterPixelShader=NULL;
+
+	// Release per-trigger reflection resources (逐水域独立反射)
+	for (Int ri = 0; ri < (Int)m_ReflectRenderVec.size(); ri++) {
+		m_ReflectRenderVec[ri].Release();
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1089,6 +1666,7 @@ void WaterRenderObjClass::ReAcquireResources(void)
 					"float3 sunDirection : register(c0);\n"
 					"float3 sunColor : register(c1);\n"
 					"float2 timeOffset : register(c2);\n"
+					"float waterACRate : register(c3);\n"
 					"sampler s2 : register(s2);\n"
 					"float4 main(\n"
 					"    float2 bumpUV : TEXCOORD0,\n"
@@ -1132,7 +1710,7 @@ void WaterRenderObjClass::ReAcquireResources(void)
 					"    float4 sparkle = tex2D(s2, sparkleUV);\n"
 					"    float sparkleAmt = dot(sparkle.rgb, float3(0.299, 0.587, 0.114));\n"
 					"    result += sunColor * sparkleAmt * fresnel * 0.4;\n"
-					"    return float4(result * color.rgb, color.a);\n"
+					"    return float4(result * color.rgb * waterACRate, color.a);\n"
 					"}\n"
 					;
 				ID3DXBuffer* compiledPS = NULL;
@@ -1239,10 +1817,460 @@ void WaterRenderObjClass::ReAcquireResources(void)
 	}
 }
 
+// ------------------------------------------------------------------
+// 逐水域独立反射系统：map.ini 参数解析 (ported from download 20260530)
+// ------------------------------------------------------------------
+void WaterRenderObjClass::SetDefaultSeaBoxArgs(void)
+{
+	//水类型缺省值直接采用GameData.ini的WaterType设置（项目版质量门，代替下载版的高光外挂档位判定）
+	m_waterType = (WaterType)TheWritableGlobalData->m_waterType;
+
+	//若使用2号水（双层：半透明基底+倒影），则缺省将0号水的透明度减半，避免遮挡倒影。否则保持原来的透明度不变
+	m_OpacityRate20 = (m_waterType == WATER_TYPE_2_PVSHADER) ? 0.52 : 1.0;
+
+	s_WLOffsetX = 0.0; s_WLOffsetY = 0.0; s_WLOffsetZ = -0.5;
+	s_PatchSize = PATCH_SIZE; s_PatchUVTiles = PATCH_UV_TILES; s_PatchScale = PATCH_SCALE;
+	s_PatchWidth = s_PatchSize - 1.0;
+	s_PatchUVScale = s_PatchUVTiles / s_PatchWidth;
+	s_PMeshRateU = 1.0; s_PMeshRateV = 1.0;
+	s_SkyPlaneExtX = 0.0; s_SkyPlaneExtY = 0.0;
+	s_WaterSCRate[0] = 1.0; s_WaterSCRate[1] = 1.0;
+	s_D3DSrcBlend = D3DBLEND_SRCALPHA;
+	s_D3DDstBlend = D3DBLEND_INVSRCALPHA;
+
+	s_ShroudCOX = 0.0f; s_ShroudCOY = 0.0f;
+	s_SkyVCRate = 1.0f; s_SkyDiffuse = 0x00C8C8C8;
+	s_WaterACRate = 1.0f;
+}
+
+void WaterRenderObjClass::ParseSeaBoxArgsFromMapINI(void)
+{
+	//上一局的地图文件名与当前地图文件名相同，表示还在同一张地图上并且没有重新开局，无需重复读取参数，保持原值直接返回
+	//注意重新开局、读档等操作都会执行reset()方法，导致m_PreMapName被清空，虽然重开后还是同一张地图，但会强制重读参数
+	if (m_PreMapName.compareNoCase(TheWritableGlobalData->m_mapName) == 0)
+	   { return; }
+	m_PreMapName = TheWritableGlobalData->m_mapName;
+
+	//重新加载河流水体贴图与河岸波浪贴图
+	m_riverTexture->Invalidate();
+	m_riverTexture->Init();
+	m_riverAlphaEdge->Invalidate();
+	m_riverAlphaEdge->Init();
+
+	//读取之前先用宏定义值来填充所有顶层缺省参数
+	SetDefaultSeaBoxArgs();
+
+	AsciiString MapININameAS = m_PreMapName;
+	MapININameAS.toLower();
+	char MapININame[MAX_PATH] = {0};
+	strcpy(MapININame, MapININameAS.str());
+	char *Subfix = strrchr(MapININame, '\\');
+	if (Subfix != NULL)
+	   {
+	     //如果读取存档，系统会将文件夹或big里的map文件抽取到用户资料夹\Save里，以至于TheWritableGlobalData->m_mapName的内容实际上是"用户资料夹\Maps\地图名.map"
+	     //此处需要先提取出最后一个斜杠之后的部分，即"地图名.map"，将其重构成"Maps\地图文件夹\地图名.map"，再找其对应的map.ini
+	     if (strstr(MapININame, "maps") != NULL)
+	        { strcpy(Subfix+1, "map.ini"); }
+         else
+	        {
+			  AsciiString PureMapName = Subfix+1;
+			  //去掉末尾的.map扩展名（AsciiString无Replace方法，用endsWithNoCase+removeLastChar实现）
+			  if (PureMapName.endsWithNoCase(".map"))
+			  {
+				PureMapName.removeLastChar();
+				PureMapName.removeLastChar();
+				PureMapName.removeLastChar();
+				PureMapName.removeLastChar();
+			  }
+			  sprintf(MapININame, "Maps\\%s\\map.ini", PureMapName.str());
+	        }
+       }
+	if (TheFileSystem->doesFileExist(MapININame) == false)
+	   { return; }
+
+	char INIBuf[10240] = {0};
+	File *INIFile = TheFileSystem->openFile(MapININame, File::READ);
+	INIFile->read(INIBuf, 10240);
+	INIFile->close();
+	m_MapINIData = INIBuf;
+
+	//若map.ini里没有相关的重定义，则采用缺省参数顶替
+	char *Start = strstr(INIBuf, "MappedImage SeaBox");
+	if (Start == NULL)
+	   { return; }
+	Start += strlen("MappedImage SeaBox");
+    char *End = strstr(Start, "End");
+	if (End == NULL)
+	   { return; }
+	*End = 0;
+
+	//若map.ini里有相关的重定义，则尝试解析，解析之前先将所有参数都设置为缺省值，一旦部分参数有重定义值则会被单独替换
+	char *SeaBoxConfig = Start;
+	char *RowPtr = NULL;
+	UnsignedInt RowParsedBits = 0;
+	for (Int i=0; i<16; ++i)
+	   {
+         if (!(RowParsedBits & 0x0001))
+		    {
+              RowPtr = strstr(Start, "WaterType:");
+		      if (RowPtr != NULL)
+		         { m_waterType = (WaterType)atoi(RowPtr + strlen("WaterType:")); Start = SeaBoxConfig; RowParsedBits |= 0x0001; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0002))
+		    {
+              RowPtr = strstr(Start, "OpacityRate:");
+		      if (RowPtr != NULL)
+		         { m_OpacityRate20 = atof(RowPtr + strlen("OpacityRate:")); Start = SeaBoxConfig; RowParsedBits |= 0x0002; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0004))
+		    {
+              RowPtr = strstr(Start, "WLOffsetX:");
+		      if (RowPtr != NULL)
+		         { s_WLOffsetX = atof(RowPtr + strlen("WLOffsetX:")); Start = SeaBoxConfig; RowParsedBits |= 0x0004; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0008))
+		    {
+              RowPtr = strstr(Start, "WLOffsetY:");
+		      if (RowPtr != NULL)
+		         { s_WLOffsetY = atof(RowPtr + strlen("WLOffsetY:")); Start = SeaBoxConfig; RowParsedBits |= 0x0008; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0010))
+		    {
+              RowPtr = strstr(Start, "WLOffsetZ:");
+		      if (RowPtr != NULL)
+		         { s_WLOffsetZ = atof(RowPtr + strlen("WLOffsetZ:")); Start = SeaBoxConfig; RowParsedBits |= 0x0010; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0020))
+		    {
+              RowPtr = strstr(Start, "PatchSize:");
+		      if (RowPtr != NULL)
+		         { s_PatchSize = atof(RowPtr + strlen("PatchSize:")); Start = SeaBoxConfig; RowParsedBits |= 0x0020; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0040))
+		    {
+              RowPtr = strstr(Start, "PatchUVTiles:");
+		      if (RowPtr != NULL)
+		         { s_PatchUVTiles = atof(RowPtr + strlen("PatchUVTiles:")); Start = SeaBoxConfig; RowParsedBits |= 0x0040; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0080))
+		    {
+              RowPtr = strstr(Start, "PatchScalePU:");
+		      if (RowPtr != NULL)
+		         { s_PatchScale = atof(RowPtr + strlen("PatchScalePU:")) * MAP_XY_FACTOR; Start = SeaBoxConfig; RowParsedBits |= 0x0080; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0100))
+		    {
+              RowPtr = strstr(Start, "SkyPlaneExt:");
+		      if (RowPtr != NULL)
+		         {
+			       sscanf(RowPtr + strlen("SkyPlaneExt:"), "%f,%f", &s_SkyPlaneExtX, &s_SkyPlaneExtY);
+			       Start = SeaBoxConfig; RowParsedBits |= 0x0100; continue;
+			     }
+			}
+
+         if (!(RowParsedBits & 0x0200))
+		    {
+              RowPtr = strstr(Start, "WaterSCRate:");
+		      if (RowPtr != NULL)
+		         {
+			       sscanf(RowPtr + strlen("WaterSCRate:"), "%f,%f", &s_WaterSCRate[0], &s_WaterSCRate[1]);
+			       Start = SeaBoxConfig; RowParsedBits |= 0x0200; continue;
+			     }
+			}
+
+         if (!(RowParsedBits & 0x0400))
+		    {
+              RowPtr = strstr(Start, "D3DBlendMode:");
+		      if (RowPtr != NULL)
+		         {
+			       Int ModeI4 = atoi(RowPtr + strlen("D3DBlendMode:"));
+			       s_D3DSrcBlend = ModeI4 / 100; s_D3DDstBlend = ModeI4 % 100;
+			       Start = SeaBoxConfig; RowParsedBits |= 0x0400; continue;
+			     }
+			}
+
+         if (!(RowParsedBits & 0x0800))
+		    {
+              RowPtr = strstr(Start, "SubdivCellLV:");
+		      if (RowPtr != NULL)
+		         { s_SubdivCellLV = atoi(RowPtr + strlen("SubdivCellLV:")); Start = SeaBoxConfig; RowParsedBits |= 0x0800; continue; }
+			}
+
+         if (!(RowParsedBits & 0x1000))
+		    {
+              RowPtr = strstr(Start, "ShroudCover:");
+		      if (RowPtr != NULL)
+		         {
+			       sscanf(RowPtr + strlen("ShroudCover:"), "%f,%f", &s_ShroudCOX, &s_ShroudCOY);
+			       Start = SeaBoxConfig; RowParsedBits |= 0x1000; continue;
+			     }
+			}
+
+         if (!(RowParsedBits & 0x2000))
+		    {
+              RowPtr = strstr(Start, "SkyVCRate:");
+		      if (RowPtr != NULL)
+		         { s_SkyVCRate = atof(RowPtr + strlen("SkyVCRate:")); Start = SeaBoxConfig; RowParsedBits |= 0x2000; continue; }
+			}
+
+         if (!(RowParsedBits & 0x4000))
+		    {
+              RowPtr = strstr(Start, "WaterACRate:");
+		      if (RowPtr != NULL)
+		         { s_WaterACRate = atof(RowPtr + strlen("WaterACRate:")); Start = SeaBoxConfig; RowParsedBits |= 0x4000; continue; }
+			}
+
+	   }
+
+	//map.ini里WaterType只接受0/1/2/3（本项目未引入20号水枚举，写20或越界值视为无效，回退到GameData.ini设置）
+	if (m_waterType < WATER_TYPE_0_TRANSLUCENT || m_waterType >= WATER_TYPE_MAX)
+	   { m_waterType = (WaterType)TheWritableGlobalData->m_waterType; }
+
+	//如果当前使用的不是2号水（双层），则0号水的透明度比率强制置为1。仅在使用2号水时才优先使用配置的比率
+	if (m_waterType != WATER_TYPE_2_PVSHADER)
+	   { m_OpacityRate20 = 1.0; }
+
+	//0.48~0.52之间的透明度比率容易在激战交火时使0号水面的渲染透明度出现闪烁跳变，此处强行进行安全篡改
+	if (m_OpacityRate20 > 0.48 && m_OpacityRate20 < 0.5)
+	   { m_OpacityRate20 = 0.48f; }
+	else if (m_OpacityRate20 < 0.52 && m_OpacityRate20 > 0.5)
+	   { m_OpacityRate20 = 0.52f; }
+
+	s_PatchWidth = s_PatchSize - 1.0;
+	if (s_PatchWidth < 1.0)
+	   { s_PatchWidth = 1.0; }
+	s_PatchUVScale = s_PatchUVTiles / s_PatchWidth;
+
+	//均匀采样档位必须是2的整倍数，考虑到DX8最多只能支持16位索引，最大不能超过65535个，此处限制最多只能256级采样
+	if (s_SubdivCellLV > 256)
+	   { s_SubdivCellLV = 256; }
+	else if (s_SubdivCellLV > 128)
+	   { s_SubdivCellLV = 128; }
+	else if (s_SubdivCellLV > 64)
+	   { s_SubdivCellLV = 64; }
+	else
+	   { s_SubdivCellLV = 32; }
+}
+
+void WaterRenderObjClass::SetDefaultTriggerArgs(ST_ReflectRenderInfo &RRInf)
+{
+	RRInf.DrawMethod = (m_waterType == WATER_TYPE_0_TRANSLUCENT) ? REFDRAW_METHOD_XX : REFDRAW_METHOD_PMSMP;
+	RRInf.ForceDraw = false;
+	RRInf.WLOffsetX = s_WLOffsetX; RRInf.WLOffsetY = s_WLOffsetY; RRInf.WLOffsetZ = s_WLOffsetZ;
+	RRInf.PatchSize = s_PatchSize; RRInf.PatchUVTiles = s_PatchUVTiles; RRInf.PatchScale = s_PatchScale;
+	RRInf.PatchWidth = s_PatchWidth; RRInf.PatchUVScale = s_PatchUVScale;
+	RRInf.PMeshRateU = 1.0; RRInf.PMeshRateV = 1.0;
+	RRInf.D3DSrcBlend = s_D3DSrcBlend; RRInf.D3DDstBlend = s_D3DDstBlend;
+	RRInf.SubdivCellLV = s_SubdivCellLV;
+}
+
+void WaterRenderObjClass::ParseTriggerArgsFromMapINI(ST_ReflectRenderInfo &RRInf)
+{
+	char Section[128] = {0};
+	char INIBuf[10240] = {0};
+	Int SafeReadLen = (m_MapINIData.getLength() < 10240) ? m_MapINIData.getLength() : 10240;
+	strncpy(INIBuf, m_MapINIData.str(), SafeReadLen);
+	sprintf(Section, "MappedImage [%s]", RRInf.Name.str());
+
+	//读取之前先用顶层缺省值来填充所有专用参数
+	SetDefaultTriggerArgs(RRInf);
+
+	char *Start = strstr(INIBuf, Section);
+	if (Start == NULL)
+	   { return; }
+	Start += strlen(Section);
+    char *End = strstr(Start, "End");
+	if (End == NULL)
+	   { return; }
+	*End = 0;
+
+	//若map.ini里有相关的重定义，则尝试解析，解析之前先将所有参数都设置为缺省值，一旦部分参数有重定义值则会被单独替换
+	char *SeaBoxConfig = Start;
+	char *RowPtr = NULL;
+	UnsignedInt RowParsedBits = 0;
+	for (Int i=0; i<16; ++i)
+	   {
+         if (!(RowParsedBits & 0x0001))
+		    {
+              RowPtr = strstr(Start, "DrawMethod:");
+		      if (RowPtr != NULL)
+		         { RRInf.DrawMethod = (BYTE)atoi(RowPtr + strlen("DrawMethod:")); Start = SeaBoxConfig; RowParsedBits |= 0x0001; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0002))
+		    {
+              RowPtr = strstr(Start, "ForceDraw:");
+		      if (RowPtr != NULL)
+		         { RRInf.ForceDraw = (atoi(RowPtr + strlen("ForceDraw:")) != 0); Start = SeaBoxConfig; RowParsedBits |= 0x0002; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0004))
+		    {
+              RowPtr = strstr(Start, "WLOffsetX:");
+		      if (RowPtr != NULL)
+		         { RRInf.WLOffsetX = atof(RowPtr + strlen("WLOffsetX:")); Start = SeaBoxConfig; RowParsedBits |= 0x0004; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0008))
+		    {
+              RowPtr = strstr(Start, "WLOffsetY:");
+		      if (RowPtr != NULL)
+		         { RRInf.WLOffsetY = atof(RowPtr + strlen("WLOffsetY:")); Start = SeaBoxConfig; RowParsedBits |= 0x0008; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0010))
+		    {
+              RowPtr = strstr(Start, "WLOffsetZ:");
+		      if (RowPtr != NULL)
+		         { RRInf.WLOffsetZ = atof(RowPtr + strlen("WLOffsetZ:")); Start = SeaBoxConfig; RowParsedBits |= 0x0010; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0020))
+		    {
+              RowPtr = strstr(Start, "PatchSize:");
+		      if (RowPtr != NULL)
+		         { RRInf.PatchSize = atof(RowPtr + strlen("PatchSize:")); Start = SeaBoxConfig; RowParsedBits |= 0x0020; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0040))
+		    {
+              RowPtr = strstr(Start, "PatchUVTiles:");
+		      if (RowPtr != NULL)
+		         { RRInf.PatchUVTiles = atof(RowPtr + strlen("PatchUVTiles:")); Start = SeaBoxConfig; RowParsedBits |= 0x0040; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0080))
+		    {
+              RowPtr = strstr(Start, "PatchScalePU:");
+		      if (RowPtr != NULL)
+		         { RRInf.PatchScale = atof(RowPtr + strlen("PatchScalePU:")) * MAP_XY_FACTOR; Start = SeaBoxConfig; RowParsedBits |= 0x0080; continue; }
+			}
+
+         if (!(RowParsedBits & 0x0100))
+		    {
+              RowPtr = strstr(Start, "PMeshRateUV:");
+		      if (RowPtr != NULL)
+		         {
+			       sscanf(RowPtr + strlen("PMeshRateUV:"), "%f,%f", &RRInf.PMeshRateU, &RRInf.PMeshRateV);
+			       Start = SeaBoxConfig; RowParsedBits |= 0x0100; continue;
+			     }
+			}
+
+         if (!(RowParsedBits & 0x0400))
+		    {
+              RowPtr = strstr(Start, "D3DBlendMode:");
+		      if (RowPtr != NULL)
+		         {
+			       Int ModeI4 = atoi(RowPtr + strlen("D3DBlendMode:"));
+			       RRInf.D3DSrcBlend = ModeI4 / 100; RRInf.D3DDstBlend = ModeI4 % 100;
+			       Start = SeaBoxConfig; RowParsedBits |= 0x0400; continue;
+			     }
+			}
+
+         if (!(RowParsedBits & 0x0800))
+		    {
+              RowPtr = strstr(Start, "SubdivCell:");
+		      if (RowPtr != NULL)
+		         { RRInf.SubdivCellLV = atoi(RowPtr + strlen("SubdivCell:")); Start = SeaBoxConfig; RowParsedBits |= 0x0800; continue; }
+			}
+	   }
+
+	RRInf.PatchWidth = RRInf.PatchSize - 1.0;
+	if (RRInf.PatchWidth < 1.0)
+	   { RRInf.PatchWidth = 1.0; }
+	RRInf.PatchUVScale = RRInf.PatchUVTiles / RRInf.PatchWidth;
+
+	//均匀采样档位必须是2的整倍数，考虑到DX8最多只能支持16位索引，最大不能超过65535个，此处限制最多只能256级采样
+	if (RRInf.SubdivCellLV > 256)
+	   { RRInf.SubdivCellLV = 256; }
+	else if (RRInf.SubdivCellLV > 128)
+	   { RRInf.SubdivCellLV = 128; }
+	else if (RRInf.SubdivCellLV > 64)
+	   { RRInf.SubdivCellLV = 64; }
+	else
+	   { RRInf.SubdivCellLV = 32; }
+}
+
+void WaterRenderObjClass::ParseAllWaterTrigger(void)
+{
+	Int TotalRRInf = m_ReflectRenderVec.size();
+	for (Int i=0; i<TotalRRInf; ++i)
+	   { m_ReflectRenderVec[i].Release(); }
+	m_ReflectRenderVec.clear();
+
+	ST_ReflectRenderInfo RRInf;
+	for (PolygonTrigger *pTrig=PolygonTrigger::getFirstPolygonTrigger(); pTrig; pTrig = pTrig->getNext())
+	   {
+		 //有效的水域必须被标注为isWaterArea=true、且至少有3个顶点构成一个触发区
+		 if (pTrig->isWaterArea() != true || pTrig->getNumPoints() <= 2)
+            { continue; }
+
+	     RRInf.Release();
+	     RRInf.PolygonTriggerTo(pTrig);
+		 ParseTriggerArgsFromMapINI(RRInf);
+		 RRInf.SeaBoxOffset();
+		 m_ReflectRenderVec.push_back(RRInf);
+	   }
+
+	WaterDiagI("PARSEALLWATERTRIGGER: captured water trigger count", (int)m_ReflectRenderVec.size());
+}
+
 void WaterRenderObjClass::load(void)
 {
 	if (m_waterTrackSystem)
 		m_waterTrackSystem->loadTracks();
+
+	//从地图map.ini中读取倒影承载面的重定义参数，可改变当前地图的倒影渲染效果 (ported from download 20260530)
+	ParseSeaBoxArgsFromMapINI();
+	ParseAllWaterTrigger();
+
+	//计算当前地图的天空倒影漫反射色彩值，等于Water.ini里对应时段配置中的VertexColor * s_SkyVCRate。调节s_SkyVCRate可改变天空倒影的亮度
+	Setting *SkySetting = &m_settings[m_tod];
+	BYTE VettexARGB[4] = {0};
+	for (BYTE i=0; i<4; ++i)
+	   { VettexARGB[i] = ((SkySetting->vertex00Diffuse >> 8*(3-i)) & 0xFF) * s_SkyVCRate; }
+	s_SkyDiffuse = VettexARGB[0] << 24 | VettexARGB[1] << 16 | VettexARGB[2] << 8 | VettexARGB[3];
+
+	//保存当前地图的尺寸信息，随后用于绘制边界挡水框
+	WorldHeightMap *WHMap = TheTerrainRenderObject->getMap();
+	if (WHMap)
+	   {
+		 m_dx = (WHMap->getXExtent() + WHMap->getBorderSizeInline() * 2 + s_SkyPlaneExtX) * MAP_XY_FACTOR;
+		 m_dy = (WHMap->getYExtent() + WHMap->getBorderSizeInline() * 2 + s_SkyPlaneExtY) * MAP_XY_FACTOR;
+
+	     s_MapVSX = (WHMap->getXExtent() - WHMap->getBorderSizeInline() * 2) * MAP_XY_FACTOR;
+	     s_MapVSY = (WHMap->getYExtent() - WHMap->getBorderSizeInline() * 2) * MAP_XY_FACTOR;
+	     s_MapVSB = WHMap->getBorderSizeInline() * MAP_XY_FACTOR * 1.5;		//边界尺寸要扩大50%，确保尽可能在常规视角下将边界外的倒影完全遮挡完
+
+		 //战争迷雾倒影遮罩的绘制尺寸必须和W3DShroud里战争迷雾网格分割算法保持一致
+		 //W3DShroud限制网格贴图的边长必须是2的幂次，此处也要如此计算，否则后面在RenderShroudCover时，贴图UV和实际网格尺寸就对不齐
+         UnsignedInt NumCellsX = REAL_TO_INT_CEIL((Real)(WHMap->getXExtent() - 1 - WHMap->getBorderSizeInline()*2)*MAP_XY_FACTOR / TheGlobalData->m_partitionCellSize);
+         UnsignedInt NumCellsY = REAL_TO_INT_CEIL((Real)(WHMap->getYExtent() - 1 - WHMap->getBorderSizeInline()*2)*MAP_XY_FACTOR / TheGlobalData->m_partitionCellSize);
+         UnsignedInt Depth = 1;
+		 NumCellsX += 2;
+         NumCellsY += 2;
+         TextureLoader::Validate_Texture_Size(NumCellsX, NumCellsY, Depth);
+		 s_ShroudVSX = NumCellsX * TheGlobalData->m_partitionCellSize;
+		 s_ShroudVSY = NumCellsY * TheGlobalData->m_partitionCellSize;
+	   }
+
+	//遍历当前地图所有水域，找到水面高度最高的那一个，记录为当前地图的挡水框高度
+	Int TotalRRInf = m_ReflectRenderVec.size();
+	Real CrtWaterLevel = 1e-8f;
+	for (Int ri=0; ri<TotalRRInf; ++ri)
+	   {
+	     if (CrtWaterLevel < m_ReflectRenderVec[ri].Level)
+		    { CrtWaterLevel = m_ReflectRenderVec[ri].Level; }
+	   }
+    s_MapBWLevel = CrtWaterLevel + 0.2f;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1269,6 +2297,10 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 
 	m_parentScene=parentScene;
 	m_waterType = type;
+
+	//2号水（双层）缺省将0号水基底透明度减半，避免遮挡倒影 (ported from download 20260530)
+	m_OpacityRate20 = (m_waterType == WATER_TYPE_2_PVSHADER) ? 0.52 : 1.0;
+	m_PreMapName.clear();
 
 	/// Hack for now
 	//m_waterType = WATER_TYPE_0_TRANSLUCENT;
@@ -1458,6 +2490,9 @@ void WaterRenderObjClass::reset( void )
 
 	if (m_waterTrackSystem)
 		m_waterTrackSystem->reset();
+
+	//重新开局/读档后清空上一局的地图名缓存，强制重新读取map.ini (ported from download 20260530)
+	ResetPreMapMane();
 } 
 
 void WaterRenderObjClass::enableWaterGrid(Bool state)
@@ -1713,6 +2748,51 @@ void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 		return;
 	}
 
+	// ---- 逐水域独立反射主路径 (ported from download 20260530) ----
+	// 有水域触发器时优先走逐水域独立反射；无触发器时退回按高度反射（下方原有逻辑）
+	// 开场动画/菜单等非游戏场景不执行逐水域烘焙（避免内存损坏崩溃），退回安全的高度兜底
+	if (m_ReflectRenderVec.size() > 0 && TheGameLogic && TheGameLogic->isInGame())
+	{
+		{
+			static Bool diagOnce = FALSE;
+			if (!diagOnce) { diagOnce = TRUE; WaterDiagI("UPDATERTT: PER-TRIGGER path entered, vec size", (int)m_ReflectRenderVec.size()); }
+		}
+		// 心跳诊断：每秒记录一次逐水域路径活动（定位开场/菜单崩溃用）
+		{
+			static DWORD lastDiagTime = 0;
+			DWORD now = timeGetTime();
+			if (now - lastDiagTime > 1000) { lastDiagTime = now; WaterDiagI("UPDATERTT: per-trigger heartbeat, vec", (int)m_ReflectRenderVec.size()); }
+		}
+		//获取当前摄像机视野范围的四边形
+		std::vector<Vector2> CamViewPoly;
+		GetCameraViewPoly(CamViewPoly);
+
+		Int TotalRRInf = m_ReflectRenderVec.size();
+		for (Int i=0; i<TotalRRInf; ++i)
+		{
+			//依次判断每个水域的倒影是否需要渲染
+			//强制渲染未开启，需要检测水域多边形与摄像机视野四边形有重叠，有重叠才需要渲染
+			//强制渲染已开启，无需检测，直接判定为需要渲染
+			if (m_ReflectRenderVec[i].ForceDraw == false)
+			   { m_ReflectRenderVec[i].NeedToDraw = CanThisWaterTriggerBeSee(m_ReflectRenderVec[i], CamViewPoly); }
+			else
+			   { m_ReflectRenderVec[i].NeedToDraw = true; }
+
+			if (m_ReflectRenderVec[i].ReflectTex == NULL)
+			   { m_ReflectRenderVec[i].CreateRenderTarget(m_reflectionSize); }
+
+			//注：下载版此处误写成两次检查VertexBufferD3D，这里修正为同时检查顶点与索引缓冲
+			if (m_ReflectRenderVec[i].VertexBufferD3D == NULL || m_ReflectRenderVec[i].IndexBufferD3D == NULL)
+			   { GeneratePolyMesh(m_ReflectRenderVec[i]); }
+
+			//若需要渲染则为此水域烘焙倒影贴图
+			if (m_ReflectRenderVec[i].NeedToDraw == true)
+			   { renderMirror(cam, m_ReflectRenderVec[i]); }
+		}
+		return;
+	}
+
+	// ---- 按高度反射兜底（原有逻辑） ----
 	// Collect unique water heights from all Type 0 water polygon triggers
 	Real uniqueHeights[MAX_WATER_HEIGHT_LEVELS];
 	Int numUniqueHeights = 0;
@@ -1849,10 +2929,27 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, Real waterHeight, Textu
 
 	ShaderClass::Invert_Backface_Culling(true);
 
+	//裁剪掉水面以下的物体产生的反向倒影，使水面成为单面镜 (ported from download 20260530)
+	D3DXPLANE ClipPlane(0.0f, 0.0f, 1.0f, -waterHeight);
+	m_pDev->SetClipPlane(0, (float*)&ClipPlane);
+	m_pDev->SetRenderState(D3DRS_CLIPPLANEENABLE , D3DCLIPPLANE0);
+
 	renderSky();
 	WaterDiag("CP8_RENDERMIRROR: renderSky done");
 	if (m_tod == TIME_OF_DAY_NIGHT)
 		renderSkyBody(&reflectedTransform);
+
+	//渲染一个地图边界挡水框 + 战争迷雾倒影遮罩，遮挡超出地图边界的天空倒影 (ported from download 20260530)
+	if (s_SkyDiffuse & 0x00FFFFFF)
+	{
+		RenderMapBorderCoverL();
+		RenderMapBorderCoverR();
+		RenderMapBorderCoverT();
+		RenderMapBorderCoverB();
+
+		if (TheMultiplayerSettings->isShroudInMultiplayer())
+		{ RenderShroudCover(); }
+	}
 
 	WaterDiag("CP8_RENDERMIRROR: calling WW3D::Render on parentScene");
 	WW3D::Render(m_parentScene,cam);
@@ -1862,6 +2959,9 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, Real waterHeight, Textu
 	cam->Set_Viewport(vOldMin,vOldMax);
 
 	cam->Apply();
+
+	//裁剪完之后务必记得关掉裁剪
+	m_pDev->SetRenderState(D3DRS_CLIPPLANEENABLE , 0);
 
 	ShaderClass::Invert_Backface_Culling(false);
 
@@ -1907,6 +3007,448 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, Real waterHeight, Textu
 	*   texture and rendered at end of scene. */
 //-------------------------------------------------------------------------------------------------
 //DECLARE_PERF_TIMER(Water)
+// ------------------------------------------------------------------
+// 逐水域独立反射系统：单水域反射烘焙 (ported from download 20260530)
+// ------------------------------------------------------------------
+void WaterRenderObjClass::renderMirror(CameraClass *cam, ST_ReflectRenderInfo &RRInf)
+{
+#ifdef EXTENDED_STATS
+	if (DX8Wrapper::stats.m_disableWater) {
+		return;
+	}
+#endif
+	{
+		static Bool diagOnce = FALSE;
+		if (!diagOnce) { diagOnce = TRUE; WaterDiag("RENDERMIRROR_RRINF: entered"); }
+	}
+	//防御：反射贴图/父场景无效时直接返回，避免NULL解引用
+	if (RRInf.ReflectTex == NULL || m_parentScene == NULL)
+	{
+		WaterDiag("RENDERMIRROR_RRINF: ReflectTex or m_parentScene NULL, skip");
+		return;
+	}
+
+	// Phase F: Device lost handling — silently exit if device is lost
+	{
+		IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+		if (dev) {
+			HRESULT hr = dev->TestCooperativeLevel();
+			if (FAILED(hr)) {
+				if (hr == D3DERR_DEVICELOST)
+					return;
+			}
+		}
+	}
+
+	Matrix3D	OldCameraMatrix=cam->Get_Transform();
+	Matrix4x4	FullMatrix4(cam->Get_Transform());	//copy 3x4 matrix into a 4x4
+	Vector3		WaterNormal(0,0,1);	//normal of plane used for reflection
+	Vector4		WaterPlane(WaterNormal.X, WaterNormal.Y, WaterNormal.Z, RRInf.Level);
+	Vector3		rRight,rUp,rN,rPos;	//orientation and translation vectors of camera
+
+	Matrix4x4	FullMatrix(FullMatrix4.Transpose());	//swap rows/columns
+
+	//reflect camera right vector
+	Real axis_distance=Vector3::Dot_Product((Vector3&)FullMatrix[0],WaterNormal);
+	rRight = (Vector3&)FullMatrix[0] - (2.0f*axis_distance*WaterNormal);
+
+	//reflect camera up vector
+	axis_distance=Vector3::Dot_Product((Vector3&)FullMatrix[1],WaterNormal);
+	rUp = (Vector3&)FullMatrix[1] - (2.0f*axis_distance*WaterNormal);
+
+	//reflect camera n vector
+	axis_distance=Vector3::Dot_Product((Vector3&)FullMatrix[2],WaterNormal);
+	rN = (Vector3&)FullMatrix[2] - (2.0f*axis_distance*WaterNormal);
+
+	//reflect camera position
+	axis_distance=Vector3::Dot_Product((Vector3&)FullMatrix[3],WaterNormal);	//distance cam to origin
+	axis_distance -= WaterPlane.W;	// subtract mirror plane distance to get distance camera to plane
+	rPos = (Vector3&)FullMatrix[3] - (2.0f*axis_distance*WaterNormal);
+
+	//generate a new camera matrix from reflected vectors
+	Matrix3D reflectedTransform(rRight,rUp,rN,rPos);
+
+	//如果当前地图存在雨雪天气特效，此处务必临时将其隐藏，避免将其烘焙进倒影
+	Bool SnowVisible = false;
+	if (TheSnowManager)
+	{
+		SnowVisible = ((SnowManager *)TheSnowManager)->isVisible();
+		((SnowManager *)TheSnowManager)->setVisible(false);
+	}
+
+	DX8Wrapper::Set_Render_Target_With_Z((TextureClass*)RRInf.ReflectTex);
+
+	// Clear the backbuffer
+	WW3D::Begin_Render(false,true,Vector3(0.0f,0.0f,0.0f));	//clearing only z-buffer since background always filled with clouds
+
+	cam->Set_Transform( reflectedTransform );
+
+	//Force reflected image to be drawn into full texture size - not a viewport inside texture.
+	Vector2 vMin,vMax,vOldMax,vOldMin;
+ 	cam->Get_Viewport(vOldMin,vOldMax);
+ 	vMax.X=vMax.Y=1.0f;
+	vMin.X=vMin.Y=0.0f;
+ 	cam->Set_Viewport(vMin,vMax);
+
+	cam->Apply();	//force an update of all the camera dependent parameters like frustum clip planes
+
+	//flip the winding order of polygons to draw the reflected back sides.
+	ShaderClass::Invert_Backface_Culling(true);
+
+	//裁剪掉水面以下的物体产生的反向倒影，使水面成为单面镜 (ported from download 20260530)
+	D3DXPLANE ClipPlane(0.0f, 0.0f, 1.0f, -RRInf.Level);
+	m_pDev->SetClipPlane(0, (float*)&ClipPlane);
+	m_pDev->SetRenderState(D3DRS_CLIPPLANEENABLE , D3DCLIPPLANE0);
+
+	// Render the scene
+	renderSky();
+	if (m_tod == TIME_OF_DAY_NIGHT)
+		renderSkyBody(&reflectedTransform);
+
+	//渲染一个地图边界挡水框 + 战争迷雾倒影遮罩，遮挡超出地图边界的天空倒影 (ported from download 20260530)
+	if (s_SkyDiffuse & 0x00FFFFFF)
+	{
+		RenderMapBorderCoverL();
+		RenderMapBorderCoverR();
+		RenderMapBorderCoverT();
+		RenderMapBorderCoverB();
+
+		if (TheMultiplayerSettings->isShroudInMultiplayer())
+		{ RenderShroudCover(); }
+	}
+
+	WW3D::Render(m_parentScene,cam);
+
+	cam->Set_Transform(OldCameraMatrix);	//restore original non-reflected matrix
+ 	cam->Set_Viewport(vOldMin,vOldMax);
+
+	cam->Apply();	//force an update of all the camera dependent parameters like frustum clip planes
+
+	//裁剪完之后务必记得关掉裁剪
+	m_pDev->SetRenderState(D3DRS_CLIPPLANEENABLE , 0);
+
+	//恢复雨雪特效的原本状态
+	if (TheSnowManager && SnowVisible == true)
+	{
+		((SnowManager *)TheSnowManager)->setVisible(true);
+	}
+
+	ShaderClass::Invert_Backface_Culling(false);
+
+	WW3D::End_Render(false);
+
+	// Change the rendertarget back to the main backbuffer
+	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+
+	// Clean up D3D states leaked from reflected scene render
+	m_pDev->SetRenderState(D3DRS_POINTSPRITEENABLE, FALSE);
+	m_pDev->SetRenderState(D3DRS_POINTSCALEENABLE, FALSE);
+	m_pDev->SetPixelShader(NULL);
+	m_pDev->SetVertexShader(NULL);
+	m_pDev->SetVertexDeclaration(NULL);
+	m_pDev->SetFVF(DX8_FVF_XYZDUV1);
+	m_pDev->SetStreamSource(0, NULL, 0, 0);
+	m_pDev->SetTexture(0, NULL);
+	m_pDev->SetTexture(1, NULL);
+	m_pDev->SetTexture(2, NULL);
+	m_pDev->SetTexture(3, NULL);
+	m_pDev->SetTexture(4, NULL);
+	m_pDev->SetTexture(5, NULL);
+	DX8Wrapper::Invalidate_Cached_Render_States();
+}
+
+// ------------------------------------------------------------------
+// 逐水域独立反射系统：地图边界挡水框 + 战争迷雾倒影遮罩 (ported from download 20260530)
+// ------------------------------------------------------------------
+void WaterRenderObjClass::RenderMapBorderCoverL(void)
+{
+	VertexMaterialClass *vmat = VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
+	DX8Wrapper::Set_Material(vmat);
+	REF_PTR_RELEASE(vmat);
+
+	ShaderClass m_shader2=ShaderClass::_PresetOpaqueShader;
+	m_shader2.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);
+	m_shader2.Set_Depth_Compare(ShaderClass::PASS_ALWAYS);
+	m_shader2.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);
+	DX8Wrapper::Set_Shader(m_shader2);
+
+	DynamicVBAccessClass vb_access(BUFFER_TYPE_DYNAMIC_DX8, dynamic_fvf_type, 4);
+	{
+		DynamicVBAccessClass::WriteLockClass lock(&vb_access);
+		VertexFormatXYZNDUV2* verts = lock.Get_Formatted_Vertex_Array();
+		if(verts)
+		{
+			verts[0].x =  -s_MapVSB;
+			verts[0].y =  -s_MapVSB;
+			verts[0].z =  s_MapBWLevel;
+			verts[0].u1 = 0;
+			verts[0].v1 = 0;
+			verts[0].diffuse = 0xFF000000;
+
+			verts[1].x =  0;
+			verts[1].y =  -s_MapVSB;
+			verts[1].z =  s_MapBWLevel;
+			verts[1].u1 = 1;
+			verts[1].v1 = 0;
+			verts[1].diffuse = 0xFF000000;
+
+			verts[2].x =  0;
+			verts[2].y =  s_MapVSX + s_MapVSB;
+			verts[2].z =  s_MapBWLevel;
+			verts[2].u1 = 1;
+			verts[2].v1 = 1;
+			verts[2].diffuse = 0xFF000000;
+
+			verts[3].x =  -s_MapVSB;
+			verts[3].y =  s_MapVSY + s_MapVSB;
+			verts[3].z =  s_MapBWLevel;
+			verts[3].u1 = 0;
+			verts[3].v1 = 1;
+			verts[3].diffuse = 0xFF000000;
+		}
+	}
+
+	DX8Wrapper::Set_Index_Buffer(m_indexBuffer, 0);
+	DX8Wrapper::Set_Vertex_Buffer(vb_access);
+
+	Matrix3D tm(1);
+	tm.Set_Translation(Vector3(0, 0, 0));
+	DX8Wrapper::Set_Transform(D3DTS_WORLD, tm);
+	DX8Wrapper::Draw_Triangles(0, 2, 0, 4);
+}
+
+void WaterRenderObjClass::RenderMapBorderCoverR(void)
+{
+	VertexMaterialClass *vmat = VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
+	DX8Wrapper::Set_Material(vmat);
+	REF_PTR_RELEASE(vmat);
+
+	ShaderClass m_shader2=ShaderClass::_PresetOpaqueShader;
+	m_shader2.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);
+	m_shader2.Set_Depth_Compare(ShaderClass::PASS_ALWAYS);
+	m_shader2.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);
+	DX8Wrapper::Set_Shader(m_shader2);
+
+	DynamicVBAccessClass vb_access(BUFFER_TYPE_DYNAMIC_DX8, dynamic_fvf_type, 4);
+	{
+		DynamicVBAccessClass::WriteLockClass lock(&vb_access);
+		VertexFormatXYZNDUV2* verts = lock.Get_Formatted_Vertex_Array();
+		if(verts)
+		{
+			verts[0].x =  s_MapVSX;
+			verts[0].y =  -s_MapVSB;
+			verts[0].z =  s_MapBWLevel;
+			verts[0].u1 = 0;
+			verts[0].v1 = 0;
+			verts[0].diffuse = 0xFF000000;
+
+			verts[1].x =  s_MapVSX + s_MapVSB;
+			verts[1].y =  -s_MapVSB;
+			verts[1].z =  s_MapBWLevel;
+			verts[1].u1 = 1;
+			verts[1].v1 = 0;
+			verts[1].diffuse = 0xFF000000;
+
+			verts[2].x =  s_MapVSX + s_MapVSB;
+			verts[2].y =  s_MapVSY + s_MapVSB;
+			verts[2].z =  s_MapBWLevel;
+			verts[2].u1 = 1;
+			verts[2].v1 = 1;
+			verts[2].diffuse = 0xFF000000;
+
+			verts[3].x =  s_MapVSX;
+			verts[3].y =  s_MapVSY + s_MapVSB;
+			verts[3].z =  s_MapBWLevel;
+			verts[3].u1 = 0;
+			verts[3].v1 = 1;
+			verts[3].diffuse = 0xFF000000;
+		}
+	}
+
+	DX8Wrapper::Set_Index_Buffer(m_indexBuffer, 0);
+	DX8Wrapper::Set_Vertex_Buffer(vb_access);
+
+	Matrix3D tm(1);
+	tm.Set_Translation(Vector3(0, 0, 0));
+	DX8Wrapper::Set_Transform(D3DTS_WORLD, tm);
+	DX8Wrapper::Draw_Triangles(0, 2, 0, 4);
+}
+
+void WaterRenderObjClass::RenderMapBorderCoverT(void)
+{
+	VertexMaterialClass *vmat = VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
+	DX8Wrapper::Set_Material(vmat);
+	REF_PTR_RELEASE(vmat);
+
+	ShaderClass m_shader2=ShaderClass::_PresetOpaqueShader;
+	m_shader2.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);
+	m_shader2.Set_Depth_Compare(ShaderClass::PASS_ALWAYS);
+	m_shader2.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);
+	DX8Wrapper::Set_Shader(m_shader2);
+
+	DynamicVBAccessClass vb_access(BUFFER_TYPE_DYNAMIC_DX8, dynamic_fvf_type, 4);
+	{
+		DynamicVBAccessClass::WriteLockClass lock(&vb_access);
+		VertexFormatXYZNDUV2* verts = lock.Get_Formatted_Vertex_Array();
+		if(verts)
+		{
+			verts[0].x =  -s_MapVSB;
+			verts[0].y =  s_MapVSY;
+			verts[0].z =  s_MapBWLevel;
+			verts[0].u1 = 0;
+			verts[0].v1 = 0;
+			verts[0].diffuse = 0xFF000000;
+
+			verts[1].x =  s_MapVSX + s_MapVSB;
+			verts[1].y =  s_MapVSY;
+			verts[1].z =  s_MapBWLevel;
+			verts[1].u1 = 1;
+			verts[1].v1 = 0;
+			verts[1].diffuse = 0xFF000000;
+
+			verts[2].x =  s_MapVSX + s_MapVSB;
+			verts[2].y =  s_MapVSY + s_MapVSB;
+			verts[2].z =  s_MapBWLevel;
+			verts[2].u1 = 1;
+			verts[2].v1 = 1;
+			verts[2].diffuse = 0xFF000000;
+
+			verts[3].x =  -s_MapVSB;
+			verts[3].y =  s_MapVSY + s_MapVSB;
+			verts[3].z =  s_MapBWLevel;
+			verts[3].u1 = 0;
+			verts[3].v1 = 1;
+			verts[3].diffuse = 0xFF000000;
+		}
+	}
+
+	DX8Wrapper::Set_Index_Buffer(m_indexBuffer, 0);
+	DX8Wrapper::Set_Vertex_Buffer(vb_access);
+
+	Matrix3D tm(1);
+	tm.Set_Translation(Vector3(0, 0, 0));
+	DX8Wrapper::Set_Transform(D3DTS_WORLD, tm);
+	DX8Wrapper::Draw_Triangles(0, 2, 0, 4);
+}
+
+void WaterRenderObjClass::RenderMapBorderCoverB(void)
+{
+	VertexMaterialClass *vmat = VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
+	DX8Wrapper::Set_Material(vmat);
+	REF_PTR_RELEASE(vmat);
+
+	ShaderClass m_shader2=ShaderClass::_PresetOpaqueShader;
+	m_shader2.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);
+	m_shader2.Set_Depth_Compare(ShaderClass::PASS_ALWAYS);
+	m_shader2.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);
+	DX8Wrapper::Set_Shader(m_shader2);
+
+	DynamicVBAccessClass vb_access(BUFFER_TYPE_DYNAMIC_DX8, dynamic_fvf_type, 4);
+	{
+		DynamicVBAccessClass::WriteLockClass lock(&vb_access);
+		VertexFormatXYZNDUV2* verts = lock.Get_Formatted_Vertex_Array();
+		if(verts)
+		{
+			verts[0].x =  -s_MapVSB;
+			verts[0].y =  -s_MapVSB;
+			verts[0].z =  s_MapBWLevel;
+			verts[0].u1 = 0;
+			verts[0].v1 = 0;
+			verts[0].diffuse = 0xFF000000;
+
+			verts[1].x =  s_MapVSX + s_MapVSB;
+			verts[1].y =  -s_MapVSB;
+			verts[1].z =  s_MapBWLevel;
+			verts[1].u1 = 1;
+			verts[1].v1 = 0;
+			verts[1].diffuse = 0xFF000000;
+
+			verts[2].x =  s_MapVSX + s_MapVSB;
+			verts[2].y =  0;
+			verts[2].z =  s_MapBWLevel;
+			verts[2].u1 = 1;
+			verts[2].v1 = 1;
+			verts[2].diffuse = 0xFF000000;
+
+			verts[3].x =  -s_MapVSB;
+			verts[3].y =  0;
+			verts[3].z =  s_MapBWLevel;
+			verts[3].u1 = 0;
+			verts[3].v1 = 1;
+			verts[3].diffuse = 0xFF000000;
+		}
+	}
+
+	DX8Wrapper::Set_Index_Buffer(m_indexBuffer, 0);
+	DX8Wrapper::Set_Vertex_Buffer(vb_access);
+
+	Matrix3D tm(1);
+	tm.Set_Translation(Vector3(0, 0, 0));
+	DX8Wrapper::Set_Transform(D3DTS_WORLD, tm);
+	DX8Wrapper::Draw_Triangles(0, 2, 0, 4);
+}
+
+void WaterRenderObjClass::RenderShroudCover(void)
+{
+	if (TheTerrainRenderObject->getShroud() == NULL)
+	{ return; }
+
+	VertexMaterialClass *vmat = VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
+	DX8Wrapper::Set_Material(vmat);
+	REF_PTR_RELEASE(vmat);
+
+	ShaderClass m_shader2=ShaderClass::_PresetMultiplicativeShader;
+	m_shader2.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);
+	m_shader2.Set_Depth_Compare(ShaderClass::PASS_ALWAYS);
+	m_shader2.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);
+	DX8Wrapper::Set_Shader(m_shader2);
+	DX8Wrapper::Set_Texture(0, TheTerrainRenderObject->getShroud()->getShroudTexture());
+
+	DynamicVBAccessClass vb_access(BUFFER_TYPE_DYNAMIC_DX8, dynamic_fvf_type, 4);
+	{
+		DynamicVBAccessClass::WriteLockClass lock(&vb_access);
+		VertexFormatXYZNDUV2* verts = lock.Get_Formatted_Vertex_Array();
+		if(verts)
+		{
+			verts[0].x =  0;
+			verts[0].y =  0;
+			verts[0].z =  s_MapBWLevel;
+			verts[0].u1 = 0;
+			verts[0].v1 = 0;
+			verts[0].diffuse = 0xFFFFFFFF;
+
+			verts[1].x =  s_ShroudVSX + s_ShroudCOX;
+			verts[1].y =  0;
+			verts[1].z =  s_MapBWLevel;
+			verts[1].u1 = 1;
+			verts[1].v1 = 0;
+			verts[1].diffuse = 0xFFFFFFFF;
+
+			verts[2].x =  s_ShroudVSX + s_ShroudCOX;
+			verts[2].y =  s_ShroudVSY + s_ShroudCOY;
+			verts[2].z =  s_MapBWLevel;
+			verts[2].u1 = 1;
+			verts[2].v1 = 1;
+			verts[2].diffuse = 0xFFFFFFFF;
+
+			verts[3].x =  0;
+			verts[3].y =  s_ShroudVSY + s_ShroudCOY;
+			verts[3].z =  s_MapBWLevel;
+			verts[3].u1 = 0;
+			verts[3].v1 = 1;
+			verts[3].diffuse = 0xFFFFFFFF;
+		}
+	}
+
+	DX8Wrapper::Set_Index_Buffer(m_indexBuffer, 0);
+	DX8Wrapper::Set_Vertex_Buffer(vb_access);
+
+	Matrix3D tm(1);
+	tm.Set_Translation(Vector3(0, 0, 0));
+	DX8Wrapper::Set_Transform(D3DTS_WORLD, tm);
+	DX8Wrapper::Draw_Triangles(0, 2, 0, 4);
+}
+
 void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 {
 	//USE_PERF_TIMER(Water)
@@ -1958,8 +3500,9 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 			break;
 
 		case WATER_TYPE_2_PVSHADER:
-			//Pixel/Vertex Shader based water which uses an off-screen rendered reflection texture
-			drawSea(rinfo);	//draw water surface
+			//双层水：半透明基底(renderWater) + PV倒影(drawSea)。20号水行为并入2号 (ported from download 20260530)
+			drawSea(rinfo);	//draw water surface (reflection patches)
+			renderWater();	//draw translucent base (0号水基底)
 			if (!m_drawingRiver || m_disableRiver) {
 				renderWaterMesh();	//Draw water surface as 3D deforming mesh if it's enabled on this map.
 			}
@@ -2207,8 +3750,346 @@ TextureClass *WaterRenderObjClass::findReflectionTextureForHeight(Real height) c
 /** Draws the water surface using a custom D3D vertex/pixel shader and a
 	* reflection texture.  Only tested to work on GeForce3. */
 //-------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------
+// 逐水域独立反射系统：逐水域倒影绘制 (PBR水面shader接入, ported from download 20260530)
+// ------------------------------------------------------------------
+void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
+{
+	//资源校验：着色器不存在时逐水域反射无法渲染，直接返回（与drawSea按高度兜底路径一致）
+	if (m_dwWaveVertexShader == NULL || (m_dwWavePixelShader == NULL && m_waveShaderNoBump == NULL))
+	{ return; }
+
+	D3DXMATRIX matProj, matView, matWW3D;
+
+	//create a transform which will flip the y and z coordinates to fit our system
+	memset(&matWW3D,0,sizeof(D3DMATRIX));
+	matWW3D._11=1.0f;
+	matWW3D._32=1.0f;
+	matWW3D._23=1.0f;
+	matWW3D._44=1.0f;
+
+	Matrix3D tm(Transform);
+
+	DX8Wrapper::Set_Transform(D3DTS_WORLD,tm);	//position the water surface
+	DX8Wrapper::Set_Texture(0,NULL);	//we'll be setting our own textures, so reset W3D
+	DX8Wrapper::Set_Texture(1,NULL);	//we'll be setting our own textures, so reset W3D
+
+	DX8Wrapper::Apply_Render_State_Changes();	//force update of view and projection matrices
+
+	Vector3 camTran;
+	rinfo.Camera.Get_Transform().Get_Translation(&camTran);
+
+	DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, *(Matrix4x4*)&matView);
+	DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, *(Matrix4x4*)&matProj);
+
+	//default setup from Kenny's demo
+	m_pDev->SetTextureStageState( 0, D3DTSS_COLORARG1, D3DTA_TEXTURE );
+	m_pDev->SetTextureStageState( 0, D3DTSS_COLORARG2, D3DTA_DIFFUSE );
+	m_pDev->SetTextureStageState( 0, D3DTSS_COLOROP,   D3DTOP_MODULATE);
+	m_pDev->SetTextureStageState( 0, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 0, D3DTSS_TEXCOORDINDEX, 0 );
+
+	m_pDev->SetTextureStageState( 1, D3DTSS_COLORARG1, D3DTA_TEXTURE );
+	m_pDev->SetTextureStageState( 1, D3DTSS_COLORARG2, D3DTA_CURRENT );
+	m_pDev->SetTextureStageState( 1, D3DTSS_COLOROP,   D3DTOP_MODULATE);
+	m_pDev->SetTextureStageState( 1, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 1, D3DTSS_TEXCOORDINDEX, 1 );
+
+	m_pDev->SetTextureStageState( 2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	m_pDev->SetTextureStageState( 2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|2);
+
+	m_pDev->SetTextureStageState( 3, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	m_pDev->SetTextureStageState( 3, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|3);
+
+	m_pDev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+	m_pDev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+	m_pDev->SetRenderState( D3DRS_WRAP0, D3DWRAP_U | D3DWRAP_V);
+
+	m_pDev->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+	m_pDev->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+
+	m_pDev->SetTexture( 0, m_pBumpTexture[m_iBumpFrame]);
+#ifdef MIPMAP_BUMP_TEXTURE
+	m_pDev->SetSamplerState( 0, D3DSAMP_MIPFILTER, D3DTEXF_POINT );
+	m_pDev->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );
+	m_pDev->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
+#endif
+	m_pDev->SetTextureStageState( 1, D3DTSS_BUMPENVMAT00, F2DW(m_fBumpScale) );
+	m_pDev->SetTextureStageState( 1, D3DTSS_BUMPENVMAT01, F2DW(0.0f) );
+	m_pDev->SetTextureStageState( 1, D3DTSS_BUMPENVMAT10, F2DW(0.0f) );
+	m_pDev->SetTextureStageState( 1, D3DTSS_BUMPENVMAT11, F2DW(m_fBumpScale) );
+	m_pDev->SetTextureStageState( 1, D3DTSS_BUMPENVLSCALE, F2DW(1.0f) );
+	m_pDev->SetTextureStageState( 1, D3DTSS_BUMPENVLOFFSET, F2DW(0.0f) );
+
+	m_pDev->SetTextureStageState( 2, D3DTSS_COLOROP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 2, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );
+
+	m_pDev->SetRenderState(D3DRS_ZWRITEENABLE , FALSE);
+
+	D3DXMATRIX mat;
+	memset(&mat,0,sizeof(D3DXMATRIX));
+
+	mat._11 = 0.5f; mat._12 = -0.5f; mat._13 = 0.5f;   mat._14=0.5f;
+	mat._21 = 0.5f; mat._22 = 0.5f; mat._23 = 0.0f;   mat._24=0.0f;
+	mat._31 = 0.0f; mat._32 = 0.0f; mat._33 = 0.0f;   mat._34=1.0f;
+	mat._41 = 0.0f; mat._42 = 0.0f; mat._43 = 0.0f;   mat._44=1.0f;
+
+	m_pDev->SetVertexShaderConstantF(CV_TEXPROJ_0, (const float*)&mat, 4);
+
+	// Setup constants
+	{
+		D3DXVECTOR4 zero(0.0f, 0.0f, 0.0f, 0.0f);
+		D3DXVECTOR4 one(1.0f, 1.0f, 1.0f, 1.0f);
+		m_pDev->SetVertexShaderConstantF(CV_ZERO, (const float*)&zero, 1);
+		m_pDev->SetVertexShaderConstantF(CV_ONE,  (const float*)&one,  1);
+	}
+
+	// D3D9 requires FVF/vertex-declaration to be set BEFORE the vertex shader.
+	// The implicit declaration from DX8_FVF_XYZDUV1 maps: POS->v0, DIFFUSE->v5, TEX0->v7.
+	// 漏设FVF会导致D3D9用残留的顶点声明误读SEA_PATCH_VERTEX缓冲，水面渲染为黑色。
+	m_pDev->SetFVF(DX8_FVF_XYZDUV1);
+	m_pDev->SetVertexShader(m_dwWaveVertexShader);
+	m_pDev->SetPixelShader(m_dwWavePixelShader);
+
+	// ---- 项目版PBR水面shader接入（sunDir/sunColor/sparkle，与drawSea PBR路径一致） ----
+	if (m_waveShaderPBR && TheGlobalData) {
+		float sunDir[4] = {
+			-TheGlobalData->m_terrainLightPos[0].x,
+			-TheGlobalData->m_terrainLightPos[0].y,
+			-TheGlobalData->m_terrainLightPos[0].z,
+			0.0f};
+		float len = (float)sqrt(sunDir[0]*sunDir[0] + sunDir[1]*sunDir[1] + sunDir[2]*sunDir[2]);
+		if (len > 0.001f) { sunDir[0]/=len; sunDir[1]/=len; sunDir[2]/=len; }
+		float sunColor[4] = {
+			TheGlobalData->m_terrainAmbient[0].red + TheGlobalData->m_terrainDiffuse[0].red,
+			TheGlobalData->m_terrainAmbient[0].green + TheGlobalData->m_terrainDiffuse[0].green,
+			TheGlobalData->m_terrainAmbient[0].blue + TheGlobalData->m_terrainDiffuse[0].blue,
+			0.0f};
+		m_pDev->SetPixelShaderConstantF(0, sunDir, 1);
+		m_pDev->SetPixelShaderConstantF(1, sunColor, 1);
+	}
+
+	// === Procedural sparkle overlay (s2) ===
+	if (!m_sparkleTexture) {
+		SurfaceClass *surf;
+		int pitch;
+		unsigned char *dst;
+		int y, x, h, r;
+		unsigned char bright;
+		unsigned char *pixel;
+		m_sparkleTexture = NEW TextureClass(64, 64, WW3D_FORMAT_A8R8G8B8,
+			MIP_LEVELS_1, TextureClass::POOL_MANAGED, false, false);
+		surf = m_sparkleTexture->Get_Surface_Level();
+		dst = (unsigned char *)surf->Lock(&pitch);
+		for (y = 0; y < 64; y++) {
+			for (x = 0; x < 64; x++) {
+				pixel = dst + y * pitch + x * 4;
+				h = x * 13 + y * 7;
+				r = (h * (h * h * 15731 + 789221) + 1376312589) & 0x7FFFFFFF;
+				if ((r % 100) < 1) {
+					bright = (unsigned char)(200 + (r >> 8) % 56);
+					pixel[0] = bright; pixel[1] = bright;
+					pixel[2] = bright; pixel[3] = 255;
+				} else {
+					pixel[0] = 0; pixel[1] = 0; pixel[2] = 0; pixel[3] = 0;
+				}
+			}
+		}
+		surf->Unlock();
+		REF_PTR_RELEASE(surf);
+	}
+	if (m_sparkleTexture) {
+		if (!m_sparkleTexture->Is_Initialized())
+			m_sparkleTexture->Init();
+		m_pDev->SetTexture(2, m_sparkleTexture->Peek_D3D_Texture());
+		m_pDev->SetSamplerState(2, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+		m_pDev->SetSamplerState(2, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+		m_pDev->SetSamplerState(2, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+		m_pDev->SetSamplerState(2, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+		float sparkleTime[4] = { m_uOffset * 0.5f, m_vOffset * 0.5f, 0, 0 };
+		m_pDev->SetPixelShaderConstantF(2, sparkleTime, 1);
+	}
+
+	// WaterACRate 水面亮度倍率（shader侧实现，替代下载版的高光外挂贴图补色）
+	{
+		float acRate[4] = { s_WaterACRate, s_WaterACRate, s_WaterACRate, 1.0f };
+		m_pDev->SetPixelShaderConstantF(3, acRate, 1);
+	}
+
+	// PBR preferred -> noBump -> original
+	m_pDev->SetPixelShader(m_waveShaderPBR ? m_waveShaderPBR :
+		(m_waveShaderNoBump ? m_waveShaderNoBump : m_dwWavePixelShader));
+
+	m_pDev->SetRenderState(D3DRS_ALPHABLENDENABLE , TRUE);
+
+	D3DXMATRIX patchMatrix;
+	Int patchX = 0, patchY = 0;
+	Real LOX = 0.0, LOY = 0.0, HIX = 0.0, HIY = 0.0;
+	Real PatchCell = 0.0;
+
+	Int TotalRRInf = m_ReflectRenderVec.size();
+	for (Int i=0; i<TotalRRInf; ++i)
+	{
+		ST_ReflectRenderInfo &RRInf = m_ReflectRenderVec[i];
+		if (RRInf.NeedToDraw == false)
+		{ continue; }
+		//防御：反射贴图/顶点/索引缓冲未生成时跳过，避免NULL缓冲绘制崩溃
+		if (RRInf.ReflectTex == NULL || RRInf.VertexBufferD3D == NULL || RRInf.IndexBufferD3D == NULL)
+		{ continue; }
+
+		m_pDev->SetRenderState(D3DRS_SRCBLEND, RRInf.D3DSrcBlend);
+		m_pDev->SetRenderState(D3DRS_DESTBLEND, RRInf.D3DDstBlend);
+
+		memset(&patchMatrix, 0, sizeof(D3DXMATRIX));
+		patchMatrix._11 = RRInf.PatchScale;
+		patchMatrix._22 = 1.0f;
+		patchMatrix._33 = RRInf.PatchScale;
+		patchMatrix._44 = 1.0f;
+
+		m_pDev->SetTexture(1, RRInf.ReflectTex->Peek_D3D_Texture());
+		m_pDev->SetStreamSource(0, RRInf.VertexBufferD3D, 0, sizeof(SEA_PATCH_VERTEX));
+		m_pDev->SetIndices(RRInf.IndexBufferD3D);
+
+		if (RRInf.DrawMethod == REFDRAW_METHOD_PATCH)
+		{
+			LOX = RRInf.SeaBox.Center.X - RRInf.SeaBox.Extent.X, LOY = RRInf.SeaBox.Center.Y - RRInf.SeaBox.Extent.Y;
+			HIX = RRInf.SeaBox.Center.X + RRInf.SeaBox.Extent.X, HIY = RRInf.SeaBox.Center.Y + RRInf.SeaBox.Extent.Y;
+			PatchCell = RRInf.PatchWidth * RRInf.PatchScale;
+			for (patchY = LOY/PatchCell; patchY < HIY/PatchCell; patchY++)
+			{
+				for (patchX = LOX/PatchCell; patchX < HIX/PatchCell; patchX++)
+				{
+					D3DXMATRIX matWorldViewProj, matTemp, matTempWorld;
+					patchMatrix._41 = (float)(patchX * PatchCell);
+					patchMatrix._43 = (float)(patchY * PatchCell);
+					//convert the default D3D coordinate system into ours
+					D3DXMatrixMultiply(&matTempWorld, &patchMatrix, &matWW3D);
+					D3DXMatrixMultiply(&matTemp, &matTempWorld, &matView);
+					D3DXMatrixMultiply(&matWorldViewProj, &matTemp, &matProj);
+					//matrices must be transposed before loading into vertex shader registers
+					D3DXMatrixTranspose(&matWorldViewProj, &matWorldViewProj);
+					m_pDev->SetVertexShaderConstantF(CV_WORLDVIEWPROJ_0, (const float*)&matWorldViewProj, 4);	//pass transform matrix into shader
+					m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLESTRIP, 0, 0, RRInf.NumVertices, 0, RRInf.NumIndices);
+				}
+			}
+		}
+		else if (RRInf.DrawMethod == REFDRAW_METHOD_PMSMP)
+		{
+			D3DXMATRIX matIdentity, matWVP, matTemp;
+			D3DXMatrixIdentity(&matIdentity);
+			D3DXMatrixMultiply(&matTemp, &matIdentity, &matView);
+			D3DXMatrixMultiply(&matWVP, &matTemp, &matProj);
+			D3DXMatrixTranspose(&matWVP, &matWVP);
+			m_pDev->SetVertexShaderConstantF(CV_WORLDVIEWPROJ_0, (const float*)&matWVP, 4);
+			m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, RRInf.NumVertices, 0, RRInf.NumIndices);
+		}
+	}
+
+	m_pDev->SetRenderState(D3DRS_ALPHABLENDENABLE , FALSE);
+	m_pDev->SetTexture( 0, NULL);	//release reference to bump texture
+	m_pDev->SetTexture( 1, NULL);	//release reference to reflection texture
+	m_pDev->SetTexture( 2, NULL);	//release reference to reflection texture
+
+	m_pDev->SetTextureStageState( 0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	m_pDev->SetTextureStageState( 0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
+	m_pDev->SetTextureStageState( 1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	m_pDev->SetTextureStageState( 1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|1);
+	m_pDev->SetRenderState(D3DRS_ZWRITEENABLE , TRUE);
+
+	m_pDev->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+	m_pDev->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+
+	m_pDev->SetRenderState( D3DRS_WRAP0, 0);	//turn off texture wrapping
+
+	m_pDev->SetTextureStageState( 0, D3DTSS_COLOROP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 0, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 1, D3DTSS_COLOROP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 1, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 2, D3DTSS_COLOROP,   D3DTOP_DISABLE );
+	m_pDev->SetTextureStageState( 2, D3DTSS_ALPHAOP,   D3DTOP_DISABLE );
+
+	//Restore old transforms
+	DX8Wrapper::_Set_DX8_Transform(D3DTS_VIEW, *(Matrix4x4*)&matView);
+	DX8Wrapper::_Set_DX8_Transform(D3DTS_PROJECTION, *(Matrix4x4*)&matProj);
+
+	m_pDev->SetPixelShader(0);	//turn off pixel shader
+	m_pDev->SetVertexShader(NULL);	//turn off custom vertex shader
+	m_pDev->SetFVF(DX8_FVF_XYZDUV1);
+
+	DX8Wrapper::Invalidate_Cached_Render_States();
+
+	if (TheTerrainRenderObject->getShroud() == NULL)
+	{ return; }
+
+	//注：VC6把for循环初始化变量视为函数级作用域，此处改用ri避免与上面主循环的i重定义
+	for (Int ri=0; ri<TotalRRInf; ++ri)
+	{
+		//do second pass to apply the shroud on water plane
+		ST_ReflectRenderInfo &RRInf = m_ReflectRenderVec[ri];
+		if (RRInf.NeedToDraw == false)
+		{ continue; }
+		//防御：反射贴图/顶点/索引缓冲未生成时跳过
+		if (RRInf.ReflectTex == NULL || RRInf.VertexBufferD3D == NULL || RRInf.IndexBufferD3D == NULL)
+		{ continue; }
+
+		m_pDev->SetRenderState(D3DRS_SRCBLEND, RRInf.D3DSrcBlend);
+		m_pDev->SetRenderState(D3DRS_DESTBLEND, RRInf.D3DDstBlend);
+
+		memset(&patchMatrix, 0, sizeof(D3DXMATRIX));
+		patchMatrix._11 = RRInf.PatchScale;
+		patchMatrix._22 = 1.0f;
+		patchMatrix._33 = RRInf.PatchScale;
+		patchMatrix._44 = 1.0f;
+
+		W3DShaderManager::setTexture(0, TheTerrainRenderObject->getShroud()->getShroudTexture());
+		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 0);
+		m_pDev->SetStreamSource(0, RRInf.VertexBufferD3D, 0, sizeof(SEA_PATCH_VERTEX));
+		m_pDev->SetIndices(RRInf.IndexBufferD3D);
+
+		if (RRInf.DrawMethod == REFDRAW_METHOD_PATCH)
+		{
+			LOX = RRInf.SeaBox.Center.X - RRInf.SeaBox.Extent.X, LOY = RRInf.SeaBox.Center.Y - RRInf.SeaBox.Extent.Y;
+			HIX = RRInf.SeaBox.Center.X + RRInf.SeaBox.Extent.X, HIY = RRInf.SeaBox.Center.Y + RRInf.SeaBox.Extent.Y;
+			PatchCell = RRInf.PatchWidth * RRInf.PatchScale;
+			for (patchY = LOY/PatchCell; patchY < HIY/PatchCell; patchY++)
+			{
+				for (patchX = LOX/PatchCell; patchX < HIX/PatchCell; patchX++)
+				{
+					D3DXMATRIX matTemp;
+					patchMatrix._41=(float)(patchX * PatchCell);
+					patchMatrix._43=(float)(patchY * PatchCell);
+					D3DXMatrixMultiply(&matTemp, &patchMatrix, &matWW3D);
+					DX8Wrapper::_Set_DX8_Transform(D3DTS_WORLD, *(Matrix4x4*)&matTemp);
+					m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLESTRIP, 0, 0, RRInf.NumVertices, 0, RRInf.NumIndices);
+				}
+			}
+		}
+		else if (RRInf.DrawMethod == REFDRAW_METHOD_PMSMP)
+		{
+			D3DXMATRIX matIdentity, matWVP, matTemp;
+			D3DXMatrixIdentity(&matIdentity);
+			D3DXMatrixMultiply(&matTemp, &matIdentity, &matView);
+			D3DXMatrixMultiply(&matWVP, &matTemp, &matProj);
+			D3DXMatrixTranspose(&matWVP, &matWVP);
+			m_pDev->SetVertexShaderConstantF(CV_WORLDVIEWPROJ_0, (const float*)&matWVP, 4);
+			m_pDev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, RRInf.NumVertices, 0, RRInf.NumIndices);
+		}
+
+		W3DShaderManager::resetShader(W3DShaderManager::ST_SHROUD_TEXTURE);
+	}
+}
+
 void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 {
+	// ---- 逐水域独立反射主路径 (ported from download 20260530) ----
+	// 有水域触发器时优先走逐水域独立反射（PBR水面shader）；无触发器时退回按高度反射（原有PBR路径）
+	// 开场动画/菜单等非游戏场景不执行逐水域绘制，退回安全的高度兜底
+	if (m_ReflectRenderVec.size() > 0 && TheGameLogic && TheGameLogic->isInGame())
+	{
+		DrawReflectionOnSeaBox(rinfo);
+		return;
+	}
+
 	// Check for water polygons and reflection textures (multi-height system)
 	{
 		Bool hasWaterPolygon = FALSE;
@@ -2403,7 +4284,7 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	patchMatrix._44=1.0f;
 
 	// Sea-level: bind vertex buffer
-	m_pDev->SetStreamSource(0,m_vertexBufferD3D,0,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
+	m_pDev->SetStreamSource(0,m_vertexBufferD3D,0,sizeof(SEA_PATCH_VERTEX));
 	m_pDev->SetIndices(m_indexBufferD3D);
 
 	// Pre-compute global MVP for mountain branch
@@ -2481,6 +4362,12 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 				m_pDev->SetSamplerState(2, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
 				float sparkleTime[4] = { m_uOffset * 0.5f, m_vOffset * 0.5f, 0, 0 };
 				m_pDev->SetPixelShaderConstantF(2, sparkleTime, 1);
+			}
+
+			// WaterACRate 水面亮度倍率（shader侧实现）
+			{
+				float acRate[4] = { s_WaterACRate, s_WaterACRate, s_WaterACRate, 1.0f };
+				m_pDev->SetPixelShaderConstantF(3, acRate, 1);
 			}
 
 			// ==============================================
@@ -2620,7 +4507,7 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 0);
 
 		// Re-bind vertex + index buffers (may have been cleared by W3DShaderManager)
-		m_pDev->SetStreamSource(0,m_vertexBufferD3D,0,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
+		m_pDev->SetStreamSource(0,m_vertexBufferD3D,0,sizeof(SEA_PATCH_VERTEX));
 		m_pDev->SetIndices(m_indexBufferD3D);
 
 		PolygonTrigger *pTrig;

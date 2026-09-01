@@ -141,6 +141,7 @@ public:
 	PolygonTrigger *getNext(void) {return m_nextPolygonTrigger;}
 	const PolygonTrigger *getNext(void) const {return m_nextPolygonTrigger;}
 	AsciiString getTriggerName(void)  const {return m_triggerName;} ///< Gets the trigger name.
+	IRegion2D getBounds(void) { if (m_boundsNeedsUpdate) updateBounds(); return m_bounds; }	///< Gets the 2D bounding box (lazily recomputed if dirty).
 	Bool pointInTrigger(ICoord3D &point) const;
 	Bool doExportWithScripts(void) const {return m_exportWithScripts;} 
 	void setDoExportWithScripts(Bool val) {m_exportWithScripts = val;} 

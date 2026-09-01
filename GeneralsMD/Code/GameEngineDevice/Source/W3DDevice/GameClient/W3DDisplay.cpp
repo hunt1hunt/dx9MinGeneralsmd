@@ -1866,7 +1866,9 @@ AGAIN:
                                            //-LORENZEN
 
 
-			if (TheWaterRenderObj && TheGlobalData->m_waterType == 2)
+			//原版是TheGlobalData->m_waterType == 2时才执行updateRenderTargetTextures
+			//这里改为任何水类型都执行（内部会按水类型自行判断是否跳过）
+			if (TheWaterRenderObj)
 				TheWaterRenderObj->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
 
 			//Can't render into textures while rendering to screen so these textures need to be updated
@@ -1886,7 +1888,7 @@ AGAIN:
 		{
 			//USE_PERF_TIMER(BigAssRenderLoop)
 			static Bool couldRender = true;
-			if ((TheGlobalData->m_breakTheMovie == FALSE) && (TheGlobalData->m_disableRender == false) && WW3D::Begin_Render( true, true, Vector3( 0.0f, 0.0f, 0.0f ), TheWaterTransparency->m_minWaterOpacity ) == WW3D_ERROR_OK)		
+			if ((TheGlobalData->m_breakTheMovie == FALSE) && (TheGlobalData->m_disableRender == false) && WW3D::Begin_Render( true, true, Vector3( 0.0f, 0.0f, 0.0f ), TheWaterTransparency->m_minWaterOpacity * (TheWaterRenderObj ? TheWaterRenderObj->GetOpacityRate20() : 1.0f) ) == WW3D_ERROR_OK)		
 			{
 				
 				if(TheGlobalData->m_loadScreenRender == TRUE)
