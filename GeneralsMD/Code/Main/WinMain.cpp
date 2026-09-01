@@ -88,7 +88,7 @@ static HANDLE GeneralsMutex = NULL;
 #define DEFAULT_XRESOLUTION 800
 #define DEFAULT_YRESOLUTION 600
 
-extern void Reset_D3D_Device(bool active);
+//extern void Reset_D3D_Device(bool active);
 
 static Bool gInitializing = false;
 static Bool gDoPaint = true;
@@ -500,7 +500,7 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 					if (TheGameEngine)
 						TheGameEngine->setIsActive(isWinMainActive);
 
-					Reset_D3D_Device(isWinMainActive);
+//					Reset_D3D_Device(isWinMainActive);
 					if (isWinMainActive)
 					{	//restore mouse cursor to our custom version.
 						if (TheWin32Mouse) {
