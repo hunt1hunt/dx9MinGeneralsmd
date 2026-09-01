@@ -225,7 +225,7 @@ static Real s_ShroudVSX = 400 * MAP_XY_FACTOR, s_ShroudVSY = 400 * MAP_XY_FACTOR
 static Real s_ShroudCOX = 0.0f, s_ShroudCOY = 0.0f;
 static Real s_SkyVCRate = 1.0f;
 static Real s_MapBWLevel = 7.2f;
-static Real s_WaterACRate = 1.0f;	//水面亮度倍率（WaterACRate，shader侧实现，建议1.5）
+static Real s_WaterACRate = 1.0f;	/*水面亮度倍率（WaterACRate，shader侧实现，建议1.5） */
 static UnsignedInt s_SkyDiffuse = 0x00C8C8C8;
 
 
@@ -945,7 +945,7 @@ BOOL WaterRenderObjClass::PointInConvexPoly(const std::vector<Vector2> &poly, Ve
 			hasNeg = TRUE;
 	}
 
-	// 凸多边形内部规则：所有叉积同号（允许接近0的边界点）
+	/* 凸多边形内部规则：所有叉积同号（允许接近0的边界点） */
 	if (!(hasPos && hasNeg))
 		return TRUE;
 	return FALSE;
@@ -979,7 +979,7 @@ BOOL WaterRenderObjClass::PointInAnyPoly(const std::vector<Vector2> &poly, Vecto
 
 		// 水平射线与边交点X
 		float dy = yj - yi;
-		// 水平边，跳过（避免除0）
+		/* 水平边，跳过（避免除0） */
 		if (fabs(dy) < eps)
 			continue;
 
@@ -997,11 +997,11 @@ BOOL WaterRenderObjClass::PointInAnyPoly(const std::vector<Vector2> &poly, Vecto
 
 bool WaterRenderObjClass::IsPolygonIntersect(const std::vector<Vector2>& polyA, const std::vector<Vector2>& polyB)
 {
-	// 合法性校验：多边形至少3个顶点
+	/* 合法性校验：多边形至少3个顶点 */
 	if (polyA.size() < 3 || polyB.size() < 3)
 		return false;
 
-	// 条件1：遍历所有边，检测线段是否相交
+	/* 条件1：遍历所有边，检测线段是否相交 */
 	size_t aCount = polyA.size();
 	size_t bCount = polyB.size();
 	for (size_t i = 0; i < aCount; ++i)
@@ -1023,21 +1023,21 @@ bool WaterRenderObjClass::IsPolygonIntersect(const std::vector<Vector2>& polyA, 
 		}
 	}
 
-	// 条件2：B任意顶点在A内部（A包住B）
+	/* 条件2：B任意顶点在A内部（A包住B） */
 	for (size_t bi = 0; bi < bCount; ++bi)
 	{
 		if (PointInAnyPoly(polyA, polyB[bi]))
 			return true;
 	}
 
-	// 条件3：A任意顶点在B内部（B包住A）
+	/* 条件3：A任意顶点在B内部（B包住A） */
 	for (size_t ai = 0; ai < aCount; ++ai)
 	{
 		if (PointInAnyPoly(polyB, polyA[ai]))
 			return true;
 	}
 
-	// 无任何相交条件
+	/* 无任何相交条件 */
 	return false;
 }
 
@@ -1064,8 +1064,8 @@ void WaterRenderObjClass::GetCameraViewPoly(std::vector<Vector2> &ViewPoly)
 
 bool WaterRenderObjClass::CanThisWaterTriggerBeSee(ST_ReflectRenderInfo &RRInf, std::vector<Vector2> &ViewPoly)
 {
-	//防御：确认触发器仍存在于当前地图的触发器链表中。TerrainLogic::reset/deleteTriggers会销毁触发器，
-	//此时RRInf.Trigger为悬垂指针，m_points已被析构置NULL，直接getPoint会解引用崩溃。
+	/*防御：确认触发器仍存在于当前地图的触发器链表中。TerrainLogic::reset/deleteTriggers会销毁触发器， */
+	/*此时RRInf.Trigger为悬垂指针，m_points已被析构置NULL，直接getPoint会解引用崩溃。 */
 	if (RRInf.Trigger == NULL)
 	   { return false; }
 	Bool triggerStillExists = false;
@@ -1075,7 +1075,7 @@ bool WaterRenderObjClass::CanThisWaterTriggerBeSee(ST_ReflectRenderInfo &RRInf, 
 	}
 	if (!triggerStillExists)
 	   {
-		//记录一次：触发器已被deleteTriggers销毁但m_ReflectRenderVec未刷新（悬垂指针防御生效）
+		/*记录一次：触发器已被deleteTriggers销毁但m_ReflectRenderVec未刷新（悬垂指针防御生效） */
 		static Bool diagDanglingOnce = FALSE;
 		if (!diagDanglingOnce) { diagDanglingOnce = TRUE; WaterDiag("CANSEEWATER: dangling trigger rejected (trigger deleted, ParseAllWaterTrigger not rerun)"); }
 		return false;
@@ -1097,7 +1097,7 @@ bool WaterRenderObjClass::CanThisWaterTriggerBeSee(ST_ReflectRenderInfo &RRInf, 
 }
 
 //-------------------------------------------------------------------------------------------------
-// 逐水域独立反射系统：单水域独立模型缓冲（格网平铺）
+/* 逐水域独立反射系统：单水域独立模型缓冲（格网平铺） */
 //-------------------------------------------------------------------------------------------------
 HRESULT WaterRenderObjClass::generateIndexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY)
 {
@@ -1174,7 +1174,7 @@ HRESULT WaterRenderObjClass::generateVertexBuffer(ST_ReflectRenderInfo &RRInf, I
 		for (x=0; x<sizeX; x++)
 		{
 			pVertices->x=(float)x;
-			pVertices->y=RRInf.Level + RRInf.WLOffsetZ;	//此处最好降低0.5，使倒影承载面比0号水和BONB水镜都略低一些，避免出现水岸白边或黑边
+			pVertices->y=RRInf.Level + RRInf.WLOffsetZ;	/*此处最好降低0.5，使倒影承载面比0号水和BONB水镜都略低一些，避免出现水岸白边或黑边 */
 			pVertices->z=(float)z;
 
 			pVertices->tu=(float)x * RRInf.PatchUVScale;
@@ -1222,7 +1222,7 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 
 	Int polyPtCount = RRInf.Trigger->getNumPoints();
 
-	// 1. 读取多边形世界坐标
+	/* 1. 读取多边形世界坐标 */
 	std::vector<Vector2> convexPoly;
 	Real minX = FLT_MAX, maxX = -FLT_MAX;
 	Real minY = FLT_MAX, maxY = -FLT_MAX;
@@ -1247,7 +1247,7 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 		origMaxY = max(origMaxY, wy);
 	}
 
-	// 清空旧网格缓存
+	/* 清空旧网格缓存 */
 	RRInf.TriVerts.clear();
 	RRInf.TriIdxs.clear();
 
@@ -1284,7 +1284,7 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 		v.x = p.X;
 		v.y = p.Y;
 		v.z = RRInf.Level + RRInf.WLOffsetZ;
-		// UV归一化，和原有纹理缩放保持一致
+		/* UV归一化，和原有纹理缩放保持一致 */
 		float tu = ((p.X - minX) / rangeX) * PointRateU;
 		float tv = ((p.Y - minY) / rangeY) * PointRateV;
 		v.tu = tu;
@@ -1293,7 +1293,7 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 		RRInf.TriVerts.push_back(v);
 	}
 
-	// 4. 建立坐标到顶点索引映射，注意此处validPoints的容量可能会超出65535上限，必须进行截断
+	/* 4. 建立坐标到顶点索引映射，注意此处validPoints的容量可能会超出65535上限，必须进行截断 */
 	std::map<std::pair<int, int>, WORD> posToIdx;
 	WORD MaxPoints = (validPoints.size() < 65535) ? (WORD)validPoints.size() : 65535;
 	for (WORD idx = 0; idx < MaxPoints; idx++)
@@ -1303,8 +1303,8 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 		posToIdx[std::make_pair(xi, yi)] = idx;
 	}
 
-	// 5. 网格生成三角形索引
-	//注：VC6把for循环初始化变量视为函数级作用域，此处改用gy/gx避免与上面采样循环的y/x重定义
+	/* 5. 网格生成三角形索引 */
+	/*注：VC6把for循环初始化变量视为函数级作用域，此处改用gy/gx避免与上面采样循环的y/x重定义 */
 	for (Int gy = 0; gy < RRInf.SubdivCellLV; gy++)
 	{
 		for (Int gx = 0; gx < RRInf.SubdivCellLV; gx++)
@@ -1333,7 +1333,7 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 	Int vertCount = (Int)RRInf.TriVerts.size();
 	Int idxCount = (Int)RRInf.TriIdxs.size();
 
-	// 若前面找不到有效的顶点或索引，则不能使用均匀采样法，只能按默认的矩形网格法来创建缓冲区
+	/* 若前面找不到有效的顶点或索引，则不能使用均匀采样法，只能按默认的矩形网格法来创建缓冲区 */
 	if (vertCount == 0 || idxCount == 0)
 	{
 		RRInf.DrawMethod = REFDRAW_METHOD_PATCH;
@@ -1344,11 +1344,11 @@ HRESULT WaterRenderObjClass::GeneratePolyMesh(ST_ReflectRenderInfo &RRInf)
 		return generateVertexBuffer(RRInf, RRInf.PatchSize, RRInf.PatchSize, sizeof(SEA_PATCH_VERTEX), true);
 	}
 
-	// 释放旧缓冲
+	/* 释放旧缓冲 */
 	SAFE_RELEASE(RRInf.VertexBufferD3D);
 	SAFE_RELEASE(RRInf.IndexBufferD3D);
 
-	// 创建均匀采样缓冲区
+	/* 创建均匀采样缓冲区 */
 	HRESULT hr = generateVertexBuffer(RRInf, sizeof(SEA_PATCH_VERTEX), TRUE);
 	if (FAILED(hr)) return hr;
 	return generateIndexBuffer(RRInf);
@@ -1822,10 +1822,10 @@ void WaterRenderObjClass::ReAcquireResources(void)
 // ------------------------------------------------------------------
 void WaterRenderObjClass::SetDefaultSeaBoxArgs(void)
 {
-	//水类型缺省值直接采用GameData.ini的WaterType设置（项目版质量门，代替下载版的高光外挂档位判定）
+	/*水类型缺省值直接采用GameData.ini的WaterType设置（项目版质量门，代替下载版的高光外挂档位判定） */
 	m_waterType = (WaterType)TheWritableGlobalData->m_waterType;
 
-	//若使用2号水（双层：半透明基底+倒影），则缺省将0号水的透明度减半，避免遮挡倒影。否则保持原来的透明度不变
+	/*若使用2号水（双层：半透明基底+倒影），则缺省将0号水的透明度减半，避免遮挡倒影。否则保持原来的透明度不变 */
 	m_OpacityRate20 = (m_waterType == WATER_TYPE_2_PVSHADER) ? 0.52 : 1.0;
 
 	s_WLOffsetX = 0.0; s_WLOffsetY = 0.0; s_WLOffsetZ = -0.5;
@@ -1845,19 +1845,19 @@ void WaterRenderObjClass::SetDefaultSeaBoxArgs(void)
 
 void WaterRenderObjClass::ParseSeaBoxArgsFromMapINI(void)
 {
-	//上一局的地图文件名与当前地图文件名相同，表示还在同一张地图上并且没有重新开局，无需重复读取参数，保持原值直接返回
+	/*上一局的地图文件名与当前地图文件名相同，表示还在同一张地图上并且没有重新开局，无需重复读取参数，保持原值直接返回 */
 	//注意重新开局、读档等操作都会执行reset()方法，导致m_PreMapName被清空，虽然重开后还是同一张地图，但会强制重读参数
 	if (m_PreMapName.compareNoCase(TheWritableGlobalData->m_mapName) == 0)
 	   { return; }
 	m_PreMapName = TheWritableGlobalData->m_mapName;
 
-	//重新加载河流水体贴图与河岸波浪贴图
+	/*重新加载河流水体贴图与河岸波浪贴图 */
 	m_riverTexture->Invalidate();
 	m_riverTexture->Init();
 	m_riverAlphaEdge->Invalidate();
 	m_riverAlphaEdge->Init();
 
-	//读取之前先用宏定义值来填充所有顶层缺省参数
+	/*读取之前先用宏定义值来填充所有顶层缺省参数 */
 	SetDefaultSeaBoxArgs();
 
 	AsciiString MapININameAS = m_PreMapName;
@@ -1874,7 +1874,7 @@ void WaterRenderObjClass::ParseSeaBoxArgsFromMapINI(void)
          else
 	        {
 			  AsciiString PureMapName = Subfix+1;
-			  //去掉末尾的.map扩展名（AsciiString无Replace方法，用endsWithNoCase+removeLastChar实现）
+			  /*去掉末尾的.map扩展名（AsciiString无Replace方法，用endsWithNoCase+removeLastChar实现） */
 			  if (PureMapName.endsWithNoCase(".map"))
 			  {
 				PureMapName.removeLastChar();
@@ -1894,7 +1894,7 @@ void WaterRenderObjClass::ParseSeaBoxArgsFromMapINI(void)
 	INIFile->close();
 	m_MapINIData = INIBuf;
 
-	//若map.ini里没有相关的重定义，则采用缺省参数顶替
+	/*若map.ini里没有相关的重定义，则采用缺省参数顶替 */
 	char *Start = strstr(INIBuf, "MappedImage SeaBox");
 	if (Start == NULL)
 	   { return; }
@@ -2030,11 +2030,11 @@ void WaterRenderObjClass::ParseSeaBoxArgsFromMapINI(void)
 
 	   }
 
-	//map.ini里WaterType只接受0/1/2/3（本项目未引入20号水枚举，写20或越界值视为无效，回退到GameData.ini设置）
+	/*map.ini里WaterType只接受0/1/2/3（本项目未引入20号水枚举，写20或越界值视为无效，回退到GameData.ini设置） */
 	if (m_waterType < WATER_TYPE_0_TRANSLUCENT || m_waterType >= WATER_TYPE_MAX)
 	   { m_waterType = (WaterType)TheWritableGlobalData->m_waterType; }
 
-	//如果当前使用的不是2号水（双层），则0号水的透明度比率强制置为1。仅在使用2号水时才优先使用配置的比率
+	/*如果当前使用的不是2号水（双层），则0号水的透明度比率强制置为1。仅在使用2号水时才优先使用配置的比率 */
 	if (m_waterType != WATER_TYPE_2_PVSHADER)
 	   { m_OpacityRate20 = 1.0; }
 
@@ -2049,7 +2049,7 @@ void WaterRenderObjClass::ParseSeaBoxArgsFromMapINI(void)
 	   { s_PatchWidth = 1.0; }
 	s_PatchUVScale = s_PatchUVTiles / s_PatchWidth;
 
-	//均匀采样档位必须是2的整倍数，考虑到DX8最多只能支持16位索引，最大不能超过65535个，此处限制最多只能256级采样
+	/*均匀采样档位必须是2的整倍数，考虑到DX8最多只能支持16位索引，最大不能超过65535个，此处限制最多只能256级采样 */
 	if (s_SubdivCellLV > 256)
 	   { s_SubdivCellLV = 256; }
 	else if (s_SubdivCellLV > 128)
@@ -2080,7 +2080,7 @@ void WaterRenderObjClass::ParseTriggerArgsFromMapINI(ST_ReflectRenderInfo &RRInf
 	strncpy(INIBuf, m_MapINIData.str(), SafeReadLen);
 	sprintf(Section, "MappedImage [%s]", RRInf.Name.str());
 
-	//读取之前先用顶层缺省值来填充所有专用参数
+	/*读取之前先用顶层缺省值来填充所有专用参数 */
 	SetDefaultTriggerArgs(RRInf);
 
 	char *Start = strstr(INIBuf, Section);
@@ -2188,7 +2188,7 @@ void WaterRenderObjClass::ParseTriggerArgsFromMapINI(ST_ReflectRenderInfo &RRInf
 	   { RRInf.PatchWidth = 1.0; }
 	RRInf.PatchUVScale = RRInf.PatchUVTiles / RRInf.PatchWidth;
 
-	//均匀采样档位必须是2的整倍数，考虑到DX8最多只能支持16位索引，最大不能超过65535个，此处限制最多只能256级采样
+	/*均匀采样档位必须是2的整倍数，考虑到DX8最多只能支持16位索引，最大不能超过65535个，此处限制最多只能256级采样 */
 	if (RRInf.SubdivCellLV > 256)
 	   { RRInf.SubdivCellLV = 256; }
 	else if (RRInf.SubdivCellLV > 128)
@@ -2232,14 +2232,14 @@ void WaterRenderObjClass::load(void)
 	ParseSeaBoxArgsFromMapINI();
 	ParseAllWaterTrigger();
 
-	//计算当前地图的天空倒影漫反射色彩值，等于Water.ini里对应时段配置中的VertexColor * s_SkyVCRate。调节s_SkyVCRate可改变天空倒影的亮度
+	/*计算当前地图的天空倒影漫反射色彩值，等于Water.ini里对应时段配置中的VertexColor * s_SkyVCRate。调节s_SkyVCRate可改变天空倒影的亮度 */
 	Setting *SkySetting = &m_settings[m_tod];
 	BYTE VettexARGB[4] = {0};
 	for (BYTE i=0; i<4; ++i)
 	   { VettexARGB[i] = ((SkySetting->vertex00Diffuse >> 8*(3-i)) & 0xFF) * s_SkyVCRate; }
 	s_SkyDiffuse = VettexARGB[0] << 24 | VettexARGB[1] << 16 | VettexARGB[2] << 8 | VettexARGB[3];
 
-	//保存当前地图的尺寸信息，随后用于绘制边界挡水框
+	/*保存当前地图的尺寸信息，随后用于绘制边界挡水框 */
 	WorldHeightMap *WHMap = TheTerrainRenderObject->getMap();
 	if (WHMap)
 	   {
@@ -2248,10 +2248,10 @@ void WaterRenderObjClass::load(void)
 
 	     s_MapVSX = (WHMap->getXExtent() - WHMap->getBorderSizeInline() * 2) * MAP_XY_FACTOR;
 	     s_MapVSY = (WHMap->getYExtent() - WHMap->getBorderSizeInline() * 2) * MAP_XY_FACTOR;
-	     s_MapVSB = WHMap->getBorderSizeInline() * MAP_XY_FACTOR * 1.5;		//边界尺寸要扩大50%，确保尽可能在常规视角下将边界外的倒影完全遮挡完
+	     s_MapVSB = WHMap->getBorderSizeInline() * MAP_XY_FACTOR * 1.5;		/*边界尺寸要扩大50%，确保尽可能在常规视角下将边界外的倒影完全遮挡完 */
 
-		 //战争迷雾倒影遮罩的绘制尺寸必须和W3DShroud里战争迷雾网格分割算法保持一致
-		 //W3DShroud限制网格贴图的边长必须是2的幂次，此处也要如此计算，否则后面在RenderShroudCover时，贴图UV和实际网格尺寸就对不齐
+		 /*战争迷雾倒影遮罩的绘制尺寸必须和W3DShroud里战争迷雾网格分割算法保持一致 */
+		 /*W3DShroud限制网格贴图的边长必须是2的幂次，此处也要如此计算，否则后面在RenderShroudCover时，贴图UV和实际网格尺寸就对不齐 */
          UnsignedInt NumCellsX = REAL_TO_INT_CEIL((Real)(WHMap->getXExtent() - 1 - WHMap->getBorderSizeInline()*2)*MAP_XY_FACTOR / TheGlobalData->m_partitionCellSize);
          UnsignedInt NumCellsY = REAL_TO_INT_CEIL((Real)(WHMap->getYExtent() - 1 - WHMap->getBorderSizeInline()*2)*MAP_XY_FACTOR / TheGlobalData->m_partitionCellSize);
          UnsignedInt Depth = 1;
@@ -2262,7 +2262,7 @@ void WaterRenderObjClass::load(void)
 		 s_ShroudVSY = NumCellsY * TheGlobalData->m_partitionCellSize;
 	   }
 
-	//遍历当前地图所有水域，找到水面高度最高的那一个，记录为当前地图的挡水框高度
+	/*遍历当前地图所有水域，找到水面高度最高的那一个，记录为当前地图的挡水框高度 */
 	Int TotalRRInf = m_ReflectRenderVec.size();
 	Real CrtWaterLevel = 1e-8f;
 	for (Int ri=0; ri<TotalRRInf; ++ri)
@@ -2749,7 +2749,7 @@ void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 	}
 
 	// ---- 逐水域独立反射主路径 (ported from download 20260530) ----
-	// 有水域触发器时优先走逐水域独立反射；无触发器时退回按高度反射（下方原有逻辑）
+	/* 有水域触发器时优先走逐水域独立反射；无触发器时退回按高度反射（下方原有逻辑） */
 	// 开场动画/菜单等非游戏场景不执行逐水域烘焙（避免内存损坏崩溃），退回安全的高度兜底
 	if (m_ReflectRenderVec.size() > 0 && TheGameLogic && TheGameLogic->isInGame())
 	{
@@ -2763,16 +2763,16 @@ void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 			DWORD now = timeGetTime();
 			if (now - lastDiagTime > 1000) { lastDiagTime = now; WaterDiagI("UPDATERTT: per-trigger heartbeat, vec", (int)m_ReflectRenderVec.size()); }
 		}
-		//获取当前摄像机视野范围的四边形
+		/*获取当前摄像机视野范围的四边形 */
 		std::vector<Vector2> CamViewPoly;
 		GetCameraViewPoly(CamViewPoly);
 
 		Int TotalRRInf = m_ReflectRenderVec.size();
 		for (Int i=0; i<TotalRRInf; ++i)
 		{
-			//依次判断每个水域的倒影是否需要渲染
-			//强制渲染未开启，需要检测水域多边形与摄像机视野四边形有重叠，有重叠才需要渲染
-			//强制渲染已开启，无需检测，直接判定为需要渲染
+			/*依次判断每个水域的倒影是否需要渲染 */
+			/*强制渲染未开启，需要检测水域多边形与摄像机视野四边形有重叠，有重叠才需要渲染 */
+			/*强制渲染已开启，无需检测，直接判定为需要渲染 */
 			if (m_ReflectRenderVec[i].ForceDraw == false)
 			   { m_ReflectRenderVec[i].NeedToDraw = CanThisWaterTriggerBeSee(m_ReflectRenderVec[i], CamViewPoly); }
 			else
@@ -2960,7 +2960,7 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, Real waterHeight, Textu
 
 	cam->Apply();
 
-	//裁剪完之后务必记得关掉裁剪
+	/*裁剪完之后务必记得关掉裁剪 */
 	m_pDev->SetRenderState(D3DRS_CLIPPLANEENABLE , 0);
 
 	ShaderClass::Invert_Backface_Culling(false);
@@ -3021,7 +3021,7 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, ST_ReflectRenderInfo &R
 		static Bool diagOnce = FALSE;
 		if (!diagOnce) { diagOnce = TRUE; WaterDiag("RENDERMIRROR_RRINF: entered"); }
 	}
-	//防御：反射贴图/父场景无效时直接返回，避免NULL解引用
+	/*防御：反射贴图/父场景无效时直接返回，避免NULL解引用 */
 	if (RRInf.ReflectTex == NULL || m_parentScene == NULL)
 	{
 		WaterDiag("RENDERMIRROR_RRINF: ReflectTex or m_parentScene NULL, skip");
@@ -3124,10 +3124,10 @@ void WaterRenderObjClass::renderMirror(CameraClass *cam, ST_ReflectRenderInfo &R
 
 	cam->Apply();	//force an update of all the camera dependent parameters like frustum clip planes
 
-	//裁剪完之后务必记得关掉裁剪
+	/*裁剪完之后务必记得关掉裁剪 */
 	m_pDev->SetRenderState(D3DRS_CLIPPLANEENABLE , 0);
 
-	//恢复雨雪特效的原本状态
+	/*恢复雨雪特效的原本状态 */
 	if (TheSnowManager && SnowVisible == true)
 	{
 		((SnowManager *)TheSnowManager)->setVisible(true);
@@ -3846,7 +3846,7 @@ void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
 
 	// D3D9 requires FVF/vertex-declaration to be set BEFORE the vertex shader.
 	// The implicit declaration from DX8_FVF_XYZDUV1 maps: POS->v0, DIFFUSE->v5, TEX0->v7.
-	// 漏设FVF会导致D3D9用残留的顶点声明误读SEA_PATCH_VERTEX缓冲，水面渲染为黑色。
+	/* 漏设FVF会导致D3D9用残留的顶点声明误读SEA_PATCH_VERTEX缓冲，水面渲染为黑色。 */
 	m_pDev->SetFVF(DX8_FVF_XYZDUV1);
 	m_pDev->SetVertexShader(m_dwWaveVertexShader);
 	m_pDev->SetPixelShader(m_dwWavePixelShader);
@@ -3910,7 +3910,7 @@ void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
 		m_pDev->SetPixelShaderConstantF(2, sparkleTime, 1);
 	}
 
-	// WaterACRate 水面亮度倍率（shader侧实现，替代下载版的高光外挂贴图补色）
+	/* WaterACRate 水面亮度倍率（shader侧实现，替代下载版的高光外挂贴图补色） */
 	{
 		float acRate[4] = { s_WaterACRate, s_WaterACRate, s_WaterACRate, 1.0f };
 		m_pDev->SetPixelShaderConstantF(3, acRate, 1);
@@ -4021,7 +4021,7 @@ void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
 	if (TheTerrainRenderObject->getShroud() == NULL)
 	{ return; }
 
-	//注：VC6把for循环初始化变量视为函数级作用域，此处改用ri避免与上面主循环的i重定义
+	/*注：VC6把for循环初始化变量视为函数级作用域，此处改用ri避免与上面主循环的i重定义 */
 	for (Int ri=0; ri<TotalRRInf; ++ri)
 	{
 		//do second pass to apply the shroud on water plane
@@ -4082,7 +4082,7 @@ void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
 void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 {
 	// ---- 逐水域独立反射主路径 (ported from download 20260530) ----
-	// 有水域触发器时优先走逐水域独立反射（PBR水面shader）；无触发器时退回按高度反射（原有PBR路径）
+	/* 有水域触发器时优先走逐水域独立反射（PBR水面shader）；无触发器时退回按高度反射（原有PBR路径） */
 	// 开场动画/菜单等非游戏场景不执行逐水域绘制，退回安全的高度兜底
 	if (m_ReflectRenderVec.size() > 0 && TheGameLogic && TheGameLogic->isInGame())
 	{

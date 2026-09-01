@@ -88,23 +88,23 @@ struct ST_ReflectRenderInfo
 	Int ID;											//水域ID
 	Real Level;										//水面高度
 	AsciiString Name;								//水域名称
-	AABoxClass SeaBox;								//倒影承载面
-	PolygonTrigger *Trigger;						//触发器指针
+	AABoxClass SeaBox;								/*倒影承载面 */
+	PolygonTrigger *Trigger;						/*触发器指针 */
 	SEA_PV_VEC TriVerts;							//逐水域多边形均匀采样得到的多边形网格顶点
 	SEA_IDX_VEC TriIdxs;							//逐水域多边形均匀采样得到的多边形网格索引
 	TextureClass *ReflectTex;						//该水域的反射贴图
 
-	bool NeedToDraw;								//是否需要渲染
+	bool NeedToDraw;								/*是否需要渲染 */
 
 	//水面渲染参数
 	BYTE DrawMethod;								//绘制方式，可选值参考 Enum_ReflectDrawMethod
-	bool ForceDraw;									//是否无视视野裁剪，永远强制渲染
+	bool ForceDraw;									/*是否无视视野裁剪，永远强制渲染 */
 	Real WLOffsetX, WLOffsetY, WLOffsetZ;			//水域承载面偏移（其中XY值仅在格网平铺时有效，Z值任何模式下都有效）
-	Real PatchSize, PatchUVTiles, PatchScale;		//倒影承载面参数
-	Real PatchWidth, PatchUVScale;					//倒影承载面参数
-    Real PMeshRateU, PMeshRateV;					//倒影贴图UV缩放倍率，仅在均匀采样时有效
+	Real PatchSize, PatchUVTiles, PatchScale;		/*倒影承载面参数 */
+	Real PatchWidth, PatchUVScale;					/*倒影承载面参数 */
+    Real PMeshRateU, PMeshRateV;					/*倒影贴图UV缩放倍率，仅在均匀采样时有效 */
 	Int D3DSrcBlend, D3DDstBlend;					//倒影贴图混色方式
-	Int SubdivCellLV;								//均匀采样细分级别，值越大网格越细，仅在均匀采样时有效
+	Int SubdivCellLV;								/*均匀采样细分级别，值越大网格越细，仅在均匀采样时有效 */
 
 	//DX相关缓冲
 	Int	NumVertices;								//number of vertices in D3D vertex buffer
@@ -243,8 +243,8 @@ public:
 	// 逐水域独立反射系统 (ported from download 20260530)
 	// ------------------------------------------------------------------
 	void ParseAllWaterTrigger(void);			//遍历当前地图所有水域，为每个水域创建独立反射承载面渲染信息
-	void ParseSeaBoxArgsFromMapINI(void);		//从地图map.ini中读取倒影承载面的全局缺省重定义参数
-	void SetDefaultSeaBoxArgs(void);			//用宏定义值填充缺省的倒影承载面参数
+	void ParseSeaBoxArgsFromMapINI(void);		/*从地图map.ini中读取倒影承载面的全局缺省重定义参数 */
+	void SetDefaultSeaBoxArgs(void);			/*用宏定义值填充缺省的倒影承载面参数 */
 	void ParseTriggerArgsFromMapINI(ST_ReflectRenderInfo &RRInf);		//从地图map.ini中读取指定水域专用重定义参数
 	void SetDefaultTriggerArgs(ST_ReflectRenderInfo &RRInf);			//用缺省参数填充指定水域的专用参数
 	Real GetOpacityRate20(void) { return m_OpacityRate20; }		//2号水时0号水基底纹理的透明度倍率
@@ -306,9 +306,9 @@ protected:
 	// 逐水域独立反射系统 (ported from download 20260530)
 	// ------------------------------------------------------------------
 	Real m_OpacityRate20;			//2号水时0号水基底纹理的透明度倍率（缺省0.52），可被map.ini OpacityRate覆盖
-	AsciiString m_PreMapName;		//上一局使用的地图文件名（用于判断是否需要重新读取map.ini）
+	AsciiString m_PreMapName;		/*上一局使用的地图文件名（用于判断是否需要重新读取map.ini） */
 	REFECT_RENDER_VEC m_ReflectRenderVec;	//逐水域反射承载面渲染信息列表
-	AsciiString m_MapINIData;		//当前地图map.ini的原始文本（用于逐水域/SeaBox参数解析）
+	AsciiString m_MapINIData;		/*当前地图map.ini的原始文本（用于逐水域/SeaBox参数解析） */
 
 	enum WaterMeshStatus
 	{
@@ -401,14 +401,14 @@ protected:
 	// ------------------------------------------------------------------
 	// 逐水域独立反射系统 (ported from download 20260530)
 	// ------------------------------------------------------------------
-	//单水域独立模型缓冲（格网平铺）
+	/*单水域独立模型缓冲（格网平铺） */
 	HRESULT generateIndexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY);
 	HRESULT generateVertexBuffer(ST_ReflectRenderInfo &RRInf, Int sizeX, Int sizeY, Int vertexSize, Bool doStatic);
-	//多边形网格生成（均匀采样）
+	/*多边形网格生成（均匀采样） */
 	HRESULT GeneratePolyMesh(ST_ReflectRenderInfo &RRInf);
 	HRESULT generateIndexBuffer(ST_ReflectRenderInfo &RRInf);
 	HRESULT generateVertexBuffer(ST_ReflectRenderInfo &RRInf, Int vertexSize, Bool doStatic);
-	//多边形几何辅助
+	/*多边形几何辅助 */
 	BOOL PointInConvexPoly(const std::vector<Vector2> &poly, Vector2 pt);
 	BOOL PointInAnyPoly(const std::vector<Vector2> &poly, Vector2 pt);
 	bool IsPolygonIntersect(const std::vector<Vector2>& polyA, const std::vector<Vector2>& polyB);
@@ -418,7 +418,7 @@ protected:
 	bool CanThisWaterTriggerBeSee(ST_ReflectRenderInfo &RRInf, std::vector<Vector2> &ViewPoly);
 	//在指定的倒影承载面上绘制倒影贴图（逐水域遍历版本）
 	void DrawReflectionOnSeaBox(RenderInfoClass &rinfo);
-	//逐水域反射烘焙
+	/*逐水域反射烘焙 */
 	void renderMirror(CameraClass *cam, ST_ReflectRenderInfo &RRInf);
 	//地图边界挡水框 + 战争迷雾倒影遮罩
 	void RenderMapBorderCoverL(void);
