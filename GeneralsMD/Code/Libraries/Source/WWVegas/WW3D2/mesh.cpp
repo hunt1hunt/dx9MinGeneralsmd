@@ -663,34 +663,6 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 		return;
 	}
 
-	// HELI MESH PROBE (one-shot per unique name): list every mesh actually rendered for
-	// helicopter models (incl. child sub-objects) so the REAL rotor-blade meshes can be
-	// found, instead of guessed.
-	{
-		static char s_heli[80][72];
-		static int s_heliCount = 0;
-		const char *hn = Get_Name();
-		if (hn && s_heliCount < 80
-			&& (strstr(hn,"CHIN")||strstr(hn,"HOKUM")||strstr(hn,"HELI")
-			|| strstr(hn,"PROPS")||strstr(hn,"PROPELLER")||strstr(hn,"BLADE")
-			|| strstr(hn,"ROTOR")||strstr(hn,"SCREW"))) {
-			bool seen = false;
-			for (int k = 0; k < s_heliCount; k++) { if (strcmp(s_heli[k],hn)==0) { seen=true; break; } }
-			if (!seen) {
-				strncpy(s_heli[s_heliCount],hn,71); s_heli[s_heliCount][71]=0; s_heliCount++;
-				FILE *hf = fopen("E:/helimesh_diag.log","a");
-				if (hf) {
-					MeshModelClass *hm = Peek_Model();
-					fprintf(hf,"[HEL] %s alpha=%d trans=%d add=%d sort=%d polys=%d verts=%d\n",
-						hn,(int)Is_Alpha(),(int)Is_Translucent(),(int)Is_Additive(),
-						(int)(hm?hm->Get_Sort_Level():-1),
-						(int)(hm?hm->Get_Polygon_Count():0),(int)(hm?hm->Get_Vertex_Count():0));
-					fclose(hf);
-				}
-			}
-			}
-	}
-
 	// Rotor blades must NEVER use the sorting pipeline. The loader auto-sets the
 	// SORT flag on any DestBlend!=ZERO shader (meshmdlio.cpp), which registers
 	// these meshes into the SORTING FVF container: their polygons get captured

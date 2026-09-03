@@ -2153,26 +2153,10 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 			//if necessary
 			if (!rotorBlade && (mesh->Get_Alpha_Override() != 1.0 || (mesh->Get_User_Data() && *(int *)mesh->Get_User_Data() == RenderObjClass::USER_DATA_MATERIAL_OVERRIDE)))
 			{	//mesh has material override of some kind.
-				//rotorBlade takes PRIORITY: the player-coloured AVCHINOOKAG carries
-				//USER_DATA_MATERIAL_OVERRIDE on its meshes, which diverted the rotor
-				//blades into this alpha-override path (mesh's own shader look: bright
-				//18% blur, invisible on bright ground) before the rotor branch could
-				//run - that is why no override/red ever appeared on the visible
-				//helicopter while the branch worked on the plain AVCHINOOK model.
-				if (rotorBlade) {	// must be impossible since P1.7 - if this logs, the reorder is not effective
-					static int rbAN = 0;
-					if (rbAN < 8) {
-						rbAN++;
-						FILE *rbLog = fopen("E:/rotor_diag.log","a");
-						if (rbLog) {
-							fprintf(rbLog,"[ROTOR8] A-BRANCH STOLE %s ao=%.2f ud=%d\n",
-								mesh->Get_Name()?mesh->Get_Name():"?",
-								mesh->Get_Alpha_Override(),
-								(mesh->Get_User_Data() && *(int*)mesh->Get_User_Data()==RenderObjClass::USER_DATA_MATERIAL_OVERRIDE)?1:0);
-							fclose(rbLog);
-						}
-					}
-				}
+				//rotorBlade takes PRIORITY above (see the !rotorBlade guard): the
+				//player-coloured AVCHINOOKAG carries USER_DATA_MATERIAL_OVERRIDE on its
+				//meshes, which used to divert the rotor blades into this alpha-override
+				//path before the rotor branch could ever run.
 				//adjust the opacity of this model
 				float oldOpacity=vmaterial->Get_Opacity();
 				Vector3 oldDiffuse;
@@ -2246,79 +2230,17 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 						// loop), so world-translation==0 marks those draws - they rasterize
 						// at the map origin into a D24X8 (no colour) and can never show.
 						// A colour pass with a REAL world translation is the forward pass.
-						static int rbInWorld = 0, rbOriginN = 0, rbLogN = 0;
 						D3DMATRIX rbW;
 						rbdev->GetTransform(D3DTS_WORLD,&rbW);
 						bool rbOrigin = (rbW._41 == 0.0f && rbW._42 == 0.0f && rbW._43 == 0.0f);
 						if (rbOrigin) {
-							// Shadow-map / menu pass: keep the legacy behaviour unchanged
-							// (draw with the mesh's own state, into a no-colour target).
-							rbOriginN++;
-							if (rbLogN < 40 && (rbOriginN <= 3 || (rbOriginN & 2047) == 1)) {
-								rbLogN++;
-								FILE *rbLog = fopen("E:/rotor_diag.log","a");
-								if (rbLog) {
-									fprintf(rbLog,"[ROTOR4] ORIGIN-PASS draw #%d %s (world identity, never visible)\n",
-										rbOriginN, mesh->Get_Name() ? mesh->Get_Name() : "?");
-									fclose(rbLog);
-								}
-							}
+							// Shadow-map pass: keep the legacy behaviour (mesh's own state,
+							// never visible on screen).
 							renderer->Render(mesh->Get_Base_Vertex_Offset());
 						} else {
-						// IN-WORLD colour draw == the visible forward pass. RED beacon: the
-						// first 300 in-world draws render OPAQUE PURE RED through the
-						// wrapper (proves the override states survive to the GPU). FINAL
-						// look: dark translucent blade quads, CONSTANT alpha 0.55 from
-						// TFACTOR (the asset's ~18% texture alpha can't nullify it).
-							rbInWorld++;
-							bool rbRed = (rbInWorld <= 2000);	// red beacon (shadow-map draws burn half the budget)
-							D3DVIEWPORT9 rbVP;
-							memset(&rbVP,0,sizeof(rbVP));
-							rbdev->GetViewport(&rbVP);
-							bool rbFull = (rbVP.Width >= 1024);	// visible frame (vs 256x256 shadow/reflection targets)
-							if (rbLogN < 40 && (rbInWorld <= 12 || (rbInWorld & 1023) == 1)) {
-								rbLogN++;
-								D3DMATRIX rbV;
-								rbdev->GetTransform(D3DTS_VIEW,&rbV);
-								bool rbNan = (rbW._41 != rbW._41) || (rbV._41 != rbV._41);
-								// Target/viewport/scissor identity: a non-fullscreen viewport
-								// means the draw lands in an offscreen pass, not the visible frame.
-								DWORD rbScEn = 0;
-								rbdev->GetRenderState(D3DRS_SCISSORTESTENABLE,&rbScEn);
-								RECT rbSc = {0,0,0,0};
-								if (rbScEn) rbdev->GetScissorRect(&rbSc);
-								IDirect3DSurface9 *rbRT = NULL, *rbBB = NULL;
-								D3DSURFACE_DESC rbRTd, rbbbd;
-								ZeroMemory(&rbRTd,sizeof(rbRTd)); ZeroMemory(&rbbbd,sizeof(rbbbd));
-								if (SUCCEEDED(rbdev->GetRenderTarget(0,&rbRT)) && rbRT) {
-									rbRT->GetDesc(&rbRTd); rbRT->Release();
-								}
-								if (SUCCEEDED(rbdev->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&rbBB)) && rbBB) {
-									rbbbd = rbRTd; // pre-init in case GetDesc is unavailable
-									rbBB->GetDesc(&rbbbd); rbBB->Release();
-								}
-								IDirect3DVertexShader9 *rbVS = NULL;
-								rbdev->GetVertexShader(&rbVS);
-								FILE *rbLog = fopen("E:/rotor_diag.log","a");
-								if (rbLog) {
-									fprintf(rbLog,"[ROTOR4] %s phase=%s%s inworld#=%d gbuf=%d cw=%X worldT=(%.1f,%.1f,%.1f) viewT=(%.0f,%.0f,%.0f) vp=%ux%u@%u,%u rt=%ux%u fmt=%u%s scEn=%u sc=(%ld,%ld,%ld,%ld) vsBound=%d pbr=%d%s\n",
-										mesh->Get_Name() ? mesh->Get_Name() : "?",
-										rbRed ? "RED" : "FINAL",
-										"",
-										rbInWorld, (int)g_gbufferActive, cw0,
-										rbW._41, rbW._42, rbW._43,
-										rbV._41, rbV._42, rbV._43,
-										rbVP.Width, rbVP.Height, rbVP.X, rbVP.Y,
-										rbRTd.Width, rbRTd.Height, (unsigned)rbRTd.Format,
-										(rbRT && rbbbd.Width == rbRTd.Width && rbbbd.Height == rbRTd.Height) ? "=BB" : "!=BB",
-										rbScEn, rbSc.left, rbSc.top, rbSc.right, rbSc.bottom,
-										rbVS ? 1 : 0,
-										(mesh->Peek_Model() && mesh->Peek_Model()->Has_Legacy_PBR()) ? 1 : 0,
-										rbNan ? "  <<NaN!!" : "");
-									fclose(rbLog);
-								}
-								if (rbVS) rbVS->Release();
-							}
+							// Visible forward pass: draw the blades with the override look -
+							// dark translucent blade quads, CONSTANT alpha 0.55 from TFACTOR
+							// (the asset's ~18% texture alpha can't nullify it).
 							// Push the mesh's own shader/material/texture to the device FIRST,
 							// so the captured TSS/TFACTOR values and the wrapper cache are in
 							// sync before anything is overridden.
@@ -2353,20 +2275,10 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 							// the override survives to the draw.
 							ShaderClass rbShader = theShader;	// mesh's own: LEQUAL, no zwrite, no alphatest
 							rbShader.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);	// thin blades, two-sided
-							if (rbRed) {
-								// opaque pure red sanity beacon
-								rbShader.Set_Src_Blend_Func(ShaderClass::SRCBLEND_ONE);
-								rbShader.Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ZERO);
-								DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR,0x00FF0000);
-							} else {
-								// dark translucent blades: backdrop *= (1 - 0.55); RGB/alpha
-								// both come from TFACTOR, so the asset's ~18% texture alpha
-								// can never weaken the effect.
-								rbShader.Set_Src_Blend_Func(ShaderClass::SRCBLEND_ZERO);
-								rbShader.Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ONE_MINUS_SRC_ALPHA);
-								DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR,0x8C000000);	// A=0.55, RGB=black
-							}
+							rbShader.Set_Src_Blend_Func(ShaderClass::SRCBLEND_ZERO);
+							rbShader.Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ONE_MINUS_SRC_ALPHA);
 							DX8Wrapper::Set_Shader(rbShader);
+							DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR,0x8C000000);	// A=0.55, RGB=black
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAARG1,D3DTA_TFACTOR);
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
@@ -2379,67 +2291,16 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 							// device kept the mesh's 5/6 + MODULATE while TFACTOR stuck).
 							// Raw device writes guarantee the device matches; the flush inside
 							// Draw_Triangles is now a no-op because cache == device == override.
-							rbdev->SetRenderState(D3DRS_ALPHABLENDENABLE, rbRed ? FALSE : TRUE);
-							rbdev->SetRenderState(D3DRS_SRCBLEND, rbRed ? D3DBLEND_ONE : D3DBLEND_ZERO);
-							rbdev->SetRenderState(D3DRS_DESTBLEND, rbRed ? D3DBLEND_ZERO : D3DBLEND_INVSRCALPHA);
-							rbdev->SetRenderState(D3DRS_TEXTUREFACTOR, rbRed ? 0x00FF0000 : 0x8C000000);
+							rbdev->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE);
+							rbdev->SetRenderState(D3DRS_SRCBLEND,D3DBLEND_ZERO);
+							rbdev->SetRenderState(D3DRS_DESTBLEND,D3DBLEND_INVSRCALPHA);
+							rbdev->SetRenderState(D3DRS_TEXTUREFACTOR,0x8C000000);
 							rbdev->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);
 							rbdev->SetTextureStageState(0,D3DTSS_ALPHAARG1,D3DTA_TFACTOR);
 							rbdev->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
 							rbdev->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_TFACTOR);
 							rbdev->SetRenderState(D3DRS_CULLMODE,D3DCULL_NONE);
-							{	// FULLSCREEN ground truth: the RAW device state right before the
-								// draw. Expected with the override in force: RED = blend 2/6
-								// (ONE,ZERO) tf=00FF0000; FINAL = blend 1/6 (ZERO,INVSRCALPHA)
-								// tf=8C000000; both aop=1 (SELECTARG1), vs=0.
-								static int rbFullN = 0;
-								if (rbFull && rbFullN < 48) {
-									rbFullN++;
-									DWORD rbsb=0,rsdb=0,rstf=0,rsaop=0,rszen=0;
-									IDirect3DVertexShader9 *rbVsChk = NULL;
-									rbdev->GetRenderState(D3DRS_SRCBLEND,&rbsb);
-									rbdev->GetRenderState(D3DRS_DESTBLEND,&rsdb);
-									rbdev->GetRenderState(D3DRS_TEXTUREFACTOR,&rstf);
-									rbdev->GetTextureStageState(0,D3DTSS_ALPHAOP,&rsaop);
-									rbdev->GetRenderState(D3DRS_ZENABLE,&rszen);
-									rbdev->GetVertexShader(&rbVsChk);
-									FILE *rbLog = fopen("E:/rotor_diag.log","a");
-									if (rbLog) {
-										fprintf(rbLog,"[ROTOR8] %s phase=%s inworld#=%d world=(%.1f,%.1f,%.1f) blend=%u/%u tf=%08X aop=%u zen=%u vs=%d\n",
-											mesh->Get_Name()?mesh->Get_Name():"?", rbRed?"RED":"FINAL",
-											rbInWorld, rbW._41,rbW._42,rbW._43,
-											rbsb,rsdb,rstf,rsaop,rszen,rbVsChk?1:0);
-										fclose(rbLog);
-									}
-									if (rbVsChk) rbVsChk->Release();
-								}
-							}
-							// Occlusion verdict: count the pixels the GPU actually rasterizes
-							// for this blade draw. Strictly bounded - the GetData flush
-							// stalls the pipeline, so it must not run per frame.
-							static int rbOccN = 0;
-							IDirect3DQuery9 *rbQ = NULL;
-							bool rbHaveQ = rbFull && (rbOccN < 16) &&
-								SUCCEEDED(rbdev->CreateQuery(D3DQUERYTYPE_OCCLUSION,&rbQ)) && rbQ;
-							if (rbHaveQ) {
-								rbOccN++;
-								rbQ->Issue(D3DISSUE_BEGIN);
-							}
 							renderer->Render(mesh->Get_Base_Vertex_Offset());
-							if (rbHaveQ) {
-								rbQ->Issue(D3DISSUE_END);
-								DWORD rbPix = 0;
-								HRESULT rbHr = rbQ->GetData(&rbPix,sizeof(rbPix),D3DGETDATA_FLUSH);
-								// NOTE: hr=S_FALSE(1) means "not ready" - the count is then
-								// unreliable (0 does NOT prove the GPU drew nothing).
-								FILE *rbLog = fopen("E:/rotor_diag.log","a");
-								if (rbLog) {
-									fprintf(rbLog,"[ROTOR8] OCCLUSION %s inworld#~%d pixels=%u hr=0x%08X (%u=OK,1=S_FALSE not-ready)\n",
-										mesh->Get_Name() ? mesh->Get_Name() : "?", rbInWorld, rbPix, rbHr, (unsigned)S_OK);
-									fclose(rbLog);
-								}
-								rbQ->Release();
-							}
 							// Restore through the wrapper so cache and device stay in sync
 							// (raw restores would leave the cache thinking the override is
 							// still active - the next state flush would resurrect it).
@@ -2459,20 +2320,7 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 				}
 			}
 			else
-			{
-				if (rotorBlade) {	// should be impossible - if this logs, some path leaks here
-					static int rbCN = 0;
-					if (rbCN < 8) {
-						rbCN++;
-						FILE *rbLog = fopen("E:/rotor_diag.log","a");
-						if (rbLog) {
-							fprintf(rbLog,"[ROTOR8] C-BRANCH %s (mesh's own state)\n",mesh->Get_Name()?mesh->Get_Name():"?");
-							fclose(rbLog);
-						}
-					}
-				}
 				renderer->Render(mesh->Get_Base_Vertex_Offset());
-			}
 		}
 //--------------------------------------------------------------------
 		if (mesh->Get_ObjectScale() != 1.0f)
