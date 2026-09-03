@@ -690,6 +690,22 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 			}
 			}
 	}
+
+	// Rotor blades must NEVER use the sorting pipeline. The loader auto-sets the
+	// SORT flag on any DestBlend!=ZERO shader (meshmdlio.cpp), which registers
+	// these meshes into the SORTING FVF container: their polygons get captured
+	// into SortingRendererClass and flushed at the very END of the pass with the
+	// mesh's own shader (front-face culled, ~18%-alpha bright texture) - painting
+	// OVER the dx8renderer override draw when viewed from above while being
+	// culled from below. Clearing SORT keeps them in the immediate pipeline where
+	// the dx8renderer rotorBlade branch fully controls the appearance.
+	{
+		const char *hn2 = Get_Name();
+		if (hn2 && (strstr(hn2,"PROPS") || strstr(hn2,"PROPELLER"))
+			&& Is_Translucent() && !Is_Additive()) {
+			Model->Set_Flag(MeshGeometryClass::SORT, false);
+		}
+	}
 	// If static sort lists are enabled and this mesh has a sort level, put it on the list instead
 	// of rendering it.
 	unsigned int sort_level = (unsigned int)Model->Get_Sort_Level();
