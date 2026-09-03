@@ -2372,10 +2372,26 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG1,D3DTA_TFACTOR);
 							DX8Wrapper::Apply_Render_State_Changes();
-							{	// FULLSCREEN ground truth: the RAW device state at draw time. If the
-								// override reached the device, blend=2/6 (ONE,ZERO red) or 1/6
-								// (ZERO,INVSRCALPHA black), tf=00FF0000/8C000000, aop=1(SELECTARG1).
-								// Anything else = the states really are being rewritten in between.
+							// FINAL RAW PUSH before the draw. The wrapper sets above make the
+							// cache hold the override (so the state flush inside Draw cannot
+							// rewrite it), but the wrapper's diff-based push paths are not
+							// reliable for ShaderClass blend / texture-stage states (measured:
+							// device kept the mesh's 5/6 + MODULATE while TFACTOR stuck).
+							// Raw device writes guarantee the device matches; the flush inside
+							// Draw_Triangles is now a no-op because cache == device == override.
+							rbdev->SetRenderState(D3DRS_ALPHABLENDENABLE, rbRed ? FALSE : TRUE);
+							rbdev->SetRenderState(D3DRS_SRCBLEND, rbRed ? D3DBLEND_ONE : D3DBLEND_ZERO);
+							rbdev->SetRenderState(D3DRS_DESTBLEND, rbRed ? D3DBLEND_ZERO : D3DBLEND_INVSRCALPHA);
+							rbdev->SetRenderState(D3DRS_TEXTUREFACTOR, rbRed ? 0x00FF0000 : 0x8C000000);
+							rbdev->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);
+							rbdev->SetTextureStageState(0,D3DTSS_ALPHAARG1,D3DTA_TFACTOR);
+							rbdev->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
+							rbdev->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_TFACTOR);
+							rbdev->SetRenderState(D3DRS_CULLMODE,D3DCULL_NONE);
+							{	// FULLSCREEN ground truth: the RAW device state right before the
+								// draw. Expected with the override in force: RED = blend 2/6
+								// (ONE,ZERO) tf=00FF0000; FINAL = blend 1/6 (ZERO,INVSRCALPHA)
+								// tf=8C000000; both aop=1 (SELECTARG1), vs=0.
 								static int rbFullN = 0;
 								if (rbFull && rbFullN < 48) {
 									rbFullN++;
