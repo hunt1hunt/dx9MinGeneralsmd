@@ -1808,7 +1808,6 @@ void DX8TextureCategoryClass::Render(void)
 
 
 	bool renderTasksRemaining=false;
-	bool rotorBlade = false;	// vanilla rotor-blade mesh (force alpha blend + two-sided)
 
 	PolyRenderTaskClass * prt = render_task_head;
 	PolyRenderTaskClass * last_prt = NULL;
@@ -1827,20 +1826,6 @@ void DX8TextureCategoryClass::Render(void)
 			prt = prt->Get_Next_Visible();
 			renderTasksRemaining = true;
 			continue;
-		}
-
-		// Vanilla helicopter rotor blades (e.g. AVChinook PROPELLER01/02) carry a
-		// W3D shader whose SrcBlend is ZERO - the fragment contributes nothing to
-		// the frame, so the rendered rotor is invisible even though it animates and
-		// casts its (volumetric) shadow. Force a normal alpha blend + two-sided
-		// render for these specific meshes so the rotor shows as spinning blades.
-		// The blades use a unique material/texture so they form their own batch;
-		// the blend/cull is re-applied right before each Render below because the
-		// alpha-override path re-applies the shader (undoing this).
-		rotorBlade = false;
-		{
-			const char *mn = mesh->Get_Name();
-			if (mn && (strstr(mn, "PROPELLER") || strstr(mn, "PROPS"))) rotorBlade = true;
 		}
 
 					// Phase 3.5: Set legacy PBR shader constants
@@ -2143,13 +2128,51 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 		//(gth) this if statement's contents are not tabbed to avoid perforce merge problems...
 		if (!DX8RendererDebugger::Is_Enabled() || !mesh->Is_Disabled_By_Debugger()) {
 
-		if ((!!mesh->Peek_Model()->Get_Flag(MeshGeometryClass::SORT)) && WW3D::Is_Sorting_Enabled()) {
+		// Vanilla helicopter rotor blades (AVChinook PROPS01/02 - two rotor
+		// assemblies of three blades each) are translucent (alpha-blur texture) and
+		// carry the SORT flag, so they normally go through the deferred sorted flush -
+		// where they never become visible on this pipeline. Bypass the sorted path and
+		// draw them immediately instead (branch below).
+		bool rotorBlade = false;
+		{
+			const char *rname2 = mesh->Get_Name();
+			// Only the BLADE meshes qualify: AVChinook PROPS01/02 are the translucent
+			// ones (SRC_ALPHA/INV_SRC_ALPHA, depth-write-off, AVComanche_p.tga alpha
+			// blur, CAST_SHADOW). The opaque PROPELLER01/02 rotor HUBS use the normal
+			// opaque shader (AVChinook.tga) and must keep their lit path - they are
+			// filtered out here by Is_Translucent(), otherwise they were hijacked into
+			// this branch and painted flat black with no depth test.
+			if (rname2 && (strstr(rname2, "PROPS") || strstr(rname2, "PROPELLER"))
+				&& !mesh->Is_Additive() && mesh->Is_Translucent())
+				rotorBlade = true;
+		}
+		if ((!rotorBlade) && (!!mesh->Peek_Model()->Get_Flag(MeshGeometryClass::SORT)) && WW3D::Is_Sorting_Enabled()) {
 			renderer->Render_Sorted(mesh->Get_Base_Vertex_Offset(),mesh->Get_Bounding_Sphere());
 		} else {
 			//non-transparent mesh that will be rendered immediately.  Okay to adjust the shader/material
 			//if necessary
-			if (mesh->Get_Alpha_Override() != 1.0 || (mesh->Get_User_Data() && *(int *)mesh->Get_User_Data() == RenderObjClass::USER_DATA_MATERIAL_OVERRIDE))
-			{	//mesh has material override of some kind
+			if (!rotorBlade && (mesh->Get_Alpha_Override() != 1.0 || (mesh->Get_User_Data() && *(int *)mesh->Get_User_Data() == RenderObjClass::USER_DATA_MATERIAL_OVERRIDE)))
+			{	//mesh has material override of some kind.
+				//rotorBlade takes PRIORITY: the player-coloured AVCHINOOKAG carries
+				//USER_DATA_MATERIAL_OVERRIDE on its meshes, which diverted the rotor
+				//blades into this alpha-override path (mesh's own shader look: bright
+				//18% blur, invisible on bright ground) before the rotor branch could
+				//run - that is why no override/red ever appeared on the visible
+				//helicopter while the branch worked on the plain AVCHINOOK model.
+				if (rotorBlade) {	// must be impossible since P1.7 - if this logs, the reorder is not effective
+					static int rbAN = 0;
+					if (rbAN < 8) {
+						rbAN++;
+						FILE *rbLog = fopen("E:/rotor_diag.log","a");
+						if (rbLog) {
+							fprintf(rbLog,"[ROTOR8] A-BRANCH STOLE %s ao=%.2f ud=%d\n",
+								mesh->Get_Name()?mesh->Get_Name():"?",
+								mesh->Get_Alpha_Override(),
+								(mesh->Get_User_Data() && *(int*)mesh->Get_User_Data()==RenderObjClass::USER_DATA_MATERIAL_OVERRIDE)?1:0);
+							fclose(rbLog);
+						}
+					}
+				}
 				//adjust the opacity of this model
 				float oldOpacity=vmaterial->Get_Opacity();
 				Vector3 oldDiffuse;
@@ -2178,54 +2201,14 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 					DX8Wrapper::Set_Shader(theAlphaShader);
 					DX8Wrapper::Apply_Render_State_Changes();
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,(int)((float)0x60*mesh->Get_Alpha_Override()));
-					if (rotorBlade) {
-						IDirect3DDevice9 *rdev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
-						if (rdev) {
-							vmaterial->Set_Diffuse(0, 0, 0);	// dark blades, not sun-colored
-							vmaterial->Set_Opacity(0.1f);
-							// Darken-by-alpha: the blades SHADE the backdrop (their bright
-							// colour never reaches the frame) - a dark translucent blur.
-							rdev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-							rdev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-							rdev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-						}
-					}
 					renderer->Render(mesh->Get_Base_Vertex_Offset());
-					if (rotorBlade) {
-						vmaterial->Set_Diffuse(1.0f, 1.0f, 1.0f);
-						vmaterial->Set_Opacity(1.0f);
-					}
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,0x60);
 					vmaterial->Set_Opacity(oldOpacity);	//restore previous value
 					vmaterial->Set_Diffuse(oldDiffuse.X,oldDiffuse.Y,oldDiffuse.Z);
 					DX8Wrapper::Set_Shader(theShader);	//restore previous value
 				}
 				else {
-					Vector3 rvOldDiff(0,0,0); float rvOldOp = 1.0f;
-					if (rotorBlade) {
-						// RA3 rotor-blur: dark translucent spinning blades. Force the
-						// material diffuse BLACK (the blade texture is bright, and lit
-						// it looks sun-colored - invisible on lit terrain) and blend by
-						// the texture alpha so the blade-cross pattern darkens the
-						// backdrop while the gaps stay clear, with some transparency.
-						IDirect3DDevice9 *rdev = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
-						if (rdev) {
-							vmaterial->Get_Diffuse(&rvOldDiff);
-							rvOldOp = vmaterial->Get_Opacity();
-							vmaterial->Set_Diffuse(0, 0, 0);
-							vmaterial->Set_Opacity(0.1f);
-							// Darken-by-alpha: the blades SHADE the backdrop (their bright
-							// colour never reaches the frame) - a dark translucent blur.
-							rdev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-							rdev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-							rdev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-						}
-					}
 					renderer->Render(mesh->Get_Base_Vertex_Offset());
-					if (rotorBlade) {
-						vmaterial->Set_Diffuse(rvOldDiff.X, rvOldDiff.Y, rvOldDiff.Z);
-						vmaterial->Set_Opacity(rvOldOp);
-					}
 				}
 
 				if (oldMapper)	//did we override the uv offset?
@@ -2235,8 +2218,245 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 				DX8Wrapper::Set_Material(NULL);	//force a reset of vertex material since we secretly changed opacity
 				DX8Wrapper::Set_Material(vmaterial);	//restore previous material.
 			} 
+			else if (rotorBlade) {
+			// AVChinook PROPS01/02 rotor blades: draw them IMMEDIATELY in the forward
+			// pass as a semi-transparent DARK blur. The blade mesh carries a real alpha
+			// blur texture (AVComanche_p.tga, DXT5 alpha) and an alpha-blend shader, but
+			// on the deferred pipeline its SORT-path draw never becomes visible, so it is
+			// routed here (sorted path bypassed above). Darken-by-alpha: the source
+			// contribution is ZERO and the backdrop is scaled by (1 - A), so the bright
+			// blade texture colour never reaches the frame and the blades read as a dark
+			// translucent blur on ANY background, gaps stay clear (no geometry there).
+				if (g_gbufferActive) {
+					// Deferred G-Buffer: blades must not be written (they are forward-only).
+				} else {
+					IDirect3DDevice9 *rbdev = (IDirect3DDevice9*)DX8Wrapper::_Get_D3D_Device8();
+					DWORD cwRGB = D3DCOLORWRITEENABLE_RED|D3DCOLORWRITEENABLE_GREEN|D3DCOLORWRITEENABLE_BLUE;
+					DWORD cw0 = cwRGB;
+					if (rbdev) rbdev->GetRenderState(D3DRS_COLORWRITEENABLE,&cw0);
+					if (!rbdev || (cw0 & cwRGB) != cwRGB) {
+						// Not a normal colour pass (shadow-map pass writes no colour, the
+						// selection/wireframe pass writes alpha only): draw with the mesh's
+						// own state so those passes stay untouched.
+						renderer->Render(mesh->Get_Base_Vertex_Offset());
+					} else {
+						// PASS CLASSIFICATION by the RAW DEVICE world matrix (the wrapper
+						// Get_Transform cache is known to go stale). The shadow-map pass
+						// forces WORLD to identity before each object (W3DScene shadow
+						// loop), so world-translation==0 marks those draws - they rasterize
+						// at the map origin into a D24X8 (no colour) and can never show.
+						// A colour pass with a REAL world translation is the forward pass.
+						static int rbInWorld = 0, rbOriginN = 0, rbLogN = 0;
+						D3DMATRIX rbW;
+						rbdev->GetTransform(D3DTS_WORLD,&rbW);
+						bool rbOrigin = (rbW._41 == 0.0f && rbW._42 == 0.0f && rbW._43 == 0.0f);
+						if (rbOrigin) {
+							// Shadow-map / menu pass: keep the legacy behaviour unchanged
+							// (draw with the mesh's own state, into a no-colour target).
+							rbOriginN++;
+							if (rbLogN < 40 && (rbOriginN <= 3 || (rbOriginN & 2047) == 1)) {
+								rbLogN++;
+								FILE *rbLog = fopen("E:/rotor_diag.log","a");
+								if (rbLog) {
+									fprintf(rbLog,"[ROTOR4] ORIGIN-PASS draw #%d %s (world identity, never visible)\n",
+										rbOriginN, mesh->Get_Name() ? mesh->Get_Name() : "?");
+									fclose(rbLog);
+								}
+							}
+							renderer->Render(mesh->Get_Base_Vertex_Offset());
+						} else {
+						// IN-WORLD colour draw == the visible forward pass. RED beacon: the
+						// first 300 in-world draws render OPAQUE PURE RED through the
+						// wrapper (proves the override states survive to the GPU). FINAL
+						// look: dark translucent blade quads, CONSTANT alpha 0.55 from
+						// TFACTOR (the asset's ~18% texture alpha can't nullify it).
+							rbInWorld++;
+							bool rbRed = (rbInWorld <= 2000);	// red beacon (shadow-map draws burn half the budget)
+							D3DVIEWPORT9 rbVP;
+							memset(&rbVP,0,sizeof(rbVP));
+							rbdev->GetViewport(&rbVP);
+							bool rbFull = (rbVP.Width >= 1024);	// visible frame (vs 256x256 shadow/reflection targets)
+							if (rbLogN < 40 && (rbInWorld <= 12 || (rbInWorld & 1023) == 1)) {
+								rbLogN++;
+								D3DMATRIX rbV;
+								rbdev->GetTransform(D3DTS_VIEW,&rbV);
+								bool rbNan = (rbW._41 != rbW._41) || (rbV._41 != rbV._41);
+								// Target/viewport/scissor identity: a non-fullscreen viewport
+								// means the draw lands in an offscreen pass, not the visible frame.
+								DWORD rbScEn = 0;
+								rbdev->GetRenderState(D3DRS_SCISSORTESTENABLE,&rbScEn);
+								RECT rbSc = {0,0,0,0};
+								if (rbScEn) rbdev->GetScissorRect(&rbSc);
+								IDirect3DSurface9 *rbRT = NULL, *rbBB = NULL;
+								D3DSURFACE_DESC rbRTd, rbbbd;
+								ZeroMemory(&rbRTd,sizeof(rbRTd)); ZeroMemory(&rbbbd,sizeof(rbbbd));
+								if (SUCCEEDED(rbdev->GetRenderTarget(0,&rbRT)) && rbRT) {
+									rbRT->GetDesc(&rbRTd); rbRT->Release();
+								}
+								if (SUCCEEDED(rbdev->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&rbBB)) && rbBB) {
+									rbbbd = rbRTd; // pre-init in case GetDesc is unavailable
+									rbBB->GetDesc(&rbbbd); rbBB->Release();
+								}
+								IDirect3DVertexShader9 *rbVS = NULL;
+								rbdev->GetVertexShader(&rbVS);
+								FILE *rbLog = fopen("E:/rotor_diag.log","a");
+								if (rbLog) {
+									fprintf(rbLog,"[ROTOR4] %s phase=%s%s inworld#=%d gbuf=%d cw=%X worldT=(%.1f,%.1f,%.1f) viewT=(%.0f,%.0f,%.0f) vp=%ux%u@%u,%u rt=%ux%u fmt=%u%s scEn=%u sc=(%ld,%ld,%ld,%ld) vsBound=%d pbr=%d%s\n",
+										mesh->Get_Name() ? mesh->Get_Name() : "?",
+										rbRed ? "RED" : "FINAL",
+										"",
+										rbInWorld, (int)g_gbufferActive, cw0,
+										rbW._41, rbW._42, rbW._43,
+										rbV._41, rbV._42, rbV._43,
+										rbVP.Width, rbVP.Height, rbVP.X, rbVP.Y,
+										rbRTd.Width, rbRTd.Height, (unsigned)rbRTd.Format,
+										(rbRT && rbbbd.Width == rbRTd.Width && rbbbd.Height == rbRTd.Height) ? "=BB" : "!=BB",
+										rbScEn, rbSc.left, rbSc.top, rbSc.right, rbSc.bottom,
+										rbVS ? 1 : 0,
+										(mesh->Peek_Model() && mesh->Peek_Model()->Has_Legacy_PBR()) ? 1 : 0,
+										rbNan ? "  <<NaN!!" : "");
+									fclose(rbLog);
+								}
+								if (rbVS) rbVS->Release();
+							}
+							// Push the mesh's own shader/material/texture to the device FIRST,
+							// so the captured TSS/TFACTOR values and the wrapper cache are in
+							// sync before anything is overridden.
+							DX8Wrapper::Apply_Render_State_Changes();
+							DWORD ao0=0,aa0=0,tf0=0;
+							rbdev->GetTextureStageState(0,D3DTSS_ALPHAOP,&ao0);
+							rbdev->GetTextureStageState(0,D3DTSS_ALPHAARG1,&aa0);
+							DWORD co0=0,ca0=0;
+							rbdev->GetTextureStageState(0,D3DTSS_COLOROP,&co0);
+							rbdev->GetTextureStageState(0,D3DTSS_COLORARG1,&ca0);
+							rbdev->GetRenderState(D3DRS_TEXTUREFACTOR,&tf0);
+							IDirect3DPixelShader9 *rbPrevPS = NULL;
+							rbdev->GetPixelShader(&rbPrevPS);
+							rbdev->SetPixelShader(NULL);	// fixed function so TFACTOR/stage states apply
+							// THE ROOT CAUSE (proven by occlusion query: pixels=0 with
+							// vsBound=1): the PBR vertex shader bound for this PBR unit
+							// transforms the blade vertices with ITS constant registers,
+							// clipping every triangle - a fixed-function (PS=NULL + TSS)
+							// draw under a bound VS rasterizes NOTHING. Unbind it so the
+							// draw uses the fixed-function WORLD/VIEW/PROJ registers, which
+							// the flush loop sets per task and which read as sane matrices.
+							IDirect3DVertexShader9 *rbPrevVS = NULL;
+							rbdev->GetVertexShader(&rbPrevVS);
+							rbdev->SetVertexShader(NULL);	// fixed-function transform pipeline
+							// Override blend/stage states THROUGH THE WRAPPER (cache-aware).
+							// Raw device SetRenderState calls get CLOBBERED: the state flush
+							// inside renderer->Render() re-pushes the wrapper's cached (mesh
+							// shader) states over them - that is why the blades showed their
+							// own 18%-alpha texture look (bright blur on shadowed ground,
+							// invisible on bright ground) and never the override colours.
+							// Wrapper-set states ARE the cache, so that flush is a no-op and
+							// the override survives to the draw.
+							ShaderClass rbShader = theShader;	// mesh's own: LEQUAL, no zwrite, no alphatest
+							rbShader.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);	// thin blades, two-sided
+							if (rbRed) {
+								// opaque pure red sanity beacon
+								rbShader.Set_Src_Blend_Func(ShaderClass::SRCBLEND_ONE);
+								rbShader.Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ZERO);
+								DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR,0x00FF0000);
+							} else {
+								// dark translucent blades: backdrop *= (1 - 0.55); RGB/alpha
+								// both come from TFACTOR, so the asset's ~18% texture alpha
+								// can never weaken the effect.
+								rbShader.Set_Src_Blend_Func(ShaderClass::SRCBLEND_ZERO);
+								rbShader.Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ONE_MINUS_SRC_ALPHA);
+								DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR,0x8C000000);	// A=0.55, RGB=black
+							}
+							DX8Wrapper::Set_Shader(rbShader);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAARG1,D3DTA_TFACTOR);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG1,D3DTA_TFACTOR);
+							DX8Wrapper::Apply_Render_State_Changes();
+							{	// FULLSCREEN ground truth: the RAW device state at draw time. If the
+								// override reached the device, blend=2/6 (ONE,ZERO red) or 1/6
+								// (ZERO,INVSRCALPHA black), tf=00FF0000/8C000000, aop=1(SELECTARG1).
+								// Anything else = the states really are being rewritten in between.
+								static int rbFullN = 0;
+								if (rbFull && rbFullN < 48) {
+									rbFullN++;
+									DWORD rbsb=0,rsdb=0,rstf=0,rsaop=0,rszen=0;
+									IDirect3DVertexShader9 *rbVsChk = NULL;
+									rbdev->GetRenderState(D3DRS_SRCBLEND,&rbsb);
+									rbdev->GetRenderState(D3DRS_DESTBLEND,&rsdb);
+									rbdev->GetRenderState(D3DRS_TEXTUREFACTOR,&rstf);
+									rbdev->GetTextureStageState(0,D3DTSS_ALPHAOP,&rsaop);
+									rbdev->GetRenderState(D3DRS_ZENABLE,&rszen);
+									rbdev->GetVertexShader(&rbVsChk);
+									FILE *rbLog = fopen("E:/rotor_diag.log","a");
+									if (rbLog) {
+										fprintf(rbLog,"[ROTOR8] %s phase=%s inworld#=%d world=(%.1f,%.1f,%.1f) blend=%u/%u tf=%08X aop=%u zen=%u vs=%d\n",
+											mesh->Get_Name()?mesh->Get_Name():"?", rbRed?"RED":"FINAL",
+											rbInWorld, rbW._41,rbW._42,rbW._43,
+											rbsb,rsdb,rstf,rsaop,rszen,rbVsChk?1:0);
+										fclose(rbLog);
+									}
+									if (rbVsChk) rbVsChk->Release();
+								}
+							}
+							// Occlusion verdict: count the pixels the GPU actually rasterizes
+							// for this blade draw. Strictly bounded - the GetData flush
+							// stalls the pipeline, so it must not run per frame.
+							static int rbOccN = 0;
+							IDirect3DQuery9 *rbQ = NULL;
+							bool rbHaveQ = rbFull && (rbOccN < 16) &&
+								SUCCEEDED(rbdev->CreateQuery(D3DQUERYTYPE_OCCLUSION,&rbQ)) && rbQ;
+							if (rbHaveQ) {
+								rbOccN++;
+								rbQ->Issue(D3DISSUE_BEGIN);
+							}
+							renderer->Render(mesh->Get_Base_Vertex_Offset());
+							if (rbHaveQ) {
+								rbQ->Issue(D3DISSUE_END);
+								DWORD rbPix = 0;
+								HRESULT rbHr = rbQ->GetData(&rbPix,sizeof(rbPix),D3DGETDATA_FLUSH);
+								// NOTE: hr=S_FALSE(1) means "not ready" - the count is then
+								// unreliable (0 does NOT prove the GPU drew nothing).
+								FILE *rbLog = fopen("E:/rotor_diag.log","a");
+								if (rbLog) {
+									fprintf(rbLog,"[ROTOR8] OCCLUSION %s inworld#~%d pixels=%u hr=0x%08X (%u=OK,1=S_FALSE not-ready)\n",
+										mesh->Get_Name() ? mesh->Get_Name() : "?", rbInWorld, rbPix, rbHr, (unsigned)S_OK);
+									fclose(rbLog);
+								}
+								rbQ->Release();
+							}
+							// Restore through the wrapper so cache and device stay in sync
+							// (raw restores would leave the cache thinking the override is
+							// still active - the next state flush would resurrect it).
+							DX8Wrapper::Set_Shader(theShader);
+							DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR,tf0);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAOP,ao0);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAARG1,aa0);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,co0);
+							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG1,ca0);
+							DX8Wrapper::Apply_Render_State_Changes();
+							if (rbPrevPS) rbdev->SetPixelShader(rbPrevPS);
+							if (rbPrevPS) rbPrevPS->Release();
+							if (rbPrevVS) rbdev->SetVertexShader(rbPrevVS);
+							if (rbPrevVS) rbPrevVS->Release();
+						}
+					}
+				}
+			}
 			else
+			{
+				if (rotorBlade) {	// should be impossible - if this logs, some path leaks here
+					static int rbCN = 0;
+					if (rbCN < 8) {
+						rbCN++;
+						FILE *rbLog = fopen("E:/rotor_diag.log","a");
+						if (rbLog) {
+							fprintf(rbLog,"[ROTOR8] C-BRANCH %s (mesh's own state)\n",mesh->Get_Name()?mesh->Get_Name():"?");
+							fclose(rbLog);
+						}
+					}
+				}
 				renderer->Render(mesh->Get_Base_Vertex_Offset());
+			}
 		}
 //--------------------------------------------------------------------
 		if (mesh->Get_ObjectScale() != 1.0f)

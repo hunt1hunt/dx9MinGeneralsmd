@@ -137,7 +137,6 @@ static SimpleDynVecClass<uint32> temp_apt;
 #define COMPUTE_NORMALS
 #endif
 
-
 /*
 ** Temporary storage used during decal creation
 */
@@ -664,6 +663,33 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 		return;
 	}
 
+	// HELI MESH PROBE (one-shot per unique name): list every mesh actually rendered for
+	// helicopter models (incl. child sub-objects) so the REAL rotor-blade meshes can be
+	// found, instead of guessed.
+	{
+		static char s_heli[80][72];
+		static int s_heliCount = 0;
+		const char *hn = Get_Name();
+		if (hn && s_heliCount < 80
+			&& (strstr(hn,"CHIN")||strstr(hn,"HOKUM")||strstr(hn,"HELI")
+			|| strstr(hn,"PROPS")||strstr(hn,"PROPELLER")||strstr(hn,"BLADE")
+			|| strstr(hn,"ROTOR")||strstr(hn,"SCREW"))) {
+			bool seen = false;
+			for (int k = 0; k < s_heliCount; k++) { if (strcmp(s_heli[k],hn)==0) { seen=true; break; } }
+			if (!seen) {
+				strncpy(s_heli[s_heliCount],hn,71); s_heli[s_heliCount][71]=0; s_heliCount++;
+				FILE *hf = fopen("E:/helimesh_diag.log","a");
+				if (hf) {
+					MeshModelClass *hm = Peek_Model();
+					fprintf(hf,"[HEL] %s alpha=%d trans=%d add=%d sort=%d polys=%d verts=%d\n",
+						hn,(int)Is_Alpha(),(int)Is_Translucent(),(int)Is_Additive(),
+						(int)(hm?hm->Get_Sort_Level():-1),
+						(int)(hm?hm->Get_Polygon_Count():0),(int)(hm?hm->Get_Vertex_Count():0));
+					fclose(hf);
+				}
+			}
+			}
+	}
 	// If static sort lists are enabled and this mesh has a sort level, put it on the list instead
 	// of rendering it.
 	unsigned int sort_level = (unsigned int)Model->Get_Sort_Level();
@@ -734,31 +760,24 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 			bool is_alpha =	(Model->Get_Single_Shader().Get_Alpha_Test() == ShaderClass::ALPHATEST_ENABLE) ||
 									(Model->Get_Single_Shader().Get_Src_Blend_Func() == ShaderClass::SRCBLEND_SRC_ALPHA);
 
-			// Vanilla helicopter rotor blades (AVChinook PROPELLER01/02 / PROPS*)
-			// carry an ALPHA-CHANNEL texture but their W3D shader doesn't set the
-			// alpha-test/blend flags, so Is_Translucent() is false and they land in
-			// the deferred G-Buffer as opaque - rendering them invisible. Force them
-			// through FORWARD rendering (skipped from the G-Buffer) - forward
-			// rendering shows the spinning blades (verified by the user).
-			bool forceForward = false;
-			{
-				const char *mn = Get_Name();
-				if (mn && (strstr(mn, "PROPELLER") || strstr(mn, "PROPS"))) forceForward = true;
-			}
-
-			if (	(rinfo.Current_Override_Flags() & RenderInfoClass::RINFO_OVERRIDE_SHADOW_RENDERING) &&
-					(is_alpha == true))
+			// Vanilla helicopter rotor blades (AVChinook PROPELLER01/02 / PROPS*) are
+			// translucent (alpha texture + SORT flag). They must render only in the forward
+			// (post-lighting) pass, never in the deferred G-Buffer - writing them there as
+			// opaque also puts their DEPTH in the G-Buffer, which then depth-rejects the
+			// forward translucent draw and the blades disappear.
+			
+			if ((rinfo.Current_Override_Flags() & RenderInfoClass::RINFO_OVERRIDE_SHADOW_RENDERING) &&
+				(is_alpha == true))
 			{
 				render_base_passes = true;
 			}
 
-			// Deferred G-Buffer pass: translucent (alpha-blended) meshes AND the
-			// force-forward rotor blades must NOT be written to the G-Buffer - they
-			// are forward-rendered after lighting. Writing them here as opaque also
-			// puts their DEPTH in the G-Buffer, which then depth-rejects the forward
-			// translucent draw (the vanilla helicopter rotor blades became invisible
-			// after the deferred upgrade).
-			if (g_gbufferActive && (forceForward || Is_Translucent())) {
+			// Deferred G-Buffer pass: translucent (alpha-blended) meshes - including the
+			// helicopter rotor blades (alpha texture + SORT flag), which must stay in the
+			// forward pass - must NOT be written to the G-Buffer. Writing them there as
+			// opaque also puts their DEPTH in the G-Buffer, which then depth-rejects the
+			// forward translucent draw and the blades disappear.
+			if (g_gbufferActive && Is_Translucent()) {
 				render_base_passes = false;
 			}
 
@@ -786,7 +805,7 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 				
 				MaterialPassClass * matpass = rinfo.Peek_Additional_Pass(i);
 
-				if ((!forceForward && !Is_Translucent()) || (matpass->Is_Enabled_On_Translucent_Meshes())) {
+				if ((!Is_Translucent()) || (matpass->Is_Enabled_On_Translucent_Meshes())) {
 					
 					/*
 					** If the base pass for this mesh has been disabled, we have to make sure

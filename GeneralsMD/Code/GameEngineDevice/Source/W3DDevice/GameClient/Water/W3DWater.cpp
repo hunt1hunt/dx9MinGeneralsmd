@@ -2351,6 +2351,7 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 	loadSetting( &m_settings[ TIME_OF_DAY_NIGHT ], TIME_OF_DAY_NIGHT );
 
 	Set_Sort_Level(2);	//force water to be drawn after all other non translucent objects in scene.
+	//Set_Sort_Level(0);
 	Set_Force_Visible(TRUE);	//water is always visible since it's a composite object made of multiple planes all over the map.
 
 	ReAcquireResources();
