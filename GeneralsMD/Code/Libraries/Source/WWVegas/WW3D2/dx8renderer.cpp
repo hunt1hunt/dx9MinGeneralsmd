@@ -2273,8 +2273,11 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 							// invisible on bright ground) and never the override colours.
 							// Wrapper-set states ARE the cache, so that flush is a no-op and
 							// the override survives to the draw.
-							ShaderClass rbShader = theShader;	// mesh's own: LEQUAL, no zwrite, no alphatest
+							ShaderClass rbShader = theShader;	// mesh's own: LEQUAL, no alphatest
 							rbShader.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);	// thin blades, two-sided
+							rbShader.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_ENABLE);	// blades own their depth:
+							// later-drawn rocks/hull repaint via LEQUAL-vs-own-G-Buffer-depth; with the
+							// blade depth written they fail and can no longer erase the blades.
 							rbShader.Set_Src_Blend_Func(ShaderClass::SRCBLEND_ZERO);
 							rbShader.Set_Dst_Blend_Func(ShaderClass::DSTBLEND_ONE_MINUS_SRC_ALPHA);
 							DX8Wrapper::Set_Shader(rbShader);
@@ -2300,6 +2303,7 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 							rbdev->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
 							rbdev->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_TFACTOR);
 							rbdev->SetRenderState(D3DRS_CULLMODE,D3DCULL_NONE);
+							rbdev->SetRenderState(D3DRS_ZWRITEENABLE,TRUE);	// match the depth mask above
 							renderer->Render(mesh->Get_Base_Vertex_Offset());
 							// Restore through the wrapper so cache and device stay in sync
 							// (raw restores would leave the cache thinking the override is
@@ -2311,6 +2315,15 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,co0);
 							DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG1,ca0);
 							DX8Wrapper::Apply_Render_State_Changes();
+							// The wrapper restore above fixes the CACHE only: Apply has no
+							// TSS section, so the DEVICE keeps the override stage states
+							// (SELECTARG1/TFACTOR) - the next meshes then rendered with
+							// TFACTOR (restored to 0xFFFFFFFF = white) flashed pure white.
+							// Raw-restore the TSS so the device matches the cache again.
+							rbdev->SetTextureStageState(0,D3DTSS_ALPHAOP,ao0);
+							rbdev->SetTextureStageState(0,D3DTSS_ALPHAARG1,aa0);
+							rbdev->SetTextureStageState(0,D3DTSS_COLOROP,co0);
+							rbdev->SetTextureStageState(0,D3DTSS_COLORARG1,ca0);
 							if (rbPrevPS) rbdev->SetPixelShader(rbPrevPS);
 							if (rbPrevPS) rbPrevPS->Release();
 							if (rbPrevVS) rbdev->SetVertexShader(rbPrevVS);

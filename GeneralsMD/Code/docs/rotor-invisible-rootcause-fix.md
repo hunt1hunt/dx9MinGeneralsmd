@@ -71,6 +71,22 @@ SORT 标志 → 注册进**排序型 FVF 容器**（VB=DYNAMIC_SORTING）→ `Dr
 **修复**：`mesh.cpp` — 注册前对 PROPS/PROPELLER 半透明网格
 `Model->Set_Flag(MeshGeometryClass::SORT, false)`，彻底脱离排序管线。
 
+## 四b、后续两问（2026-09-04，验证中发现的回归与泄漏）
+
+### ⑥ 清 SORT 后的绘制时机回归：桨叶被后方岩石"遮挡"
+SORT 清除后叶桨改为提交序直绘（不再有排序池"顺带最后画"的保护），后画的岩石/机身
+以 LEQUAL 对自身 G-Buffer 深度必过 → 重画像素盖掉不写深度的桨叶。
+**修复**：叶桨开启深度写入（`Set_Depth_Mask(DEPTH_WRITE_ENABLE)` + raw
+`ZWRITEENABLE=TRUE`）→ 后画几何在桨叶像素深度更远必失败，无法覆盖；
+机身重叠区缺角问题同源同修。
+
+### ⑦ TSS 恢复只进缓存不进设备：岩石间歇性全白
+绘制后经 wrapper 恢复 4 个纹理级状态，但 `Apply` 无 TSS 推送段 → 设备残留
+`SELECTARG1 + TFACTOR`；TFACTOR 此时已还原为 0xFFFFFFFF（白）→ 之后未完整
+重推纹理级状态的网格（水面岩石）输出纯 TFACTOR = 全白，某次完整材质重放后恢复。
+叶桨每帧绘制 ⇒ 泄漏反复 ⇒ "多次变白"。
+**修复**：绘制后用 **raw 设备调用**对称还原 4 个 TSS 值（缓存、设备同时还原）。
+
 ## 五、最终实现（dx8renderer.cpp 旋翼分支）
 
 对可见前向 pass 的叶桨绘制：
