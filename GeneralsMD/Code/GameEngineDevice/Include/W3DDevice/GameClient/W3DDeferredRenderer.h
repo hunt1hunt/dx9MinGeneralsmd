@@ -157,6 +157,11 @@ public:
 	/// receive sampling. Does not change any rendering behavior.
 	void dumpShadowD24ToPPM(const char *path);
 
+	/// DEBUG one-shot: render ANY texture (e.g. the m_shadowDepthSampler copy the
+	/// W3X receive actually binds) into the shadow COLOR RT as grayscale and save
+	/// a PPM. Same machinery as dumpShadowD24ToPPM, explicit source texture.
+	void dumpShadowTexToPPM(IDirect3DBaseTexture9 *tex, const char *path);
+
 	/// Recompile the sunlight PS with shadow-map variant.
 	bool compileSunLightShadowShader();
 

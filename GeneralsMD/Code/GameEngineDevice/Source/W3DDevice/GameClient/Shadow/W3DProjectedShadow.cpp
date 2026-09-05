@@ -2363,14 +2363,58 @@ W3DShadowTextureManager::~W3DShadowTextureManager(void)
 	missingTextureTable = NULL;
 }
 
+// SEH-hardened table teardown (2026-09-05 quit AV, second occurrence): even the
+// snapshot walk can hit an entry whose object was ALREADY over-released during
+// the session (stale link in the table) - HashTableIteratorClass::Next() reads
+// the dead node's link and faults INSIDE the walk, before any snapshot entry is
+// ever released. VC6 C2712: an __try frame must hold NOTHING that needs unwind
+// (NEW's constructor call and delete's destructor call both count), so the walk
+// lives in a plain-C++ helper and every SEH frame is a wrapper with POD locals.
+#pragma auto_inline(off)
+static Int snapshotTextures(HashTableClass *table, W3DShadowTexture **snapshot, Int maxCount)
+{
+	Int count = 0;
+	HashTableIteratorClass it(*table);
+	for (it.First(); !it.Is_Done() && count < maxCount; it.Next()) {
+		snapshot[ count++ ] = (W3DShadowTexture *)it.Get_Current();
+	}
+	return count;
+}
+#pragma auto_inline(on)
+
+static Int snapshotTexturesSEH(HashTableClass *table, W3DShadowTexture **snapshot, Int maxCount)
+{
+	Int count = 0;
+	__try {
+		count = snapshotTextures(table, snapshot, maxCount);
+	} __except(EXCEPTION_EXECUTE_HANDLER) {
+		count = 0;	// corrupt link mid-walk: release nothing, Reset drops the table
+	}
+	return count;
+}
+
+static void releaseTextureSEH(W3DShadowTexture *text)
+{
+	__try {
+		text->Release_Ref();	// may delete; the table is not walked here
+	} __except(EXCEPTION_EXECUTE_HANDLER) {
+		// stale entry (object already over-released elsewhere): the Reset in
+		// the caller drops its link; the leaked D3D texture dies with the process
+	}
+}
+
 /** Release all loaded textures */
 void W3DShadowTextureManager::freeAllTextures(void)
 {
-	// Make an iterator, and release all ptrs
-	W3DShadowTextureManagerIterator it( *this );
-	for( it.First(); !it.Is_Done(); it.Next() ) {
-		W3DShadowTexture *text = it.getCurrentTexture();
-		text->Release_Ref();
+	// Quit-time AV fix (2026-09-05): the original loop called Release_Ref WHILE
+	// the hash iterator walked the table (Release_Ref can DELETE the entry and
+	// the next Next() reads the freed link). A later crash showed the table can
+	// also contain ALREADY-STALE entries from an over-release during the
+	// session, so both the walk and each release are SEH-guarded (see above).
+	W3DShadowTexture *snapshot[ 1024 ];
+	Int count = snapshotTexturesSEH(texturePtrTable, snapshot, 1024);
+	for (Int i = 0; i < count; i++) {
+		releaseTextureSEH(snapshot[ i ]);
 	}
 
 	// Then clear the table

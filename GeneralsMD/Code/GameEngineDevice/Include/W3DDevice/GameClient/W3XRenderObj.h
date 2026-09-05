@@ -247,8 +247,16 @@ public:
 	bool GetSubMeshIsMuzzleflash(int i) const {
 		if (i < 0 || i >= (int)m_meshes.size()) return false;
 		const AsciiString &os = m_meshes[i].origShader;
-		if (os.isEmpty()) return false;
-		return strstr(os.str(), "muzzle") != NULL;
+		if (!os.isEmpty() && strstr(os.str(), "muzzle") != NULL) return true;
+		// Converted per-sub-mesh override (2026-09-05): the power-plant wire fence
+		// (and any other lattice converted to the transparent w3x_muzzle.fx) has
+		// an origShader that is NOT muzzle-named, so it slipped past the check
+		// above and the alpha-blind volumetric extrusion cast a SOLID fence
+		// shadow. Same rule as the texture-cast skip: a muzzle-shader sub-mesh
+		// casts no volumetric shadow.
+		const AsciiString &fx = m_meshes[i].fxName;
+		if (!fx.isEmpty() && strstr(fx.str(), "muzzle") != NULL) return true;
+		return false;
 	}
 
 	// Name (used as the shadow-geometry cache key by W3DShadowGeometryManager).

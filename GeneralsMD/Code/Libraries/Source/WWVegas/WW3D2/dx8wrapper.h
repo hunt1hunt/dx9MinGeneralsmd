@@ -121,6 +121,10 @@ extern bool _DX8SingleThreaded;
 
 // G-Buffer rendering flags (set by W3DDeferredRenderer before/after G-Buffer pass)
 extern bool g_gbufferActive;
+// Shadow-map pass flag (set by W3DDeferredRenderer around the sun-depth pass):
+// lets the mesh draw path alpha-cut alpha-BLEND casters (tree billboards, fences)
+// which would otherwise rasterize SOLID into the depth-only shadow map.
+extern bool g_shadowMapPassActive;
 extern IDirect3DPixelShader9 *g_gbufferPS;
 extern IDirect3DVertexShader9 *g_gbufferVS;
 

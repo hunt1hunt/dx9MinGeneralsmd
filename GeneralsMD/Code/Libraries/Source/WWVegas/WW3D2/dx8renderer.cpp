@@ -2333,7 +2333,27 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 				}
 			}
 			else
+			{
+				// Shadow pass: alpha-BLEND casters (tree billboards, W3D fences) would
+				// rasterize SOLID into the depth-only shadow map - blending is a no-op
+				// there. RA3 casts transparent casters alpha-cut: force alpha test
+				// around the draw for blend meshes whose shader has no alpha test.
+				// Raw writes (the shader re-push inside Draw may overwrite the enable
+				// for some meshes - harmless, those keep the status-quo solid caster).
+				bool rbShadowAlphaCut = false;
+				if (g_shadowMapPassActive
+					&& (mesh->Is_Alpha() || mesh->Is_Translucent())
+					&& mesh->Peek_Model()
+					&& mesh->Peek_Model()->Get_Single_Shader().Get_Alpha_Test() == ShaderClass::ALPHATEST_DISABLE) {
+					rbShadowAlphaCut = true;
+					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE,TRUE);
+					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,0x60);
+				}
 				renderer->Render(mesh->Get_Base_Vertex_Offset());
+				if (rbShadowAlphaCut) {
+					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE,FALSE);
+				}
+			}
 		}
 //--------------------------------------------------------------------
 		if (mesh->Get_ObjectScale() != 1.0f)

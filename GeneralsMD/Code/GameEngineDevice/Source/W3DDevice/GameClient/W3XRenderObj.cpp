@@ -50,6 +50,7 @@ static void W3XShadowDiag(const char *fmt, ...)
 		if (s_log) setvbuf(s_log, NULL, _IONBF, 0);
 	}
 	if (!s_log) return;
+	fprintf(s_log, "[%09u] ", GetTickCount());
 	va_list args;
 	va_start(args, fmt);
 	vfprintf(s_log, fmt, args);
@@ -1245,9 +1246,15 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// state at this node — pass (CAST vs RECEIVE), shadow-map availability, and
 	// whether the effect exposes the RA3 shadow parameters.
 	if (inShadowPass) {
-		static bool s_castDiag = false;
-		if (!s_castDiag) {
-			s_castDiag = true;
+		// ISOLATION BUILD: 3 bursts, >=10s apart (was a process one-shot). The
+		// one-shot NEVER fired in the crashing run despite 58-object shadow
+		// passes - if these lines still don't appear, W3X objects are excluded
+		// from the shadow pass itself (visibility/routing), not from the cast.
+		static int s_castDiagN = 0;
+		static unsigned s_castDiagLast = 0;
+		if (s_castDiagN < 3 && GetTickCount() - s_castDiagLast >= 10000) {
+			s_castDiagN++;
+			s_castDiagLast = GetTickCount();
 			const Matrix4x4 &rawVP = g_theW3DDeferredRenderer->getShadowViewProj();
 			W3XShadowDiag("[W3X_SHDW] CAST '%s' sunVP r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f) submeshes=%d\n",
 				m_name, shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
@@ -1262,11 +1269,27 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			W3XShadowDiag("[W3X_SHDW] CAST_RAW getShadowViewProj r0=(%.4f,%.4f,%.4f,%.4f) r3=(%.4f,%.4f,%.4f,%.4f)\n",
 				rawVP[0].X, rawVP[0].Y, rawVP[0].Z, rawVP[0].W,
 				rawVP[3].X, rawVP[3].Y, rawVP[3].Z, rawVP[3].W);
+			// CAUSE-HUNT DIAG (2026-09-05): where is this object relative to the
+			// sun window? world X/Y vs the map-fitted window, and the object
+			// ORIGIN's sun NDC z - the rasterizer clips casters whose sun z is
+			// outside [0,1] (the algebra-proven near/far clipping defect).
+			{
+				float cwx = world[3].X, cwy = world[3].Y, cwz = world[3].Z;
+				float sndcZ = cwx * shadowW2S[2].X + cwy * shadowW2S[2].Y
+					+ cwz * shadowW2S[2].Z + shadowW2S[2].W;
+				W3XShadowDiag("[W3X_SHDW]   CAST-POS world=(%.1f,%.1f,%.1f) sunNdcZ=%.3f (outside [0,1] = CLIPPED)\n",
+					cwx, cwy, cwz, sndcZ);
+			}
 		}
 	} else {
-		static bool s_recvDiag = false;
-		if (!s_recvDiag) {
-			s_recvDiag = true;
+		// ISOLATION BUILD: 3 bursts, >=10s apart (was a process one-shot) - shows
+		// WHEN W3X objects first reach a forward/g-buffer render and with what
+		// shadow bindings, alongside the periodic CAST bursts.
+		static int s_recvDiagN = 0;
+		static unsigned s_recvDiagLast = 0;
+		if (s_recvDiagN < 3 && GetTickCount() - s_recvDiagLast >= 10000) {
+			s_recvDiagN++;
+			s_recvDiagLast = GetTickCount();
 			D3DXHANDLE hHas = effect->GetParameterByName(NULL, "HasShadow");
 			D3DXHANDLE hMap = effect->GetParameterByName(NULL, "ShadowMap");
 			D3DXHANDLE hTexel = effect->GetParameterByName(NULL, "Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize");
@@ -1385,13 +1408,25 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// wrong depth -> the blocky "rectangle-tile" overlay on surfaces.
 	D3DXHANDLE hTech = NULL;
 	if (inShadowPass) {
-		// RA3-style shadow-map depth cast. ShadowDepth is present on the building/
-		// vehicle shaders (w3x_buildings.fx / w3x_soviet.fx). Sub-mesh override
-		// effects WITHOUT it (w3x_infantry.fx, w3x_tread.fx, w3x_muzzle.fx) don't
-		// cast texture shadows — draw nothing here rather than fall back to Default
-		// (whose PBR color would be written into the shadow COLOR RT under the
-		// RED-only CWE and pollute the depth map). They keep their volumetric shadow.
+		// ISOLATION BUILD (2026-09-05): cast path reverted to the 9/3-proven
+		// shape - ShadowDepth lookup ONLY, set ONCE per object. The crashing run
+		// correlated exactly with the first W3X shadow-map cast: that frame's
+		// shadow pass exploded to 1.7s (the new per-submesh SetTechnique+
+		// ValidateTechnique runs D3DX state-block validation per sub-mesh) and
+		// the next Forward pass AV'd inside the device wrapper. This restore
+		// removes both the 9/4 _CreateShadowMap pre-loop lookup and the
+		// per-sub-mesh re-selection; the infantry fx cast technique is inert
+		// until the crash is isolated. NOTE re-adding later: skip override
+		// sub-meshes lacking a cast technique (the stale-technique pollution
+		// bug) and call ValidateTechnique once, never per sub-mesh.
 		hTech = effect->GetTechniqueByName("ShadowDepth");
+		// RA3-faithful fallback (_CreateShadowMap, PBR5-10-objects-ARPBR.FX
+		// naming; w3x_infantry.fx carries a 1-bone skinned cast with this name -
+		// Objects.fxh arrays only 0/1-bone cast VS, min(NumJointsPerVertex,1)).
+		// ONE lookup + ONE Set/Validate per OBJECT here (the 2026-09-05 crash
+		// run proved a per-SUB-MESH ValidateTechnique explodes the shadow pass:
+		// D3DX state-block validation is milliseconds x every sub-mesh).
+		if (!hTech) hTech = effect->GetTechniqueByName("_CreateShadowMap");
 		if (!hTech) return;	// no shadow-depth cast technique -> skip cast entirely
 	} else {
 		hTech = effect->GetTechnique(0);	// Default
@@ -1493,9 +1528,22 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			//    (EUTEVHUMVEE SKIN_BODY02 / SKIN_WHEEL), not just wire fences.
 			bool isTransparent = !os.isEmpty()
 				&& (strstr(os.str(), "muzzle") != NULL);
-			if (!isTransparent && smeshName
-				&& strstr(smeshName, "SKIN_G") != NULL) {
-				isTransparent = true;
+			if (!isTransparent) {
+				// RA3-faithful (user 2026-09-04: RA3 does NOT name-exclude): a
+				// sub-mesh whose material declares AlphaTestEnable=true is an
+				// alpha-cutout lattice (SKIN_G00 grille: texture alpha ALL below
+				// the 0.375 cast clip - measured on TasCC3_G.dds) and must not
+				// rasterize into the shadow map. The solid meshes declare it false
+				// (SKIN_BODY*) or not at all (SKIN_G01-03 posts/frames = 立柱/框线)
+				// and keep casting - exactly 只投立柱+框线、网面无影.
+				for (size_t ci = 0; ci < sm.constants.size(); ci++) {
+					const W3XShaderConstant &cc = sm.constants[ci];
+					if (cc.type == W3X_CONSTANT_BOOL
+						&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
+						if (cc.boolValue) isTransparent = true;
+						break;
+					}
+				}
 			}
 			// DIAG one-shot (first 12 sub-meshes, any object): dump each sub-mesh's
 			// name + origShader + skip state so we can CONFIRM the SKIN_G* grilles
@@ -1523,14 +1571,26 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		if (!sm.fxName.isEmpty() && sm.fxName.compare(m_fxName.str()) != 0) {
 			drawEffect = W3XEffectManager::Instance()->GetEffect(sm.fxName.str());
 			if (drawEffect) {
-				// Technique first, then bind all shared params. In the CAST pass
-				// select the RA3 ShadowDepth technique (skip the sub-mesh if the
-				// override effect lacks it — same rule as the model-wide effect).
-				D3DXHANDLE hTech = inShadowPass
-					? drawEffect->GetTechniqueByName("ShadowDepth") : drawEffect->GetTechnique(sm.technique);
+				// Technique first, then bind all shared params. MAIN pass uses the
+				// sub-mesh's authored technique. CAST pass: the override effect
+				// needs its OWN cast technique - SetTechnique ONLY (never
+				// ValidateTechnique here; the per-sub-mesh D3DX state-block
+				// validation is what exploded the shadow pass to 1.7s in the
+				// 2026-09-05 crash run). No cast technique -> SKIP the sub-mesh:
+				// drawing it with the effect's stale main-pass technique would
+				// write PBR color into the RED-only shadow COLOR RT (the
+				// blocky-overlay pollution).
+				D3DXHANDLE hTech = NULL;
+				if (inShadowPass) {
+					hTech = drawEffect->GetTechniqueByName("ShadowDepth");
+					if (!hTech) hTech = drawEffect->GetTechniqueByName("_CreateShadowMap");
+					if (!hTech) { continue; }	// muzzle/tread overrides cast nothing
+				} else {
+					hTech = drawEffect->GetTechnique(sm.technique);
+				}
 				if (hTech) {
 					drawEffect->SetTechnique(hTech);
-					drawEffect->ValidateTechnique(hTech);
+					if (!inShadowPass) drawEffect->ValidateTechnique(hTech);	// main pass keeps the 9/3 validation
 				}
 				// Engine constants (sun/ambient/camera) from the real scene camera
 				W3XEffectManager::Instance()->BindEngineConstants(drawEffect, rinfo);
@@ -1560,6 +1620,15 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			}
 		}
 		if (!drawEffect) { totalFailed++; continue; }
+
+		// ISOLATION BUILD (2026-09-05): the per-sub-mesh cast technique
+		// re-selection (SetTechnique + ValidateTechnique per draw) is REMOVED -
+		// see the cast gate comment above. The object-wide technique set before
+		// the loop governs every sub-mesh, exactly like the 9/3-proven path.
+		// KNOWN REGRESSION re-introduced until re-add: an override sub-mesh whose
+		// effect lacks a cast technique draws with its stale main-pass technique
+		// (the shadow COLOR RT pollution). Re-add with: skip such sub-meshes, and
+		// ValidateTechnique once per object only.
 
 		// Per-sub-mesh texture bindings for the SHARED effect: the model-wide
 		// bind (first PBR sub-mesh's DiffuseTexture/NormalMap/SpecMap, usually
@@ -1674,6 +1743,24 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		UINT passes;
 		HRESULT hr = drawEffect->Begin(&passes, 0);
 		if (FAILED(hr)) { DEBUG_LOG(("[W3X_P5]   submesh[%d] Begin FAILED hr=0x%08X\n", (int)si, (int)hr)); totalFailed++; continue; }
+		// CAST DIAG (bounded): prove the cast executes end-to-end and with which
+		// technique/ps variant - a missing shadow here shows a failed stage here.
+		if (inShadowPass) {
+			static int s_castDrawDiag = 0;
+			if (s_castDrawDiag < 10) {
+				s_castDrawDiag++;
+				D3DXHANDLE hATd = drawEffect->GetParameterByName(NULL, "AlphaTestEnable");
+				BOOL atv = FALSE;
+				if (hATd) drawEffect->GetBool(hATd, &atv);
+				const char *techName = "?";
+				D3DXHANDLE hCurTech = drawEffect->GetCurrentTechnique();
+				D3DXTECHNIQUE_DESC tdesc;
+				if (hCurTech && SUCCEEDED(drawEffect->GetTechniqueDesc(hCurTech, &tdesc)) && tdesc.Name)
+					techName = tdesc.Name;
+				W3XShadowDiag("[W3X_SHDW] CAST-DRAW '%s' mesh='%s' tech='%s' passes=%u atParam=%d vDecl=%p\n",
+					m_name, sm.name.str() ? sm.name.str() : "?", techName, passes, atv ? 1 : 0, (void*)vDecl);
+			}
+		}
 		for (UINT p = 0; p < passes; p++) {
 			hr = drawEffect->BeginPass(p);
 			if (FAILED(hr)) { DEBUG_LOG(("[W3X_P5]   submesh[%d] BeginPass(%u) FAILED hr=0x%08X\n", (int)si, p, (int)hr)); break; }

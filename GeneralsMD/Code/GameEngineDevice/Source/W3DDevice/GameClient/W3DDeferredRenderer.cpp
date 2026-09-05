@@ -50,6 +50,7 @@ static void diagWrite(const char *fmt, ...)
 		if (s_log) setvbuf(s_log, NULL, _IONBF, 0);
 	}
 	if (!s_log) return;
+	fprintf(s_log, "[%09u] ", GetTickCount());
 	va_list args;
 	va_start(args, fmt);
 	vfprintf(s_log, fmt, args);
@@ -1601,24 +1602,66 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	Vector3 lightDir = sunDir;
 	if (lightDir.Length2() < 1e-6f) { lightDir.Set(0, 0, -1); }
 	lightDir.Normalize();
-	Vector3 target(0, 0, 0);	// FIXED shadow-map center (world origin, NOT the camera)
+	// FIT-TO-MAP FIXED window (2026-09-05): the fixed-origin +-2000 window left
+	// most of a naval map OUTSIDE the shadow map (zero W3X shadows once the
+	// volumetric stepped back - every model hit the out-of-map "fully lit"
+	// guard), while the camera-following window swept at its edges. A STATIC
+	// window fitted to the whole map has neither defect: every caster is always
+	// inside (the hp out-of-map guard stays as a safety) and the texel grid
+	// never moves. Resolution = extent/2048 (a 5000-unit map keeps ~2.4 units
+	// per texel; the 4000 floor keeps small maps at the tuned ~1.95). The eye
+	// distance and far plane scale with the window so big-map corners stay
+	// inside the depth range.
+	Vector3 target(0, 0, 0);	// FIXED shadow-map center (map center, NOT the camera)
+	float winSize = 4000.0f;
+	float mapSpan = 0.0f;
+	if (TheTerrainRenderObject) {
+		// CAUSE-HUNT FINDING (2026-09-05): the WORLD-space cached bounds
+		// (Get_Bounding_Box) return an EMPTY box for the terrain (Extent=0 ->
+		// [WINDOW] mapSpan=0 -> the fit-to-map never engaged and the window
+		// stayed 4000 at the origin while the base sat at (2033,596) - outside
+		// -> every base caster rasterized outside the viewport = no shadow).
+		// The terrain class IMPLEMENTS the OBJ-SPACE box from the heightmap
+		// (BaseHeightMap.h Get_Obj_Space_Bounding_Box) and its transform is
+		// identity, so obj-space IS world-space for the terrain.
+		AABoxClass tbox;
+		TheTerrainRenderObject->Get_Obj_Space_Bounding_Box(tbox);
+		mapSpan = tbox.Extent.X * 2.0f;
+		if (tbox.Extent.Y * 2.0f > mapSpan) mapSpan = tbox.Extent.Y * 2.0f;
+		if (mapSpan > 500.0f) {
+			winSize = mapSpan * 1.2f;
+			if (winSize < 4000.0f) winSize = 4000.0f;
+			if (winSize > 16000.0f) winSize = 16000.0f;
+			target.Set(tbox.Center.X, tbox.Center.Y, 0.0f);
+		} else {
+			mapSpan = 0.0f;	// degenerate terrain (menu) - keep the 4000 default
+		}
+	}
+	static float s_lastLoggedSpan = -1.0f;
+	if (mapSpan != s_lastLoggedSpan) {
+		// log on CHANGE (the one-shot fired at the menu and reported the
+		// degenerate 0-span while the in-game window was never recorded)
+		s_lastLoggedSpan = mapSpan;
+		DIAG_LOG(("W3DDeferredRenderer: [WINDOW] mapSpan=%.0f winSize=%.0f center=(%.1f,%.1f)\n",
+			mapSpan, winSize, target.X, target.Y));
+	}
 	Vector3 up(0, 0, 1);
 	if (fabsf(lightDir.Z) > 0.99f) { up.Set(0, 1, 0); }
-	Vector3 eye = target - lightDir * 500.0f;
+	// CLIPPING FIX (2026-09-05, algebra-proven): the old eye = target -
+	// lightDir*500 with near=0.1 clipped every caster whose view-space depth
+	// went negative: depth = 500 + dot(P-target, fwd), and dot() sweeps
+	// +-0.45*span across the window, so casters on the sun-backward side of
+	// the center sat BEHIND the near plane and wrote NOTHING into the shadow
+	// map (the "no W3X shadows at all" run). Eye distance, near and far now
+	// scale with the map span so the algebra puts every window point inside
+	// [near, far] for ANY sun angle:
+	//   depth in [0.625W - 0.354W - 1000, 0.625W + 0.354W + 1000]  (all > near)
+	float spanEff = (mapSpan > 0.0f) ? mapSpan : winSize;
+	Vector3 eye = target - lightDir * (spanEff * 0.75f);
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
-	// DEFINITIVE anti-sweep fix (user-approved 2026-08-31): the shadow map is FIXED
-	// in world space (target = world origin), it does NOT follow the camera. The
-	// sweep was caused by the camera-following map: every pan/zoom shifted the
-	// sampling texel grid, so the self-shadow acne/edge boundary crawled across
-	// sun-facing surfaces (worst when moving perpendicular to the sun). With a
-	// fixed map every world point maps to a CONSTANT UV -> its sampled depth is
-	// constant -> the self-shadow is COMPLETELY STATIC, no sweep, guaranteed.
-	// Window 4000 (±2000) keeps the user's tested resolution (~1.95 units/texel);
-	// R32F depth stays. Models beyond ±2000 of the origin are outside the map
-	// (they lose their self-shadow — acceptable, they are off the play area).
-	D3DXMatrixOrthoLH(&d3dP, 4000.0f, 4000.0f, 0.1f, 3000.0f);
+	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, 1.0f, winSize * 1.2f + 1000.0f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
@@ -1684,6 +1727,16 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		s_sunDiag = true;
 		DIAG_LOG(("W3DDeferredRenderer: [NEW] sunDir(raw)=%.3f,%.3f,%.3f lightDir=%.3f,%.3f,%.3f shadowCenter=(%.1f,%.1f,%.1f)\n",
 			sunDir.X, sunDir.Y, sunDir.Z, lightDir.X, lightDir.Y, lightDir.Z, shadowCenter.X, shadowCenter.Y, shadowCenter.Z));
+		// LIGHT-SOURCE GROUND TRUTH (settles "same map sun, different shadow results"):
+		// the two terrain-light positions exactly as GlobalData holds them, vs what
+		// the shadow-map chain computed. The working W3D decal/projection shadows use
+		// their own configured angle - if terrainLightPos is a bare unit vector
+		// (0,0,-1) instead of a far sky position, this read is the defect.
+		if (TheGlobalData) {
+			DIAG_LOG(("W3DDeferredRenderer: [LIGHTS] terrainLightPos0=(%.2f,%.2f,%.2f) terrainLightPos1=(%.2f,%.2f,%.2f)\n",
+				TheGlobalData->m_terrainLightPos[0].x, TheGlobalData->m_terrainLightPos[0].y, TheGlobalData->m_terrainLightPos[0].z,
+				TheGlobalData->m_terrainLightPos[1].x, TheGlobalData->m_terrainLightPos[1].y, TheGlobalData->m_terrainLightPos[1].z));
+		}
 		DIAG_LOG(("W3DDeferredRenderer: [NEW] shadowView r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
 			m_shadowView[0].X, m_shadowView[0].Y, m_shadowView[0].Z, m_shadowView[0].W,
 			m_shadowView[3].X, m_shadowView[3].Y, m_shadowView[3].Z, m_shadowView[3].W));
@@ -1703,6 +1756,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	// (and other consumers) know to rasterize sun-space depth instead of
 	// skipping / using the main camera.
 	m_shadowMapPassActive = true;
+	g_shadowMapPassActive = true;	// WW3D2 mesh draw path: alpha-cut blend casters
 
 	return true;
 }
@@ -1808,6 +1862,7 @@ void W3DDeferredRenderer::endShadowMapPass()
 	// flag stayed set forever and any consumer treating it as "cast pass" (the
 	// W3X) would render the forward pass with the sun camera.
 	m_shadowMapPassActive = false;
+	g_shadowMapPassActive = false;
 
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (dev) {
@@ -1837,6 +1892,60 @@ void W3DDeferredRenderer::endShadowMapPass()
 			dst->Release();
 		}
 		if (src) src->Release();
+	}
+	// CAUSE-HUNT DIAG (2026-09-05): numeric ground truth of the sampler copy the
+	// W3X receive samples (the PPM dump path is unreliable under dgVoodoo - it
+	// rendered flat gray regardless of content). mean~max~1 = EMPTY map (the
+	// compare sees far depth everywhere -> everything lit); min<max = real cast
+	// content, and an absent shadow then points at the receive side.
+	static int s_rtStatN = 0;
+	if (dev && m_shadowDepthSampler && (s_rtStatN++ % 300) == 0) {
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+		IDirect3DSurface9 *src = NULL;
+		if (SUCCEEDED(m_shadowDepthSampler->GetSurfaceLevel(0, &src)) && src) {
+			D3DSURFACE_DESC sd;
+			if (SUCCEEDED(src->GetDesc(&sd))) {
+				IDirect3DSurface9 *sys = NULL;
+				if (SUCCEEDED(d9->CreateOffscreenPlainSurface(sd.Width, sd.Height, sd.Format,
+						D3DPOOL_SYSTEMMEM, &sys, NULL))) {
+					if (SUCCEEDED(d9->GetRenderTargetData(src, sys))) {
+						D3DLOCKED_RECT lr;
+						if (SUCCEEDED(sys->LockRect(&lr, NULL, D3DLOCK_READONLY))) {
+							float mn = 1e30f, mx = -1e30f;
+							double sum = 0.0;
+							Int n = 0;
+							for (UINT y = 0; y < sd.Height; y++) {
+								const float *row = (const float*)((const char*)lr.pBits + (size_t)y * lr.Pitch);
+								for (UINT x = 0; x < sd.Width; x++) {
+									float v = row[x];
+									if (v < mn) mn = v;
+									if (v > mx) mx = v;
+									sum += v;
+									n++;
+								}
+							}
+							DIAG_LOG(("W3DDeferredRenderer: [RTSTATS] min=%.4f max=%.4f mean=%.4f\n",
+								mn, mx, n ? (float)(sum / n) : 0.0f));
+							sys->UnlockRect();
+						}
+					}
+					sys->Release();
+				}
+			}
+			src->Release();
+		}
+	}
+	// DEBUG one-shot x2: dump BOTH shadow-map textures - the D24X8 depth (all
+	// casters incl. W3D) AND the sampler copy (what the W3X receive samples).
+	// Empty/flat on both => the cast wrote nothing; sampler copy white while the
+	// D24X8 shows geometry => the StretchRect/resolve failed.
+	static bool s_dumpedMaps = false;
+	if (!s_dumpedMaps) {
+		s_dumpedMaps = true;
+		dumpShadowD24ToPPM("E:\\shadowmap_dump.ppm");
+		if (m_shadowDepthSampler) {
+			dumpShadowTexToPPM(m_shadowDepthSampler, "E:\\shadowmap_sampler.ppm");
+		}
 	}
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
 
@@ -1870,13 +1979,26 @@ void W3DDeferredRenderer::endShadowMapPass()
 // ----------------------------------------------------------------------------
 void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
 {
+	// CRASH FIX (2026-09-05): the 2026-09-04 refactor to dumpShadowTexToPPM
+	// dropped THIS function's original throttle (60-frame counter + one-shot)
+	// while the caller at the end of endShadowMapPass fires it EVERY frame.
+	// Result: a 2048x2048 GPU readback + on-the-fly D3DX effect compile+release
+	// + 12MB synchronous PPM write per frame (~1.3s/frame), plus the quad draw's
+	// leaked FVF/stream/index state re-applied every frame - the process died
+	// with a delayed access violation minutes into the map (both crash runs:
+	// dumps started when the map's shadow pass began, AV ~10-25s later).
+	// Restore the original gate: fire once at ~60 frames in (scene populated).
 	static int s_count = 0;
 	static bool s_dumped = false;
 	if (++s_count < 60 || s_dumped) return;
 	s_dumped = true;
+	if (m_shadowDepthRT) dumpShadowTexToPPM(m_shadowDepthRT->Peek_D3D_Texture(), path);
+}
 
+void W3DDeferredRenderer::dumpShadowTexToPPM(IDirect3DBaseTexture9 *srcTex, const char *path)
+{
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
-	if (!dev || !m_shadowDepthRT || !m_shadowDepthSampler || !m_quadVB || !m_quadIB) return;
+	if (!dev || !srcTex || !m_shadowDepthRT || !m_quadVB || !m_quadIB) return;
 	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 
 	// Build a tiny effect with the exact RA3 ShadowMapSampler declaration.
@@ -1927,8 +2049,10 @@ void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
 	DX8Wrapper::Set_Render_Target(0, surf);
 	surf->Release();
 	{
+		// Viewport = the RT's OWN size (2048x2048), NOT the G-Buffer size - the old
+		// gbuffer-sized viewport clipped the dump (stale 1920x1080 gray PPM).
 		D3DVIEWPORT9 vp; vp.X = 0; vp.Y = 0;
-		vp.Width = m_gbufferWidth; vp.Height = m_gbufferHeight;
+		vp.Width = 2048; vp.Height = 2048;
 		vp.MinZ = 0.0f; vp.MaxZ = 1.0f;
 		d9->SetViewport(&vp);
 		dev->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -1947,7 +2071,7 @@ void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
 		// "COLOR RT has depth but the StretchRect sampler copy failed". If this PPM
 		// shows depth but the sampler copy (receive path) is white, the resolve is
 		// the problem; if this is ALSO white, the cast itself isn't writing.
-		fx->SetTexture("ShadowMapTex", (IDirect3DBaseTexture9*)m_shadowDepthRT->Peek_D3D_Texture());
+		fx->SetTexture("ShadowMapTex", srcTex);
 		UINT passes = 0;
 		fx->SetTechnique("T");
 		fx->Begin(&passes, 0);
@@ -1991,7 +2115,7 @@ void W3DDeferredRenderer::dumpShadowD24ToPPM(const char *path)
 		// (1,1,1 white). Write only the viewport-sized top-left block so the PPM
 		// is the full shadow map scaled to the viewport, not mostly blank.
 		int w = (int)desc.Width, h = (int)desc.Height;
-		int vw = m_gbufferWidth, vh = m_gbufferHeight;
+		int vw = 2048, vh = 2048;	// dump the full shadow map (viewport now matches)
 		if (w > vw) w = vw;
 		if (h > vh) h = vh;
 		fprintf(fp, "P6\n%d %d\n255\n", w, h);

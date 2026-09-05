@@ -193,6 +193,7 @@ bool								_DX8SingleThreaded										= false;
 
 // G-Buffer rendering flags (set by W3DDeferredRenderer)
 bool								g_gbufferActive											= false;
+bool								g_shadowMapPassActive							= false;
 IDirect3DPixelShader9 *	g_gbufferPS												= NULL;
 IDirect3DVertexShader9 *	g_gbufferVS												= NULL;
 

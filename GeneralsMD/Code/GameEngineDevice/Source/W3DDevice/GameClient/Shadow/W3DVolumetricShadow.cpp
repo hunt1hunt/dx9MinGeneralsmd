@@ -4703,13 +4703,55 @@ W3DShadowGeometryManager::~W3DShadowGeometryManager(void)
 }
 
 /** Release all loaded animations */
+// SEH-hardened table teardown (2026-09-05, mirror of the W3DShadowTextureManager
+// fix): the walk must survive both release-during-iteration AND stale entries
+// whose object was already over-released during the session. VC6 C2712: an
+// __try frame must hold NOTHING that needs unwind (NEW's constructor call and
+// delete's destructor call both count), so the walk lives in a plain-C++
+// helper and every SEH frame is a wrapper with POD locals.
+#pragma auto_inline(off)
+static Int snapshotGeoms(HashTableClass *table, W3DShadowGeometry **snapshot, Int maxCount)
+{
+	Int count = 0;
+	HashTableIteratorClass it(*table);
+	for (it.First(); !it.Is_Done() && count < maxCount; it.Next()) {
+		snapshot[ count++ ] = (W3DShadowGeometry *)it.Get_Current();
+	}
+	return count;
+}
+#pragma auto_inline(on)
+
+static Int snapshotGeomsSEH(HashTableClass *table, W3DShadowGeometry **snapshot, Int maxCount)
+{
+	Int count = 0;
+	__try {
+		count = snapshotGeoms(table, snapshot, maxCount);
+	} __except(EXCEPTION_EXECUTE_HANDLER) {
+		count = 0;	// corrupt link mid-walk: release nothing, Reset drops the table
+	}
+	return count;
+}
+
+static void releaseGeomSEH(W3DShadowGeometry *geom)
+{
+	__try {
+		geom->Release_Ref();	// may delete; the table is not walked here
+	} __except(EXCEPTION_EXECUTE_HANDLER) {
+		// stale entry (object already over-released elsewhere): the Reset in
+		// the caller drops its link
+	}
+}
+
 void W3DShadowGeometryManager::Free_All_Geoms(void)
 {
-	// Make an iterator, and release all ptrs
-	W3DShadowGeometryManagerIterator it( *this );
-	for( it.First(); !it.Is_Done(); it.Next() ) {
-		W3DShadowGeometry *geom = it.Get_Current_Geom();
-		geom->Release_Ref();
+	// Quit-time AV fix (2026-09-05, same pattern as W3DShadowTextureManager::
+	// freeAllTextures): Release_Ref can DELETE the geom while the hash iterator
+	// is walking the table; HashTableIteratorClass::Next() then reads the freed
+	// node's link. SEH-guarded snapshot walk + Reset (see above).
+	W3DShadowGeometry *snapshot[ 1024 ];
+	Int count = snapshotGeomsSEH(GeomPtrTable, snapshot, 1024);
+	for (Int i = 0; i < count; i++) {
+		releaseGeomSEH(snapshot[ i ]);
 	}
 
 	// Then clear the table
@@ -4801,7 +4843,19 @@ int W3DShadowGeometryManager::Load_Geom(RenderObjClass *robj, const char *name)
 			res=newgeom->initFromMesh(robj);
 			break;
 		case W3XRenderObjClass::CLASSID_W3X:
-			res=newgeom->initFromW3X(robj);
+			// 各走各的阴影 (user 2026-09-04, RE-APPLIED 2026-09-05): W3X models are
+			// shadowed by the SHADOW MAP ONLY - the _CreateShadowMap/ShadowDepth
+			// cast (hardware sun depth via ZWrite=1 + R32F grayscale for the W3X
+			// receive) is verified working for buildings, vehicles AND infantry.
+			// The volumetric extrusion is now pure redundancy and the source of
+			// the two remaining artifacts: the alpha-blind SOLID wire-fence shadow
+			// (lattice converted to w3x_muzzle.fx) and the animation-BLIND static
+			// radar-dish shadow. Refuse geometry so the volumetric manager skips
+			// W3X models entirely. (The 09-05 crash that got this reverted was the
+			// unthrottled shadow-map PPM dump, since fixed - the refusal itself was
+			// exonerated: addShadow NULL-guards, empty dtor, list-only iteration.)
+			// W3D models keep their volumetric soft shadows (other cases above).
+			res = FALSE;
 			break;
 		default:
 			break;	//unknown render object type
