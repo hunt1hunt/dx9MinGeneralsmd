@@ -1008,6 +1008,13 @@ Vector2	Render2DSentenceClass::Build_Sentence_Not_Centered (const WCHAR *text, i
 	//
 	if (CurSurface == NULL) {
 		Allocate_New_Surface (text, justCalcExtents);
+		// 2026-09-05 crash guard: Allocate_New_Surface can fail under resource
+		// pressure (texture creation returns NULL) - the old code then locked a
+		// NULL surface and AV'd the UI thread
+		// (ReleaseCrashInfo: W3DGadgetStaticTextDraw -> SurfaceClass::Lock).
+		if (CurSurface == NULL) {
+			return cursor;	// drop this sentence instead of crashing
+		}
 	}
 
 	TextureOffset.Set (TEXTURE_OFFSET, 0);

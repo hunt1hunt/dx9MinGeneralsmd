@@ -1778,6 +1778,14 @@ bool TextureLoadTaskClass::Begin_Uncompressed_Load(void)
 
 void TextureLoadTaskClass::Lock_Surfaces(void)
 {
+	// 2026-09-05 crash guard: D3DTexture is NULL when the D3D texture creation
+	// failed for this task (e.g. a particle texture on the default skirmish map
+	// whose DDS is missing) - the old code dereferenced it and AV'd the game on
+	// the first frame that rendered that particle system.
+	if (Peek_D3D_Texture() == NULL) {
+		MipLevelCount = 0;
+		return;
+	}
 	MipLevelCount = D3DTexture->GetLevelCount();
 
 	for (unsigned int i = 0; i < MipLevelCount; ++i) 
@@ -2159,6 +2167,7 @@ void CubeTextureLoadTaskClass::Deinit()
 
 void CubeTextureLoadTaskClass::Lock_Surfaces(void)
 {
+	if (Peek_D3D_Cube_Texture() == NULL) { MipLevelCount = 0; return; }	// 2026-09-05 crash guard
 	for (unsigned int f=0; f<6; f++)
 	{
 		for (unsigned int i=0; i<MipLevelCount; i++)
@@ -2531,6 +2540,7 @@ void VolumeTextureLoadTaskClass::Init(TextureBaseClass* tc, TaskType type, Prior
 
 void VolumeTextureLoadTaskClass::Lock_Surfaces()
 {
+	if (Peek_D3D_Volume_Texture() == NULL) { MipLevelCount = 0; return; }	// 2026-09-05 crash guard
 	for (unsigned int i=0; i<MipLevelCount; i++)
 	{
 		D3DLOCKED_BOX locked_box;

@@ -2138,6 +2138,25 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 						pbrDiagOnce = TRUE;
 					}
 				}
+				// HT_DRAW_CTX (09-05): WHICH pass paints the visible terrain?
+				// gbuffer=1 -> terrain pixels are deferred-shaded (the shadow map
+				// can reach them); gbuffer=0 -> the FORWARD pass paints the terrain
+				// LAST, overwriting the deferred-lit image AND any shadow in it -
+				// the ground shadow must then be added to the forward terrain path.
+				{
+					extern bool g_gbufferActive;
+					static unsigned s_htCtxLast = 0;
+					unsigned nowMs = timeGetTime();
+					if (nowMs - s_htCtxLast >= 2000) {
+						s_htCtxLast = nowMs;
+						FILE *fctx = fopen("E:\\terrain_diag.log", "a");
+						if (fctx) {
+							fprintf(fctx, "[%u] HT_DRAW_CTX gbuffer=%d st=%d\n",
+								nowMs, g_gbufferActive ? 1 : 0, (int)st);
+							fclose(fctx);
+						}
+					}
+				}
  				W3DShaderManager::setShader(st, pass);
 			}
 		}

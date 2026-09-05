@@ -1000,6 +1000,23 @@ static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const
 				wo[7] = bo[3];									// alpha
 			}
 			HRESULT hb = effect->SetFloatArray(hBones, wb, boneCount * 8);
+			// CAST BONES DIAG (09-05): Release-visible ground truth of the upload.
+			// A model whose cast VS gets zeros/garbage WorldBones collapses every
+			// vertex to ONE point (zero-area triangles) -> CAST-DRAW "succeeds"
+			// but the shadow map receives nothing - the exact building symptom.
+			// One sample every 3s captures different models over a session.
+			{
+				static unsigned s_wbShadowLast = 0;
+				unsigned nowMs = GetTickCount();
+				if (nowMs - s_wbShadowLast >= 3000) {
+					s_wbShadowLast = nowMs;
+					W3XShadowDiag("[W3X_SHDW] WBONES effect=%p bones=%d hr=0x%08X b0q=(%.2f,%.2f,%.2f,%.2f) b0off=(%.1f,%.1f,%.1f) b2off=(%.1f,%.1f,%.1f)\n",
+						(void*)effect, boneCount, (int)hb,
+						wb[0], wb[1], wb[2], wb[3],
+						wb[4], wb[5], wb[6],
+						wb[2*8+4], wb[2*8+5], wb[2*8+6]);
+				}
+			}
 #if defined(DEBUG_LOGGING)
 			// DIAG: verify the WorldBones actually reach the shader. If bone20off is
 			// ~(4.6,0.2,10.9) the bones are the animated chest pose; if (0,0,0) or
@@ -1021,6 +1038,18 @@ static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const
 			(void)hb;	// keep C4189 away when DEBUG_LOG is compiled out
 #endif
 		} else {
+			// CAST BONES DIAG: Release-visible. If a skinned model's effect has no
+			// WorldBones param, its cast VS uses the zero-init array -> all vertices
+			// collapse to one point -> zero shadow-map pixels (the building symptom).
+			{
+				static unsigned s_wbMissLast = 0;
+				unsigned nowMs = GetTickCount();
+				if (nowMs - s_wbMissLast >= 3000) {
+					s_wbMissLast = nowMs;
+					W3XShadowDiag("[W3X_SHDW] WBONES-MISSING effect=%p bones=%d (cast collapses -> zero pixels)\n",
+						(void*)effect, boneCount);
+				}
+			}
 			DEBUG_LOG(("[W3X_P5]   WorldBones param NOT FOUND (model has %d bones)\n", boneCount));
 		}
 	}
@@ -1256,10 +1285,10 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			s_castDiagN++;
 			s_castDiagLast = GetTickCount();
 			const Matrix4x4 &rawVP = g_theW3DDeferredRenderer->getShadowViewProj();
-			W3XShadowDiag("[W3X_SHDW] CAST '%s' sunVP r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f) submeshes=%d\n",
+			W3XShadowDiag("[W3X_SHDW] CAST '%s' sunVP r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f) submeshes=%d bones=%d\n",
 				m_name, shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
 				shadowW2S[3].X, shadowW2S[3].Y, shadowW2S[3].Z, shadowW2S[3].W,
-				(int)m_meshes.size());
+				(int)m_meshes.size(), m_boneCount);
 			// DECISIVE: compare shadowW2S (what we bind) vs getShadowViewProj()
 			// (the deferred renderer's m_shadowViewProj, verified correct by [VP]).
 			// If rawVP r0=(0.002,0,0,0) but shadowW2S r0=(0,-0.001,0,0), the copy
@@ -1279,6 +1308,47 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 					+ cwz * shadowW2S[2].Z + shadowW2S[2].W;
 				W3XShadowDiag("[W3X_SHDW]   CAST-POS world=(%.1f,%.1f,%.1f) sunNdcZ=%.3f (outside [0,1] = CLIPPED)\n",
 					cwx, cwy, cwz, sndcZ);
+			}
+			// CAST-BBOX DIAG (09-05 late): project the model-extent corners through
+			// the cast VP. Extent = union of BONE offsets (m_bmin/m_bmax are unused
+			// zeros; bones bound the posed model well enough for an in/out-of-window
+			// verdict). All corners inside NDC while the map shows no pixels for
+			// this object => the DRAW loses them (state/shader), not the geometry.
+			{
+				float bmn[3] = { 1e30f, 1e30f, 1e30f };
+				float bmx[3] = { -1e30f, -1e30f, -1e30f };
+				for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
+					for (int a = 0; a < 3; a++) {
+						float v = m_bones[bi * 8 + 4 + a];
+						if (v < bmn[a]) bmn[a] = v;
+						if (v > bmx[a]) bmx[a] = v;
+					}
+				}
+				if (m_boneCount > 0 && bmn[0] < 1e29f) {
+					float nx0 = 1e30f, nx1 = -1e30f, ny0 = 1e30f, ny1 = -1e30f;
+					float nz0 = 1e30f, nz1 = -1e30f;
+					for (int ci = 0; ci < 8; ci++) {
+						float px = (ci & 1) ? bmx[0] : bmn[0];
+						float py = (ci & 2) ? bmx[1] : bmn[1];
+						float pz = (ci & 4) ? bmx[2] : bmn[2];
+						float wx = world[0].X * px + world[1].X * py + world[2].X * pz + world[3].X;
+						float wy = world[0].Y * px + world[1].Y * py + world[2].Y * pz + world[3].Y;
+						float wz = world[0].Z * px + world[1].Z * py + world[2].Z * pz + world[3].Z;
+						float cw = wx * shadowW2S[0].W + wy * shadowW2S[1].W + wz * shadowW2S[2].W + shadowW2S[3].W;
+						if (cw < 1e-6f) cw = 1e-6f;
+						float cx = (wx * shadowW2S[0].X + wy * shadowW2S[1].X + wz * shadowW2S[2].X + shadowW2S[3].X) / cw;
+						float cy = (wx * shadowW2S[0].Y + wy * shadowW2S[1].Y + wz * shadowW2S[2].Y + shadowW2S[3].Y) / cw;
+						float cz = (wx * shadowW2S[0].Z + wy * shadowW2S[1].Z + wz * shadowW2S[2].Z + shadowW2S[3].Z) / cw;
+						if (cx < nx0) nx0 = cx;
+						if (cx > nx1) nx1 = cx;
+						if (cy < ny0) ny0 = cy;
+						if (cy > ny1) ny1 = cy;
+						if (cz < nz0) nz0 = cz;
+						if (cz > nz1) nz1 = cz;
+					}
+					W3XShadowDiag("[W3X_SHDW]   CAST-BBOX ndc x %.2f..%.2f y %.2f..%.2f z %.3f..%.3f (xy outside [-1,1] or z outside [0,1] => geometry rejected, not the draw)\n",
+						nx0, nx1, ny0, ny1, nz0, nz1);
+				}
 			}
 		}
 	} else {
@@ -1782,6 +1852,14 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			if (inShadowPass) {
 				dev9->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
 				DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
+				// FIX B (2026-09-05): re-assert depth state AFTER BeginPass, same
+				// post-BeginPass pattern as CullMode/CWE. The technique declares
+				// ZEnable=1/ZWriteEnable=1, but the pass entered with the MAIN
+				// pass's ZWRITEENABLE=0 (logged "zwrite=0") and a state-block
+				// application that drops ZWrite under dgVoodoo2 leaves the D24X8
+				// empty of W3X depth - the ground receive then sees a cleared map.
+				dev9->SetRenderState(D3DRS_ZENABLE, TRUE);
+				dev9->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 			}
 			// Per-mesh alpha test: meshes whose material declares
 			// AlphaTestEnable=true (alpha-cutout textures - wire fences,

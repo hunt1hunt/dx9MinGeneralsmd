@@ -591,11 +591,20 @@ void W3DDeferredRenderer::sunLightPass(
 		}
 	}
 
-	// Bind shadow map as s4 (D24X8 depth-stencil texture). Color RT has no
-	// depth data so require the D24X8 + INI flag for meaningful shadow.
+	// Bind shadow map as s4. FIX A (2026-09-05): sample the R32F SAMPLER COPY
+	// (StretchRect'd from the COLOR RT in endShadowMapPass) instead of the D24X8.
+	// The raw-ps_3_0 D24X8 sample path was never proven under dgVoodoo2 (our own
+	// dump note: the only reliable D24X8 sample path is via an effect's
+	// sampler_state), while the R32F copy is proven by direct readback
+	// ([RTSTATS] min=0.27-0.41 + smap_*.ppm). The R32F holds the W3X cast's
+	// sun-depth grayscale (PS_ShadowDepth returns shadowCS.z/w - identical
+	// semantics to this PS's shadProj.z/w compare), and RA3 itself receives from
+	// an R32F shadow map, so this is engine-faithful. Cost: W3D casters (color-
+	// suppressed during the pass) lose the shadow-map ground shadow; their
+	// volumetric shadows remain.
 	if (TheGlobalData && TheGlobalData->m_useShadowMap && m_shadowMapAvailable
-		&& m_sunLightShadowPS && m_shadowDepthStencilAvailable && m_shadowDepthStencilTex) {
-		IDirect3DBaseTexture8 *shadowTex = static_cast<IDirect3DBaseTexture8*>(m_shadowDepthStencilTex);
+		&& m_sunLightShadowPS && m_shadowDepthSampler) {
+		IDirect3DBaseTexture8 *shadowTex = static_cast<IDirect3DBaseTexture8*>(m_shadowDepthSampler);
 		dev->SetTexture(4, shadowTex);
 		Matrix4x4 svp = m_shadowViewProj;
 		float c9[4]  = { svp[0][0], svp[0][1], svp[0][2], svp[0][3] };
@@ -649,9 +658,10 @@ void W3DDeferredRenderer::sunLightPass(
 	dev->SetPixelShaderConstantF(6, c6, 1);
 
 	// Set pixel shader. If shadow variant was already bound above, keep it;
-	// otherwise fall back to the standard sunlight shader.
+	// otherwise fall back to the standard sunlight shader. FIX A: gate on the
+	// R32F sampler copy (the receive source), not the D24X8.
 	if (!TheGlobalData || !TheGlobalData->m_useShadowMap || !m_shadowMapAvailable
-		|| !m_sunLightShadowPS || !m_shadowDepthStencilAvailable || !m_shadowDepthStencilTex) {
+		|| !m_sunLightShadowPS || !m_shadowDepthSampler) {
 		dev->SetPixelShader(m_sunLightPS);
 	}
 
@@ -1647,17 +1657,22 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	}
 	Vector3 up(0, 0, 1);
 	if (fabsf(lightDir.Z) > 0.99f) { up.Set(0, 1, 0); }
-	// CLIPPING FIX (2026-09-05, algebra-proven): the old eye = target -
-	// lightDir*500 with near=0.1 clipped every caster whose view-space depth
-	// went negative: depth = 500 + dot(P-target, fwd), and dot() sweeps
-	// +-0.45*span across the window, so casters on the sun-backward side of
-	// the center sat BEHIND the near plane and wrote NOTHING into the shadow
-	// map (the "no W3X shadows at all" run). Eye distance, near and far now
-	// scale with the map span so the algebra puts every window point inside
-	// [near, far] for ANY sun angle:
-	//   depth in [0.625W - 0.354W - 1000, 0.625W + 0.354W + 1000]  (all > near)
+	// SUN-SIDE CAMERA FIX (2026-09-05 late, THE root cause of "no ground shadow
+	// ever"): sunDir points TOWARD the sun - runtime [VPFOLLOW] sunDir z=+0.515
+	// (UP; the terrain PBR lights with the same vector). eye = target -
+	// lightDir*dist therefore placed the shadow camera on the ANTI-SUN side,
+	// 1200..2100 units UNDERGROUND looking up at the sky. Depth order inverted:
+	// every caster is FARTHER from that camera than the ground receiver, so the
+	// PCF compare (receiver_depth - bias > caster_depth) can never fire => zero
+	// ground shadow for ANY receive texture (D24X8 or R32F alike). Empirical
+	// match: the cast blob's stored z/w 0.375-0.50 equals the underground-camera
+	// projection of a z=78..200 caster (z_view=2100 -> ndc=0.362, recomputed).
+	// eye now sits on the SUN side; camera fwd = -lightDir = the direction the
+	// light travels. Depth algebra (same shape as the 09-05 clipping fix):
+	// depth = 0.75W + dot(P-target, -lightDir), |dot| <= ~0.5W => depth in
+	// [0.25W, 1.25W] within [near=1, far=1.2W+1000] for W <= 16000.
 	float spanEff = (mapSpan > 0.0f) ? mapSpan : winSize;
-	Vector3 eye = target - lightDir * (spanEff * 0.75f);
+	Vector3 eye = target + lightDir * (spanEff * 0.75f);
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
@@ -1893,16 +1908,17 @@ void W3DDeferredRenderer::endShadowMapPass()
 		}
 		if (src) src->Release();
 	}
-	// CAUSE-HUNT DIAG (2026-09-05): numeric ground truth of the sampler copy the
-	// W3X receive samples (the PPM dump path is unreliable under dgVoodoo - it
-	// rendered flat gray regardless of content). mean~max~1 = EMPTY map (the
-	// compare sees far depth everywhere -> everything lit); min<max = real cast
-	// content, and an absent shadow then points at the receive side.
+	// CAUSE-HUNT DIAG (2026-09-05): numeric ground truth of the shadow COLOR RT
+	// DIRECTLY (not the sampler copy - that removes the StretchRect from the
+	// measurement chain). Read every 30 shadow passes (~3s): the 2026-09-05
+	// 300-frame cadence produced ZERO readings on short map visits. mean~max~1
+	// = EMPTY map (compare sees far depth -> everything lit); min<max spread =
+	// real cast content, and an absent shadow then points at the receive side.
 	static int s_rtStatN = 0;
-	if (dev && m_shadowDepthSampler && (s_rtStatN++ % 300) == 0) {
+	if (dev && m_shadowDepthRT && (s_rtStatN++ % 150) == 0) {
 		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
-		IDirect3DSurface9 *src = NULL;
-		if (SUCCEEDED(m_shadowDepthSampler->GetSurfaceLevel(0, &src)) && src) {
+		IDirect3DSurface9 *src = getShadowRTSurface();
+		if (src) {
 			D3DSURFACE_DESC sd;
 			if (SUCCEEDED(src->GetDesc(&sd))) {
 				IDirect3DSurface9 *sys = NULL;
@@ -1914,6 +1930,12 @@ void W3DDeferredRenderer::endShadowMapPass()
 							float mn = 1e30f, mx = -1e30f;
 							double sum = 0.0;
 							Int n = 0;
+							// DIAG v2: content bbox - WHERE the cast content sits inside
+							// the window (compare against [WINDOW] center and the known
+							// base world positions; a vehicle-only blob reports a small
+							// box, buildings absent => box collapses to that blob).
+							int bx0 = -1, by0 = -1, bx1 = -1, by1 = -1;
+							Int nContent = 0;
 							for (UINT y = 0; y < sd.Height; y++) {
 								const float *row = (const float*)((const char*)lr.pBits + (size_t)y * lr.Pitch);
 								for (UINT x = 0; x < sd.Width; x++) {
@@ -1922,10 +1944,57 @@ void W3DDeferredRenderer::endShadowMapPass()
 									if (v > mx) mx = v;
 									sum += v;
 									n++;
+									if (v < 0.99f) {
+										nContent++;
+										if (bx0 < 0 || (int)x < bx0) bx0 = x;
+										if ((int)x > bx1) bx1 = x;
+										if (by0 < 0 || (int)y < by0) by0 = y;
+										if ((int)y > by1) by1 = y;
+									}
 								}
 							}
-							DIAG_LOG(("W3DDeferredRenderer: [RTSTATS] min=%.4f max=%.4f mean=%.4f\n",
-								mn, mx, n ? (float)(sum / n) : 0.0f));
+							DIAG_LOG(("W3DDeferredRenderer: [RTSTATS] min=%.4f max=%.4f mean=%.4f content=%d bbox x %d..%d y %d..%d\n",
+								mn, mx, n ? (float)(sum / n) : 0.0f,
+								(int)nContent, bx0, bx1, by0, by1));
+							sys->UnlockRect();
+						}
+					}
+					sys->Release();
+				}
+			}
+			src->Release();
+		}
+	}
+	// CAUSE-HUNT DIAG v2: dump the COLOR RT as rotating PPMs (E:\smap_000..009)
+	// so the actual cast content can be SEEN frame-accurately. Direct RT
+	// readback - the old effect-based dump returned flat 0.5 under dgVoodoo.
+	static int s_rtDumpN = 0;
+	if (dev && m_shadowDepthRT && (s_rtDumpN++ % 450) == 0) {
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+		IDirect3DSurface9 *src = getShadowRTSurface();
+		if (src) {
+			D3DSURFACE_DESC sd;
+			if (SUCCEEDED(src->GetDesc(&sd))) {
+				IDirect3DSurface9 *sys = NULL;
+				if (SUCCEEDED(d9->CreateOffscreenPlainSurface(sd.Width, sd.Height, sd.Format,
+						D3DPOOL_SYSTEMMEM, &sys, NULL))) {
+					if (SUCCEEDED(d9->GetRenderTargetData(src, sys))) {
+						D3DLOCKED_RECT lr;
+						if (SUCCEEDED(sys->LockRect(&lr, NULL, D3DLOCK_READONLY))) {
+							char pbuf[64];
+							sprintf(pbuf, "E:\\smap_%03d.ppm", s_rtDumpN % 10);
+							FILE *fp = fopen(pbuf, "wb");
+							if (fp) {
+								fprintf(fp, "P6\n%d %d\n255\n", (int)sd.Width, (int)sd.Height);
+								for (UINT y = 0; y < sd.Height; y++) {
+									const float *row = (const float*)((const char*)lr.pBits + (size_t)y * lr.Pitch);
+									for (UINT x = 0; x < sd.Width; x++) {
+										unsigned char b = (unsigned char)(row[x] * 255.0f);
+										fputc(b, fp); fputc(b, fp); fputc(b, fp);
+									}
+								}
+								fclose(fp);
+							}
 							sys->UnlockRect();
 						}
 					}
@@ -2165,6 +2234,7 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"float4 c6 : register(c6);\n"
 		"float4x4 shadowVP : register(c9);\n"
 		"float4 c13 : register(c13);\n"
+		"float4 c14 : register(c14);\n"
 		"float3 octDecode(float2 e) {\n"
 		"\tfloat2 p = e * 2.0 - 1.0;\n"
 		"\tfloat3 n = float3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));\n"
@@ -2235,6 +2305,14 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 		"\tfloat3 specIBL = specularIBL * (F0_ibl * brdf.x + brdf.y);\n"
 		"\tfloat3 ambient = diffuseIBL * albedo;\n"
 		"\tfloat3 final = ambient + direct + specIBL + emissive;\n"
+		"\t// SHADOW-VIZ (PBRDebugMode >= 20, 09-05): 20 = raw PCF shadow term\n"
+		"\t// (0=shadowed, 1=lit); 21 = shadow UV. Settles whether the GROUND is\n"
+		"\t// shaded by this deferred PS at all: if the visible ground never shows\n"
+		"\t// the cast silhouettes in mode 20, the terrain is painted by the FORWARD\n"
+		"\t// pass on top of the deferred image and the shadow must move into the\n"
+		"\t// forward terrain path instead.\n"
+		"\tif (c14.x >= 21.0) return float4(shadUV.x, shadUV.y, 0.0, 1.0);\n"
+		"\tif (c14.x >= 20.0) return float4(shadow, shadow, shadow, 1.0);\n"
 		"\t// Gamma\n"
 		"\tif (c13.x >= 0.5) final = sqrt(abs(final));\n"
 		"\treturn float4(final, 1.0);\n"
