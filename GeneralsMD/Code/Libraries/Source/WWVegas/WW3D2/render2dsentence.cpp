@@ -1008,12 +1008,16 @@ Vector2	Render2DSentenceClass::Build_Sentence_Not_Centered (const WCHAR *text, i
 	//
 	if (CurSurface == NULL) {
 		Allocate_New_Surface (text, justCalcExtents);
-		// 2026-09-05 crash guard: Allocate_New_Surface can fail under resource
-		// pressure (texture creation returns NULL) - the old code then locked a
-		// NULL surface and AV'd the UI thread
-		// (ReleaseCrashInfo: W3DGadgetStaticTextDraw -> SurfaceClass::Lock).
-		if (CurSurface == NULL) {
-			return cursor;	// drop this sentence instead of crashing
+		// 2026-09-05 crash guard, corrected 2026-09-06: Allocate_New_Surface
+		// only creates a surface when !justCalcExtents - the extents pass
+		// legitimately leaves CurSurface NULL and MUST still compute its
+		// layout. An unconditional bail here silently dropped every centered
+		// text's extents pass, displacing menu text to the bottom-right.
+		// Drop the sentence only on a real allocation failure in the drawing
+		// path, where CurSurface->Lock() below would otherwise dereference
+		// NULL (ReleaseCrashInfo: W3DGadgetStaticTextDraw -> SurfaceClass::Lock).
+		if (CurSurface == NULL && !justCalcExtents) {
+			return cursor;
 		}
 	}
 
