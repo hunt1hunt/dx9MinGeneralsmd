@@ -45,6 +45,7 @@
 static void W3XShadowDiag(const char *fmt, ...)
 {
 	static FILE *s_log = NULL;
+	if (!getenv("W3X_SHADOW_DIAG")) return;	// 2026-09-06 PERF tier 1: bursts of unbuffered I/O - env-gated
 	if (!s_log) {
 		s_log = fopen("E:\\GeneralsMD_W3XShadow.log", "a");
 		if (s_log) setvbuf(s_log, NULL, _IONBF, 0);

@@ -1915,7 +1915,11 @@ void W3DDeferredRenderer::endShadowMapPass()
 	// = EMPTY map (compare sees far depth -> everything lit); min<max spread =
 	// real cast content, and an absent shadow then points at the receive side.
 	static int s_rtStatN = 0;
-	if (dev && m_shadowDepthRT && (s_rtStatN++ % 150) == 0) {
+	// 2026-09-06 PERF tier 1: the readback+scan is a 16 MB GPU->CPU transfer
+	// plus a full float scan on the render thread - a recurring 100-200 ms
+	// stall. Gated off for ship; flip for shadow-map debugging only.
+	static const bool s_rtStatsEnabled = false;
+	if (s_rtStatsEnabled && dev && m_shadowDepthRT && (s_rtStatN++ % 150) == 0) {
 		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 		IDirect3DSurface9 *src = getShadowRTSurface();
 		if (src) {
@@ -1969,7 +1973,11 @@ void W3DDeferredRenderer::endShadowMapPass()
 	// so the actual cast content can be SEEN frame-accurately. Direct RT
 	// readback - the old effect-based dump returned flat 0.5 under dgVoodoo.
 	static int s_rtDumpN = 0;
-	if (dev && m_shadowDepthRT && (s_rtDumpN++ % 450) == 0) {
+	// 2026-09-06 PERF tier 1: 16 MB readback + a 12 MB synchronous file write
+	// on the render thread every 450 passes - a recurring 200-500 ms stutter.
+	// Gated off for ship.
+	static const bool s_rtDumpEnabled = false;
+	if (s_rtDumpEnabled && dev && m_shadowDepthRT && (s_rtDumpN++ % 450) == 0) {
 		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 		IDirect3DSurface9 *src = getShadowRTSurface();
 		if (src) {
@@ -2008,7 +2016,9 @@ void W3DDeferredRenderer::endShadowMapPass()
 	// casters incl. W3D) AND the sampler copy (what the W3X receive samples).
 	// Empty/flat on both => the cast wrote nothing; sampler copy white while the
 	// D24X8 shows geometry => the StretchRect/resolve failed.
-	static bool s_dumpedMaps = false;
+	// 2026-09-06 PERF tier 1: two 12 MB readbacks + writes at frame ~60 = a
+	// double hitch on every map load. Gated off for ship.
+	static bool s_dumpedMaps = true;
 	if (!s_dumpedMaps) {
 		s_dumpedMaps = true;
 		dumpShadowD24ToPPM("E:\\shadowmap_dump.ppm");

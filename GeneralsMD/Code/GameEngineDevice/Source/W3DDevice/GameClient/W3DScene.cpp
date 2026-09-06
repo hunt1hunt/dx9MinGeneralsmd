@@ -1155,7 +1155,18 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					invViewProj=(Matrix4x4&)d3dInv;
 				}
 				LARGE_INTEGER pf; QueryPerformanceFrequency(&pf);
-				if (TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
+				static const bool s_pipeDiag = false;	// 2026-09-06 PERF tier 1: per-frame pass logging to a 59 MB append-only file
+				// 2026-09-06 PERF (tier 2): the texture shadow map has NO visible
+				// consumer left on the volumetric route - the W3X texture receive is
+				// disabled (W3XRenderObj receiveShadow=false), the PBR forward
+				// receive was reverted, and the deferred lighting output is
+				// overwritten by the forward pass. The pass cost a median 183 ms
+				// (p95 523 ms) per invocation for nothing. Gate it off; the whole
+				// pipeline (RTSTATS readback, PPM dumps) dies with this switch.
+				// Flip to true to revive the texture-shadow route (WIP archived in
+				// E:/backup_20260906_shadow_wip/).
+				static const bool s_textureShadowMapEnabled = false;
+				if (s_textureShadowMapEnabled && TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
 				{
 					// Refresh the scene visibility flags BEFORE the shadow-map
 					// pass. The pass gates its render on Is_Really_Visible(),
@@ -1170,7 +1181,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					if (!Visibility_Checked) {
 						Visibility_Check(&rinfo.Camera);
 					}
-					DIAG_LOG(("PIPELINE: === Shadow Map Pass ===\n"));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Shadow Map Pass ===\n"));
 					LARGE_INTEGER shS,shE; QueryPerformanceCounter(&shS);
 					if (g_theW3DDeferredRenderer->beginShadowMapPass(sunDir,viewMatrix,shadowCenter)) {
 						RefRenderObjListIterator si(&RenderList);
@@ -1215,7 +1226,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					}
 					g_theW3DDeferredRenderer->endShadowMapPass();
 					QueryPerformanceCounter(&shE);
-					DIAG_LOG(("PIPELINE: Shadow Map Pass took %.2f ms\n",(float)(shE.QuadPart-shS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: Shadow Map Pass took %.2f ms\n",(float)(shE.QuadPart-shS.QuadPart)*1000.0f/(float)pf.QuadPart));
 					ShaderClass::Invalidate();
 					// Let the G-Buffer pass re-run Visibility_Check as it always
 					// did (the shadow pass's check above was just to give the
@@ -1223,7 +1234,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					Visibility_Checked = false;
 				}
 				{
-					DIAG_LOG(("PIPELINE: === G-Buffer Pass ===\n"));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === G-Buffer Pass ===\n"));
 					LARGE_INTEGER gS,gE; QueryPerformanceCounter(&gS);
 					g_theW3DDeferredRenderer->beginGBufferPass();
 					g_gbufferActive=true; setCustomPassMode(SCENE_PASS_GBUFFER);
@@ -1232,17 +1243,17 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					g_gbufferActive=false; setCustomPassMode(SCENE_PASS_DEFAULT);
 					g_theW3DDeferredRenderer->endGBufferPass();
 					QueryPerformanceCounter(&gE);
-					DIAG_LOG(("PIPELINE: G-Buffer Pass took %.2f ms\n",(float)(gE.QuadPart-gS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: G-Buffer Pass took %.2f ms\n",(float)(gE.QuadPart-gS.QuadPart)*1000.0f/(float)pf.QuadPart));
 				}
 				if (TheGlobalData->m_useSSAO) {
-					DIAG_LOG(("PIPELINE: === SSAO Pass ===\n"));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === SSAO Pass ===\n"));
 					LARGE_INTEGER aS,aE; QueryPerformanceCounter(&aS);
 					g_theW3DDeferredRenderer->computeAO();
 					QueryPerformanceCounter(&aE);
-					DIAG_LOG(("PIPELINE: SSAO Pass took %.2f ms\n",(float)(aE.QuadPart-aS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: SSAO Pass took %.2f ms\n",(float)(aE.QuadPart-aS.QuadPart)*1000.0f/(float)pf.QuadPart));
 				}
 				{
-					DIAG_LOG(("PIPELINE: === Deferred Lighting Pass ===\n"));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Deferred Lighting Pass ===\n"));
 					LARGE_INTEGER lS,lE; QueryPerformanceCounter(&lS);
 					if (TheGlobalData->m_useHDR) g_theW3DDeferredRenderer->beginHDRPass();
 					{
@@ -1261,19 +1272,19 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					g_theW3DDeferredRenderer->renderDynamicLights(DX8Wrapper::_Get_D3D_Device8(),camPos,invViewProj);
 					if (TheGlobalData->m_useHDR) {
 						g_theW3DDeferredRenderer->endHDRPass();
-						DIAG_LOG(("PIPELINE: === Tone Mapping Pass ===\n"));
+						if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Tone Mapping Pass ===\n"));
 						g_theW3DDeferredRenderer->toneMapPass();
 					}
 					QueryPerformanceCounter(&lE);
-					DIAG_LOG(("PIPELINE: Lighting+Tonemap took %.2f ms\n",(float)(lE.QuadPart-lS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: Lighting+Tonemap took %.2f ms\n",(float)(lE.QuadPart-lS.QuadPart)*1000.0f/(float)pf.QuadPart));
 				}
 				{
-					DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
+					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
 					LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
 				g_gbufferActive=false; ShaderClass::Invalidate();
 					Customized_Render(rinfo); Flush(rinfo);
 						QueryPerformanceCounter(&fE);
-						DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
+						if (s_pipeDiag) DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
 						g_theW3DDeferredRenderer->aoCompositePass();
 						g_theW3DDeferredRenderer->iblCompositePass();
 					}
