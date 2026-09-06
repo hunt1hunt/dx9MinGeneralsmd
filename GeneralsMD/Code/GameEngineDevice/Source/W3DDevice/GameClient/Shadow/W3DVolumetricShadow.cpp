@@ -4843,19 +4843,15 @@ int W3DShadowGeometryManager::Load_Geom(RenderObjClass *robj, const char *name)
 			res=newgeom->initFromMesh(robj);
 			break;
 		case W3XRenderObjClass::CLASSID_W3X:
-			// 各走各的阴影 (user 2026-09-04, RE-APPLIED 2026-09-05): W3X models are
-			// shadowed by the SHADOW MAP ONLY - the _CreateShadowMap/ShadowDepth
-			// cast (hardware sun depth via ZWrite=1 + R32F grayscale for the W3X
-			// receive) is verified working for buildings, vehicles AND infantry.
-			// The volumetric extrusion is now pure redundancy and the source of
-			// the two remaining artifacts: the alpha-blind SOLID wire-fence shadow
-			// (lattice converted to w3x_muzzle.fx) and the animation-BLIND static
-			// radar-dish shadow. Refuse geometry so the volumetric manager skips
-			// W3X models entirely. (The 09-05 crash that got this reverted was the
-			// unthrottled shadow-map PPM dump, since fixed - the refusal itself was
-			// exonerated: addShadow NULL-guards, empty dtor, list-only iteration.)
-			// W3D models keep their volumetric soft shadows (other cases above).
-			res = FALSE;
+			// 2026-09-06 ROUTE ROLLBACK (user decision): the texture-shadow
+			// takeover is ABANDONED - under dgVoodoo the receive map cannot be
+			// fed (D24 sampled through a plain effect sampler returns a constant
+			// 0.502 placeholder, verified via the dump PPMs; the converted map
+			// darkened half the world). W3X models rejoin the W3D volumetric ->
+			// soft shadow route; initFromW3X (bone skinning, body caps) is fully
+			// implemented. Accepted trade-offs (documented at the 09-05 refusal):
+			// alpha-blind lattice shadows, animation-blind static parts.
+			res = newgeom->initFromW3X(robj);
 			break;
 		default:
 			break;	//unknown render object type

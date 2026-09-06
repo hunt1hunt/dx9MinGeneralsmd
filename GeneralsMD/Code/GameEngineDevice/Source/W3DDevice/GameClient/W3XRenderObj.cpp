@@ -1266,10 +1266,13 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// artifact was NOT the receive itself but the camera-following shadow map's
 	// texel grid swimming; that is fixed by texel snapping in beginShadowMapPass.
 	// So the receive is RE-ENABLED.
-	bool receiveShadow = (!inShadowPass && g_theW3DDeferredRenderer
-		&& g_theW3DDeferredRenderer->isShadowMapAvailable());
-	IDirect3DBaseTexture9 *shadowTex = receiveShadow
-		? g_theW3DDeferredRenderer->getShadowColorMapTexture() : NULL;
+	// 2026-09-06 ROUTE ROLLBACK: the texture-shadow receive is OFF - W3X shadows
+	// come from the volumetric -> soft route again (W3DShadowGeometryManager::
+	// Load_Geom re-admits CLASSID_W3X). Sampling the map here would double-
+	// darken against the volumetric stencil and self-shadow (the map only ever
+	// contains the W3X casts themselves).
+	bool receiveShadow = false;
+	IDirect3DBaseTexture9 *shadowTex = NULL;
 
 	// DIAG (one-shot, always-on in Release): report the texture-shadow chain
 	// state at this node — pass (CAST vs RECEIVE), shadow-map availability, and
