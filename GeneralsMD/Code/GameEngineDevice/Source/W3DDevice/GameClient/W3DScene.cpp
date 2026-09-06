@@ -69,6 +69,7 @@
 
 // C-linkage sun glow shader from W3DShaderManager (cross-library)
 extern "C" bool PBR_IsSunGlowEnabled(void);
+extern "C" bool PBR_IsMeshExcluded(const char *meshName);
 
 // Pipeline diagnostic logging
 static void diagSceneWrite(const char *fmt, ...)
@@ -1160,13 +1161,19 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				// consumer left on the volumetric route - the W3X texture receive is
 				// disabled (W3XRenderObj receiveShadow=false), the PBR forward
 				// receive was reverted, and the deferred lighting output is
-				// overwritten by the forward pass. The pass cost a median 183 ms
-				// (p95 523 ms) per invocation for nothing. Gate it off; the whole
-				// pipeline (RTSTATS readback, PPM dumps) dies with this switch.
-				// Flip to true to revive the texture-shadow route (WIP archived in
-				// E:/backup_20260906_shadow_wip/).
-				static const bool s_textureShadowMapEnabled = false;
-				if (s_textureShadowMapEnabled && TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
+				// overwritten by the forward pass. The 2026-09-06 PERF round first
+				// gated this whole branch OFF - that crashed later in the G-Buffer
+				// terrain draw (frame ~4200, AV inside dgVoodoo's d3d9.dll): the
+				// pass's begin/end also performs the visibility refresh and the
+				// sun-camera/restore state dance the G-Buffer entry implicitly
+				// depended on. FIX: keep the FULL state flow (visibility refresh,
+				// begin/end, restore, Visibility_Checked reset) and skip ONLY the
+				// expensive object rasterization - the 95-object 2048x2048 pass
+				// (median 183 ms) that has no visible consumer on the volumetric
+				// route. Flip s_shadowRasterize to true to revive the texture-
+				// shadow route (WIP archived in E:/backup_20260906_shadow_wip/).
+				static const bool s_shadowRasterize = false;
+				if (TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
 				{
 					// Refresh the scene visibility flags BEFORE the shadow-map
 					// pass. The pass gates its render on Is_Really_Visible(),
@@ -1189,9 +1196,14 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						static bool s_objListOnce = false;	// DIAG: one-shot name list
 						static char s_objNames[15][128];
 						static int s_objNamesN = 0;
+						if (s_shadowRasterize) {
 						for (si.First(); !si.Is_Done(); si.Next()) {
 						RenderObjClass *r=si.Peek_Obj();
 						if (r->Class_ID()==RenderObjClass::CLASSID_TILEMAP) continue;
+						{
+							const char *_cn = r->Get_Name();
+							if (_cn && PBR_IsMeshExcluded(_cn)) continue;
+						}
 						if (r->Is_Really_Visible()) {
 						if (!s_objListOnce && s_objNamesN < 15) {
 							const char *nm = r->Get_Name();
@@ -1205,6 +1217,8 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						smObjCount++;
 						}
 						}
+						TheDX8MeshRenderer.Flush();
+						}	// s_shadowRasterize
 						TheDX8MeshRenderer.Flush();
 						// DIAG (every 60 frames = ~2s): the object count rasterized
 						// into the shadow map. 0 => the map is empty (no texture shadows).
