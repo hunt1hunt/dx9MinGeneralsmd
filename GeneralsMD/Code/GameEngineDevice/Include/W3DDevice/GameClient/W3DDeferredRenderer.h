@@ -214,9 +214,6 @@ private:
 	/// Saved viewport for restoration after G-Buffer pass.
 	D3DVIEWPORT9 m_savedViewport;
 
-	/// Previous cleanup hook in the chain (we must not break the chain).
-	DX8_CleanupHook *m_prevCleanupHook;
-
 	// ---- Sunlight pass resources ----
 
 	/// Create the full-screen quad vertex buffer and index buffer.

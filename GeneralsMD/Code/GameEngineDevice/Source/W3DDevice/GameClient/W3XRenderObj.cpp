@@ -69,10 +69,15 @@ static void W3XMatrix3DToQuat(const Matrix3D &m, float *q);
 //=============================================================================
 // Shared W3X vertex declaration (W3XVertex layout, 64-byte stride)
 //=============================================================================
+// File-scope (not function-local) so W3XInvalidateVertexDecls can release
+// them on device reset -- dgVoodoo destroys declaration objects on Reset()
+// just like shaders, leaving function-local statics dangling.
+static IDirect3DVertexDeclaration9 *s_w3xDecl = NULL;
+static IDirect3DVertexDeclaration9 *s_w3xSoftDecl = NULL;
+
 IDirect3DVertexDeclaration9 *W3XGetVertexDecl(IDirect3DDevice9 *dev)
 {
-	static IDirect3DVertexDeclaration9 *s_decl = NULL;
-	if (!s_decl && dev) {
+	if (!s_w3xDecl && dev) {
 		D3DVERTEXELEMENT9 decl[] = {
 			{0,  0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
 			{0, 12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL, 0},
@@ -85,9 +90,9 @@ IDirect3DVertexDeclaration9 *W3XGetVertexDecl(IDirect3DDevice9 *dev)
 			{0, 68, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
 			D3DDECL_END()
 		};
-		dev->CreateVertexDeclaration(decl, &s_decl);
+		dev->CreateVertexDeclaration(decl, &s_w3xDecl);
 	}
-	return s_decl;
+	return s_w3xDecl;
 }
 
 //=============================================================================
@@ -98,8 +103,7 @@ IDirect3DVertexDeclaration9 *W3XGetVertexDecl(IDirect3DDevice9 *dev)
 //=============================================================================
 IDirect3DVertexDeclaration9 *W3XGetSoftVertexDecl(IDirect3DDevice9 *dev)
 {
-	static IDirect3DVertexDeclaration9 *s_decl = NULL;
-	if (!s_decl && dev) {
+	if (!s_w3xSoftDecl && dev) {
 		D3DVERTEXELEMENT9 decl[] = {
 			{0,   0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
 			{0,  12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL, 0},
@@ -116,9 +120,27 @@ IDirect3DVertexDeclaration9 *W3XGetSoftVertexDecl(IDirect3DDevice9 *dev)
 			{0, 128, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
 			D3DDECL_END()
 		};
-		dev->CreateVertexDeclaration(decl, &s_decl);
+		dev->CreateVertexDeclaration(decl, &s_w3xSoftDecl);
 	}
-	return s_decl;
+	return s_w3xSoftDecl;
+}
+
+//=============================================================================
+// W3XInvalidateVertexDecls
+// Release the shared W3X vertex declarations.  Called from the device
+// cleanup hook before Reset(); the declarations are re-created lazily by
+// W3XGetVertexDecl/W3XGetSoftVertexDecl on next use.
+//=============================================================================
+void W3XInvalidateVertexDecls(void)
+{
+	if (s_w3xDecl) {
+		s_w3xDecl->Release();
+		s_w3xDecl = NULL;
+	}
+	if (s_w3xSoftDecl) {
+		s_w3xSoftDecl->Release();
+		s_w3xSoftDecl = NULL;
+	}
 }
 
 //=============================================================================

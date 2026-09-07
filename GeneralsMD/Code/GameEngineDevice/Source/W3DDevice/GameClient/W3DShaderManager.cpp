@@ -4512,12 +4512,36 @@ W3DShaderManager::W3DShaderManager(void)
 	m_currentShader=(W3DShaderManager::ShaderTypes)-1;
 }
 
+// W3DShaderManagerCleanupHook ============================================
+// Cleanup-hook adapter so W3DShaderManager (an all-static class) can take
+// part in the device reset chain.  Re-acquire relies on the existing lazy
+// init(): it only runs when the surfaces are still missing, so the
+// BaseHeightMap hook's own shutdown()/init() sequence is not disturbed.
+//=============================================================================
+class W3DShaderManagerCleanupHook : public DX8_CleanupHook
+{
+public:
+	virtual void ReleaseResources(void) { W3DShaderManager::releaseDeviceResources(); }
+	virtual void ReAcquireResources(void)
+	{
+		if (!W3DShaderManager::canRenderToTexture()) {
+			W3DShaderManager::init();
+		}
+	}
+};
+static W3DShaderManagerCleanupHook _shaderManagerCleanupHook;
+
 // W3DShaderManager::init =======================================================
 /** Walk through all shaders and find versions suitable for current hardware */
 //=============================================================================
 void W3DShaderManager::init(void)
 {
 	int i,j;
+
+	// Defensive: init() may legitimately run twice after one device reset
+	// (cleanup-hook adapter + BaseHeightMap re-acquire).  Drop any surfaces
+	// from a previous run first so they cannot leak in D3DPOOL_DEFAULT.
+	releaseDeviceResources();
 
 	D3DSURFACE_DESC desc;
 	// For now, check & see if we are gf3 or higher on the food chain.
@@ -4597,6 +4621,28 @@ skipRenderTarget:
 	}
 
 	DEBUG_LOG(("ShaderManager ChipsetID %d\n", res));
+
+	// Register the device-reset adapter (duplicate registrations are ignored
+	// by the registry, so repeated init() calls are safe).
+	DX8Wrapper::RegisterCleanupHook(&_shaderManagerCleanupHook);
+}
+
+// W3DShaderManager::releaseDeviceResources ================================
+/** Release only the bare offscreen render-target surfaces.  Idempotent:
+	needed on the device-reset path (cleanup-hook registry) so the bare
+	D3DPOOL_DEFAULT texture no longer blocks D3D9 Reset() in scenes without
+	a heightmap (e.g. the main menu). */
+//=============================================================================
+void W3DShaderManager::releaseDeviceResources(void)
+{
+	if (m_newRenderSurface) m_newRenderSurface->Release();
+	if (m_renderTexture) m_renderTexture->Release();
+	if (m_oldRenderSurface) m_oldRenderSurface->Release();
+	if (m_oldDepthSurface) m_oldDepthSurface->Release();
+	m_renderTexture = NULL;
+	m_newRenderSurface = NULL;
+	m_oldDepthSurface = NULL;
+	m_oldRenderSurface = NULL;
 }
 
 // W3DShaderManager::shutdown =======================================================

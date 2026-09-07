@@ -116,9 +116,6 @@ private:
 	// Fixed-size cache (simple array avoids STL hash_map issues with VC6)
 	EffectEntry m_cache[W3X_EFFECT_CACHE_MAX];
 	int m_cacheSize;
-
-	// Chained device cleanup hook (previous registered hook, if any)
-	DX8_CleanupHook *m_prevCleanupHook;
 };
 
 

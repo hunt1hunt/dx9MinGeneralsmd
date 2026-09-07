@@ -51,6 +51,7 @@
 #include "matrix4.h"
 #include "camera.h"
 #include "W3DDevice/GameClient/W3DView.h"
+#include "W3DDevice/GameClient/W3XRenderObj.h"
 #include "GameClient/View.h"
 #include "WW3D2/dx8caps.h"
 #include "WW3D2/ww3d.h"
@@ -268,20 +269,18 @@ public:
 // W3XEffectManager::W3XEffectManager
 //=============================================================================
 W3XEffectManager::W3XEffectManager(void) :
-	m_cacheSize(0),
-	m_prevCleanupHook(NULL)
+	m_cacheSize(0)
 {
 	for (int i = 0; i < W3X_EFFECT_CACHE_MAX; i++) {
 		m_cache[i].effect = NULL;
 		m_cache[i].refCount = 0;
 	}
 
-	// Register as the device cleanup hook (chained with any existing hook) so
-	// cached effects get OnLostDevice/OnResetDevice across device resets.
-	m_prevCleanupHook = DX8Wrapper::GetCleanupHook();
-	DX8Wrapper::SetCleanupHook(this);
-	DEBUG_LOG(("[W3X_P3] W3XEffectManager registered as device cleanup hook (prev=%p)\n",
-		(void*)m_prevCleanupHook));
+	// Register in the device cleanup-hook registry so cached effects get
+	// OnLostDevice/OnResetDevice across device resets (registry form keeps
+	// this registration alive even when other subsystems register later).
+	DX8Wrapper::RegisterCleanupHook(this);
+	DEBUG_LOG(("[W3X_P3] W3XEffectManager registered in cleanup-hook registry\n"));
 }
 
 
@@ -290,10 +289,8 @@ W3XEffectManager::W3XEffectManager(void) :
 //=============================================================================
 W3XEffectManager::~W3XEffectManager()
 {
-	// Restore the previous cleanup hook if we are still registered
-	if (DX8Wrapper::GetCleanupHook() == this) {
-		DX8Wrapper::SetCleanupHook(m_prevCleanupHook);
-	}
+	// Remove ourselves from the cleanup-hook registry
+	DX8Wrapper::UnregisterCleanupHook(this);
 
 	// Release all cached effects
 	for (int i = 0; i < m_cacheSize; i++) {
@@ -309,27 +306,23 @@ W3XEffectManager::~W3XEffectManager()
 
 //=============================================================================
 // W3XEffectManager::ReleaseResources
-// Device lost: release effect device resources, then chain to previous hook.
+// Device lost: release effect device resources + W3X vertex declarations.
 //=============================================================================
 void W3XEffectManager::ReleaseResources(void)
 {
 	OnLostDevice();
-	if (m_prevCleanupHook) {
-		m_prevCleanupHook->ReleaseResources();
-	}
+	W3XInvalidateVertexDecls();
 }
 
 
 //=============================================================================
 // W3XEffectManager::ReAcquireResources
-// Device restored: re-acquire effect device resources, then chain to previous.
+// Device restored: re-acquire effect device resources.  W3X vertex
+// declarations are re-created lazily on next use.
 //=============================================================================
 void W3XEffectManager::ReAcquireResources(void)
 {
 	OnResetDevice();
-	if (m_prevCleanupHook) {
-		m_prevCleanupHook->ReAcquireResources();
-	}
 }
 
 

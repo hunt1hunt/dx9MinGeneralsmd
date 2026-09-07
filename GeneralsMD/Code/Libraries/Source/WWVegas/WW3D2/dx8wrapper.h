@@ -185,6 +185,9 @@ public:
 	virtual void ReAcquireResources(void)=0;
 };
 
+// Maximum number of simultaneously registered device-cleanup hooks.
+#define MAX_CLEANUP_HOOKS 8
+
 
 struct RenderStateStruct
 {
@@ -267,8 +270,17 @@ public:
 	static bool Init(void * hwnd, bool lite = false);
 	static void Shutdown(void);
 
-	static void SetCleanupHook(DX8_CleanupHook *pCleanupHook) {m_pCleanupHook = pCleanupHook;};
-	static DX8_CleanupHook *GetCleanupHook() { return m_pCleanupHook; }
+	static void SetCleanupHook(DX8_CleanupHook *pCleanupHook);
+	static DX8_CleanupHook *GetCleanupHook();
+	/*
+	** Registry form of the cleanup hook.  The old single-slot hook was silently
+	** overwritten whenever a new subsystem registered (e.g. every map load,
+	** BaseHeightMapRenderObjClass clobbered W3DDeferredRenderer), leaving
+	** D3DPOOL_DEFAULT resources alive so that D3D9 Reset() failed forever after
+	** an Alt+Tab.  Register adds to the list, Unregister removes (safe in dtors).
+	*/
+	static void RegisterCleanupHook(DX8_CleanupHook *pCleanupHook);
+	static void UnregisterCleanupHook(DX8_CleanupHook *pCleanupHook);
 	/*
 	** Some WW3D sub-systems need to be initialized after the device is created and shutdown
 	** before the device is released.
@@ -638,7 +650,8 @@ protected:
 	** Protected Member Variables
 	*/
 
-	static DX8_CleanupHook *m_pCleanupHook;
+	static DX8_CleanupHook *m_pCleanupHooks[MAX_CLEANUP_HOOKS];
+	static int m_CleanupHookCount;
 
 	static RenderStateStruct			render_state;
 	static unsigned						render_state_changed;

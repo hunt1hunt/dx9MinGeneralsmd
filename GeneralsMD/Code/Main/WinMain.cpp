@@ -55,6 +55,7 @@
 #include "Common/Team.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/GameClient.h"
+#include "GameClient/Display.h"
 #include "GameLogic/GameLogic.h"  ///< @todo for demo, remove
 #include "GameClient/Mouse.h"
 #include "GameClient/IMEManager.h"
@@ -88,7 +89,7 @@ static HANDLE GeneralsMutex = NULL;
 #define DEFAULT_XRESOLUTION 800
 #define DEFAULT_YRESOLUTION 600
 
-//extern void Reset_D3D_Device(bool active);
+extern void Reset_D3D_Device(bool active);
 
 static Bool gInitializing = false;
 static Bool gDoPaint = true;
@@ -475,13 +476,45 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 					// window as a thin black strip, so force it back to the display
 					// size before bringing it to the foreground. (Skip in windowed
 					// debug mode -- leave the normal window size alone.)
+					// IMPORTANT: use the GAME resolution (TheDisplay), not the
+					// desktop metrics (SM_CXSCREEN/SM_CYSCREEN).  The mouse input
+					// path is GetCursorPos -> ScreenToClient -> clamp to
+					// TheDisplay->getWidth()/getHeight(); stretching the client
+					// area to the physical desktop (e.g. 1920x1080) while the game
+					// renders 1024x768 leaves the cursor coordinate mapping dead
+					// beyond the game-resolution edge -- the HUD top-right corner
+					// becomes unreachable after Alt+Tab.
 					if (!ApplicationIsWindowed) {
-						SetWindowPos(ApplicationHWnd, HWND_TOPMOST, 0, 0,
-							GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
+						Int fsW = GetSystemMetrics(SM_CXSCREEN);
+						Int fsH = GetSystemMetrics(SM_CYSCREEN);
+						if (TheDisplay && TheDisplay->getWidth() > 0 && TheDisplay->getHeight() > 0) {
+							fsW = TheDisplay->getWidth();
+							fsH = TheDisplay->getHeight();
+						}
+						SetWindowPos(ApplicationHWnd, HWND_TOPMOST, 0, 0, fsW, fsH,
 							SWP_SHOWWINDOW);
+						// Re-assert the mouse limits now that the window geometry
+						// is final for this activation.
+						if (TheMouse)
+							TheMouse->setMouseLimits();
 					}
 					SetForegroundWindow(ApplicationHWnd);
 					SetFocus(ApplicationHWnd);
+					// The Windows foreground lock can make SetForegroundWindow fail
+					// silently when we are not the foreground process; retry a few
+					// times so the fullscreen window actually comes back.
+					{
+						Int fgRetry;
+						for (fgRetry = 0; fgRetry < 3; ++fgRetry) {
+							if (GetForegroundWindow() == ApplicationHWnd)
+								break;
+							Sleep(50);
+							SetForegroundWindow(ApplicationHWnd);
+						}
+						if (GetForegroundWindow() != ApplicationHWnd) {
+							DEBUG_LOG(("WM_ACTIVATEAPP: SetForegroundWindow failed after retries\n"));
+						}
+					}
 				}
 
 //				DWORD threadId=GetCurrentThreadId();
@@ -495,13 +528,18 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 					// of TestCooperativeLevel() == D3DERR_DEVICENOTRESET is not a requirement. There are other code
 					// paths that take care of that.
 
-					isWinMainActive = (BOOL) wParam;
-					
-					if (TheGameEngine)
-						TheGameEngine->setIsActive(isWinMainActive);
+				isWinMainActive = (BOOL) wParam;
 
-//					Reset_D3D_Device(isWinMainActive);
-					if (isWinMainActive)
+				if (TheGameEngine)
+					TheGameEngine->setIsActive(isWinMainActive);
+
+				// Rebuilt device recovery: when Alt+Tab returns and the device
+				// reports DEVICENOTRESET, re-assert the fullscreen present
+				// parameters immediately (guarded inside Reset_D3D_Device --
+				// healthy devices are NOT reset, so the DXMaximizedWindowedMode
+				// crash from 2026-09-01 cannot recur).
+				Reset_D3D_Device(isWinMainActive);
+				if (isWinMainActive)
 					{	//restore mouse cursor to our custom version.
 						if (TheWin32Mouse) {
 							TheWin32Mouse->lostFocus(FALSE);

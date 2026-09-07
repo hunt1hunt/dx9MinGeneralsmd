@@ -206,6 +206,9 @@ void BaseHeightMapRenderObjClass::drawScorches(void)
 //=============================================================================
 BaseHeightMapRenderObjClass::~BaseHeightMapRenderObjClass(void)
 {
+	// Remove ourselves from the cleanup-hook registry before tearing down.
+	DX8Wrapper::UnregisterCleanupHook(this);
+
 	freeMapResources();
 	if (m_treeBuffer) {
 		delete m_treeBuffer;
@@ -323,7 +326,10 @@ BaseHeightMapRenderObjClass::BaseHeightMapRenderObjClass(void)
 #else
 	m_shroud = NEW W3DShroud;
 #endif
-	DX8Wrapper::SetCleanupHook(this);
+	// Register in the cleanup-hook registry (not the old single-slot
+	// SetCleanupHook, which silently orphaned previously registered hooks
+	// like W3DDeferredRenderer and broke device Reset after Alt+Tab).
+	DX8Wrapper::RegisterCleanupHook(this);
 }
 
 void BaseHeightMapRenderObjClass::setTextureLOD(Int lod)

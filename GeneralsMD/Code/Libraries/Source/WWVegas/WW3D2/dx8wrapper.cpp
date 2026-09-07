@@ -221,7 +221,68 @@ typedef IDirect3D9* (WINAPI *Direct3DCreate9Type) (UINT SDKVersion);
 Direct3DCreate9Type	Direct3DCreate9Ptr = NULL;
 HINSTANCE D3D9Lib = NULL;
 
-DX8_CleanupHook	 *DX8Wrapper::m_pCleanupHook=NULL;
+DX8_CleanupHook	 *DX8Wrapper::m_pCleanupHooks[MAX_CLEANUP_HOOKS]={NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
+int DX8Wrapper::m_CleanupHookCount=0;
+
+/*
+** Registry implementation for device-cleanup hooks (replaces the single-slot
+** m_pCleanupHook).  Release order is reverse-registration (newest subsystem
+** first, matching the old chained-hook semantics); re-acquire order is
+** registration order (old chain forwarded to the previous hook first).
+*/
+void DX8Wrapper::RegisterCleanupHook(DX8_CleanupHook *pCleanupHook)
+{
+	if (pCleanupHook == NULL) {
+		return;
+	}
+	// ignore duplicate registration
+	for (int i=0; i<m_CleanupHookCount; ++i) {
+		if (m_pCleanupHooks[i] == pCleanupHook) {
+			return;
+		}
+	}
+	if (m_CleanupHookCount < MAX_CLEANUP_HOOKS) {
+		m_pCleanupHooks[m_CleanupHookCount++] = pCleanupHook;
+	} else {
+		WWDEBUG_SAY(("RegisterCleanupHook: registry full (%d hooks)!\n", m_CleanupHookCount));
+	}
+}
+
+void DX8Wrapper::UnregisterCleanupHook(DX8_CleanupHook *pCleanupHook)
+{
+	if (pCleanupHook == NULL) {
+		return;
+	}
+	for (int i=0; i<m_CleanupHookCount; ++i) {
+		if (m_pCleanupHooks[i] == pCleanupHook) {
+			// compact the array, preserving relative order of the rest
+			for (int j=i; j<m_CleanupHookCount-1; ++j) {
+				m_pCleanupHooks[j] = m_pCleanupHooks[j+1];
+			}
+			m_pCleanupHooks[--m_CleanupHookCount] = NULL;
+			return;
+		}
+	}
+}
+
+// Backwards-compatible single-slot API, kept for any legacy caller:
+// Set replaces the most recently registered hook (or pushes if none).
+void DX8Wrapper::SetCleanupHook(DX8_CleanupHook *pCleanupHook)
+{
+	if (m_CleanupHookCount > 0) {
+		UnregisterCleanupHook(m_pCleanupHooks[m_CleanupHookCount-1]);
+	}
+	RegisterCleanupHook(pCleanupHook);
+}
+
+DX8_CleanupHook *DX8Wrapper::GetCleanupHook()
+{
+	if (m_CleanupHookCount > 0) {
+		return m_pCleanupHooks[m_CleanupHookCount-1];
+	}
+	return NULL;
+}
+
 #ifdef EXTENDED_STATS
 DX8_Stats	 DX8Wrapper::stats;
 #endif
@@ -633,8 +694,11 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 			Set_Vertex_Buffer (NULL,i);
 		}
 		Set_Index_Buffer (NULL, 0);
-		if (m_pCleanupHook) {
-			m_pCleanupHook->ReleaseResources();
+		// Release in reverse-registration order (newest subsystem first)
+		for (int hook=m_CleanupHookCount-1; hook>=0; --hook) {
+			if (m_pCleanupHooks[hook]) {
+				m_pCleanupHooks[hook]->ReleaseResources();
+			}
 		}
 		DynamicVBAccessClass::_Deinit();
 		DynamicIBAccessClass::_Deinit();
@@ -649,8 +713,10 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 		HRESULT hr=_Get_D3D_Device8()->TestCooperativeLevel();
 		if (hr != D3DERR_DEVICELOST )
 		{	DX8CALL_HRES(Reset(&_PresentParameters),hr)
-			if (hr != D3D_OK)
+			if (hr != D3D_OK) {
+				WWDEBUG_SAY(("Reset failed, hr=0x%08X (INVALIDCALL means a D3DPOOL_DEFAULT resource was not released)\n", (unsigned)hr));
 				return false;	//reset failed.
+			}
 		}
 		else
 			return false;	//device is lost and can't be reset.
@@ -658,8 +724,11 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 		if (reload_assets)
 		{
 			DX8TextureManagerClass::Recreate_Textures();
-			if (m_pCleanupHook) {
-				m_pCleanupHook->ReAcquireResources();
+			// Re-acquire in registration order (oldest subsystem first)
+			for (int hook=0; hook<m_CleanupHookCount; ++hook) {
+				if (m_pCleanupHooks[hook]) {
+					m_pCleanupHooks[hook]->ReAcquireResources();
+				}
 			}
 		}
 		Invalidate_Cached_Render_States();

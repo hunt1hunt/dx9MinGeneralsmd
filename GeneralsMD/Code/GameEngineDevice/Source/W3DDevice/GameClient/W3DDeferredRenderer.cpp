@@ -181,7 +181,6 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_gbufferWidth(0),
 	m_gbufferHeight(0),
 	m_gbufferScale(1.0f),
-	m_prevCleanupHook(NULL),
 	m_sunLightPS(NULL),
 	m_pointLightPS(NULL),
 	m_quadVB(NULL),
@@ -387,10 +386,10 @@ void W3DDeferredRenderer::init()
 	}
 
 	//
-	// Register as a cleanup hook (chain with any existing hook).
+	// Register as a cleanup hook (registry form: survives later registrations,
+	// e.g. the per-map BaseHeightMapRenderObjClass hook).
 	//
-	m_prevCleanupHook = DX8Wrapper::GetCleanupHook();
-	DX8Wrapper::SetCleanupHook(this);
+	DX8Wrapper::RegisterCleanupHook(this);
 
 	m_available = true;
 	DIAG_LOG(("W3DDeferredRenderer: initialized (%dx%d, MRT=%d).\n",
@@ -420,9 +419,8 @@ void W3DDeferredRenderer::shutdown()
 		endGBufferPass();
 	}
 
-	// Restore previous cleanup hook in the chain.
-	DX8Wrapper::SetCleanupHook(m_prevCleanupHook);
-	m_prevCleanupHook = NULL;
+	// Remove ourselves from the cleanup-hook registry.
+	DX8Wrapper::UnregisterCleanupHook(this);
 
 	releaseSunLightShader();
 	releasePointLightShader();
@@ -1217,10 +1215,6 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseIBLResources();
 	releaseStencilSphere();
 	releaseCompositeShaders();
-
-	if (m_prevCleanupHook) {
-		m_prevCleanupHook->ReleaseResources();
-	}
 }
 
 // ============================================================================
@@ -1228,10 +1222,6 @@ void W3DDeferredRenderer::ReleaseResources()
 // ============================================================================
 void W3DDeferredRenderer::ReAcquireResources()
 {
-	if (m_prevCleanupHook) {
-		m_prevCleanupHook->ReAcquireResources();
-	}
-
 	DIAG_LOG(("W3DDeferredRenderer: re-acquiring resources.\n"));
 
 	if (!createGBufferResources()) {

@@ -42,6 +42,9 @@ struct IDirect3DVertexDeclaration9;
 IDirect3DVertexDeclaration9 *W3XGetVertexDecl(IDirect3DDevice9 *dev);
 // Shared soft-bound vertex declaration (W3XSoftVertex layout). Returns cached decl.
 IDirect3DVertexDeclaration9 *W3XGetSoftVertexDecl(IDirect3DDevice9 *dev);
+// Release the shared W3X vertex declarations (device reset). They are
+// re-created lazily on next use. Called from the cleanup-hook registry path.
+void W3XInvalidateVertexDecls(void);
 
 // Soft-bound infantry vertex (RA3 soft binding): TWO position/normal/tangent/
 // binormal sets bound to two bones, blended by blendWeight.x. Used ONLY for

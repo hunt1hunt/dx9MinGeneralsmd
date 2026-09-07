@@ -89,6 +89,9 @@ public:
 	W3DShaderManager(void);	///<constructor
 	static void init( void );	///<determine optimal shaders for current device.
 	static void shutdown(void);	///<release resources used by shaders
+	/// Release only the offscreen render-target surfaces (device reset path,
+	/// idempotent; keeps the cleanup-hook registry happy without a full shutdown).
+	static void releaseDeviceResources(void);
 	static ChipsetType getChipset(void);	///<return current device chipset.
 	static GraphicsVenderID getCurrentVendor(void) {return m_currentVendor;}	///<return current card vendor.
 	static getCurrentDriverVersion(void) {return m_driverVersion; }	///<return current driver version.
