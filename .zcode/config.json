@@ -1,0 +1,21 @@
+{
+  "mcp": {
+    "servers": {
+      "codegraph": {
+        "type": "stdio",
+        "command": "codegraph",
+        "args": ["serve", "--mcp"],
+        "env": {}
+      },
+      "mempalace": {
+        "type": "stdio",
+        "command": "C:\\Users\\hjzhhzc\\AppData\\Roaming\\Python\\Python314\\Scripts\\mempalace-mcp.exe",
+        "args": [
+          "--palace",
+          "C:\\Users\\hjzhhzc\\.mempalace"
+        ],
+        "env": {}
+      }
+    }
+  }
+}
