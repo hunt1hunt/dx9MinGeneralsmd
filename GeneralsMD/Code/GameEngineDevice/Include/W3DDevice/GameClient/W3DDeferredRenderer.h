@@ -173,6 +173,13 @@ public:
 	/// Whether shadow map is ready (D24X8 depth-stencil must be available).
 	bool isShadowMapAvailable() const { return m_shadowMapAvailable && m_shadowDepthStencilAvailable; }
 
+	/// Whether the shadow-map pass has completed at least once this session
+	/// (endShadowMapPass StretchRect'd a real cast into the sampler copy). The
+	/// W3X receive gates on this so it never samples the never-cleared initial
+	/// RT content when the pass is INI-disabled (m_useShadowMap=FALSE skips the
+	/// pass entirely, leaving the sampler copy uninitialized).
+	bool isShadowMapFresh() const { return m_shadowMapFrameFresh; }
+
 	/// Whether the deferred shadow-map pass is currently active. The W3X render
 	/// reads this (in addition to COLORWRITEENABLE==0) to know it must rasterize
 	/// into the shadow map using the SUN camera's VP — the RA3-style texture-shadow
@@ -192,6 +199,17 @@ public:
 	/// the explicit StretchRect resolve, done in endShadowMapPass). Returns NULL
 	/// when unavailable.
 	IDirect3DBaseTexture9 *getShadowColorMapTexture() const { return m_shadowDepthSampler; }
+
+	/// 2026-09-08 CPU-BRIDGED shadow copy: a MANAGED-pool A8R8G8B8 texture whose
+	/// contents are filled from the COLOR RT via GetRenderTargetData + LockRect
+	// 2026-09-10 CPU-BRIDGE REMOVAL: the receive's sample source is now the
+	// EVERY-FRAME StretchRect'd A8R8G8B8 sampler copy (m_shadowDepthSampler).
+	// The old MANAGED CPU copy (m_shadowCpuTex) caused 5s-stale shadows and,
+	// once refreshed at high cadence, render-thread stalls that raced device
+	// resets (the 15:12 font-renderer crash). A8R8G8B8 samples reliably under
+	// dgVoodoo (the read-0 defect was R32F-specific), so the sampler copy is
+	// directly consumable. Accessor name kept so consumers stay unchanged.
+	IDirect3DBaseTexture9 *getShadowCpuTexture() const { return m_shadowDepthSampler; }
 
 private:
 
@@ -282,6 +300,8 @@ private:
 	IDirect3DPixelShader9 *m_sunLightShadowPS; ///< Sunlight PS with shadow PCF 2x2.
 	IDirect3DTexture9 *m_shadowDepthStencilTex; ///< D24X8 depth-stencil texture for shadow map.
 	bool m_shadowDepthStencilAvailable;		///< D24X8 depth-stencil created OK.
+	bool m_shadowMapFrameFresh;				///< Shadow pass completed >=once; sampler copy holds a real cast (see isShadowMapFresh).
+	IDirect3DTexture9 *m_shadowCpuTex;			///< 2026-09-08 CPU-bridged MANAGED copy for hand-bound PS samplers (see getShadowCpuTexture).
 	IDirect3DSurface9 *m_savedDS;			///< Saved depth-stencil (restored after shadow pass).
 
 	// ---- SSAO resources ----

@@ -2341,6 +2341,28 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 				// Raw writes (the shader re-push inside Draw may overwrite the enable
 				// for some meshes - harmless, those keep the status-quo solid caster).
 				bool rbShadowAlphaCut = false;
+				// 2026-09-10 W3D-MESH CAST DEPTH: W3D meshes (vehicles, infantry) only
+				// wrote the D24X8 - the shadow COLOR RT the terrain PCF samples got NO
+				// depth from them (global CWE=0 from beginShadowMapPass suppresses
+				// their fixed-function color writes), so vehicles had no ground
+				// shadows while W3X buildings did. Write their sun depth into the
+				// COLOR RT like the W3X cast: TSS stage7 turns the view-space (= sun
+				// view, the pass overrides VIEW/PROJ) position into t7=(u,v,z) via
+				// [Proj*bias] (same fixed-pipeline trick + SAME V-flip bias as the
+				// terrain receive), and g_w3dShadowDepthPS (compiled in
+				// W3DShaderManager) outputs t7.z as the R channel. Alpha-cut casters
+				// keep the old depth-only behavior (a bound PS replaces the alpha the
+				// fixed-function alpha test would read).
+				bool w3dCastDepth = false;
+				IDirect3DDevice9 *cd9 = NULL;
+				IDirect3DPixelShader9 *cdPrevPS = NULL;
+				IDirect3DVertexShader9 *cdPrevVS = NULL;
+				DWORD cdPrevCWE = 0, cdPrevTCI = 0, cdPrevTTF = 0;
+				D3DMATRIX cdPrevT7;
+				Matrix4x4 cdProj(true);
+				D3DMATRIX cdPB;
+				ZeroMemory(&cdPrevT7, sizeof(cdPrevT7));
+				ZeroMemory(&cdPB, sizeof(cdPB));
 				if (g_shadowMapPassActive
 					&& (mesh->Is_Alpha() || mesh->Is_Translucent())
 					&& mesh->Peek_Model()
@@ -2349,9 +2371,64 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE,TRUE);
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,0x60);
 				}
+				cd9 = (IDirect3DDevice9*)DX8Wrapper::_Get_D3D_Device8();
+				w3dCastDepth = g_shadowMapPassActive
+					&& (g_w3dShadowDepthPS != NULL)
+					&& !rbShadowAlphaCut
+					&& (cd9 != NULL);
+				if (w3dCastDepth) {
+					cd9->GetPixelShader(&cdPrevPS);
+					cd9->GetVertexShader(&cdPrevVS);
+					cd9->GetRenderState(D3DRS_COLORWRITEENABLE, &cdPrevCWE);
+					cd9->GetTextureStageState(7, D3DTSS_TEXCOORDINDEX, &cdPrevTCI);
+					cd9->GetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, &cdPrevTTF);
+					cd9->GetTransform(D3DTS_TEXTURE7, &cdPrevT7);
+					// Depth goes to the R channel only, like the W3X cast (beginShadowMapPass
+					// set CWE=0 globally; re-enable RED just for this draw, raw + cached).
+					cd9->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
+					DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED);
+					// t7 = viewPos(row) * [Proj * Bias]; Bias = scale(0.5,-0.5,1) +
+					// offset(0.5,0.5) - the V-flip matches the standard-rasterized cast RT.
+					// Shadow pass VIEW/PROJ == sun matrices (Set by beginShadowMapPass).
+					DX8Wrapper::Get_Transform(D3DTS_PROJECTION, cdProj);
+					{
+						const float *P = (const float*)&cdProj;
+						float *O = (float*)&cdPB;
+						int r;
+						for (r = 0; r < 4; r++) {
+							const float *pr = P + r * 4;
+							float *orr = O + r * 4;
+							orr[0] = 0.5f * pr[0] + 0.5f * pr[3];
+							orr[1] = -0.5f * pr[1] + 0.5f * pr[3];
+							orr[2] = pr[2];
+							orr[3] = pr[3];
+						}
+					}
+					cd9->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+					cd9->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
+					cd9->SetTransform(D3DTS_TEXTURE7, &cdPB);
+					cd9->SetPixelShader(g_w3dShadowDepthPS);
+					// TSS coordinate generation needs the fixed-function vertex path;
+					// a stale PBR VS would both bypass it and clip everything.
+					cd9->SetVertexShader(NULL);
+				}
 				renderer->Render(mesh->Get_Base_Vertex_Offset());
 				if (rbShadowAlphaCut) {
 					DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE,FALSE);
+				}
+				if (w3dCastDepth) {
+					// Set unconditionally (NULL restores the fixed-function path so
+					// the depth PS cannot leak into later alpha-cut meshes), Release
+					// only the non-NULL refs taken by the Get calls above.
+					cd9->SetPixelShader(cdPrevPS);
+					cd9->SetVertexShader(cdPrevVS);
+					if (cdPrevPS) cdPrevPS->Release();
+					if (cdPrevVS) cdPrevVS->Release();
+					cd9->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, cdPrevTCI);
+					cd9->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, cdPrevTTF);
+					cd9->SetTransform(D3DTS_TEXTURE7, &cdPrevT7);
+					cd9->SetRenderState(D3DRS_COLORWRITEENABLE, cdPrevCWE);
+					DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE, cdPrevCWE);
 				}
 			}
 		}

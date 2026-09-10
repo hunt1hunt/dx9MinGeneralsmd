@@ -195,6 +195,8 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_sunLightShadowPS(NULL),
 	m_shadowDepthStencilTex(NULL),
 	m_shadowDepthStencilAvailable(false),
+	m_shadowMapFrameFresh(false),
+	m_shadowCpuTex(NULL),
 	m_savedDS(NULL),
 	m_aoRawRT(NULL),
 	m_aoBlurredRT(NULL),
@@ -1440,22 +1442,24 @@ bool W3DDeferredRenderer::createShadowResources()
 	// The deferred SunLightShadow PS samples the D24X8 (not this COLOR RT), so the
 	// format change only affects the W3X receive. Fallback chain: R32F ->
 	// A16B16G16R16F -> A8R8G8B8.
-	WW3DFormat shadowFmt = WW3D_FORMAT_R32F;
+	// 2026-09-10 (evening) FP16 TRIAL: 8-bit depth at the fit-to-map window
+	// (~8200 units near-far) was a 32-UNIT quantum - a 5-unit-tall tank cast
+	// sub-quantum depth (faint random compare) and the 0.005 bias (42 units)
+	// ate the building-root shadows (peter-panning). fp16 brings the quantum
+	// down to ~0.25 units. IF dgVoodoo samples fp16 as 0 (the R32F defect),
+	// shadows vanish this run - flip this back to A8R8G8B8 and the bias in
+	// W3DShaderManager back to 0.005 in one go.
+	WW3DFormat shadowFmt = WW3D_FORMAT_A16B16G16R16F;
 	m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
 		SM_SIZE, SM_SIZE, shadowFmt, true);
 	if (!m_shadowDepthRT) {
-		DIAG_LOG(("W3DDeferredRenderer: shadow map R32F RT failed, trying A16B16G16R16F.\n"));
-		shadowFmt = WW3D_FORMAT_A16B16G16R16F;
-		m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
-			SM_SIZE, SM_SIZE, shadowFmt, true);
-	}
-	if (!m_shadowDepthRT) {
-		DIAG_LOG(("W3DDeferredRenderer: shadow map float RT failed, falling back to A8R8G8B8.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: shadow map fp16 RT failed, falling back to A8R8G8B8.\n"));
 		shadowFmt = WW3D_FORMAT_A8R8G8B8;
 		m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
 			SM_SIZE, SM_SIZE, shadowFmt, true);
 	}
 	if (!m_shadowDepthRT) {
+		DIAG_LOG(("W3DDeferredRenderer: shadow map RT creation failed entirely.\n"));
 		DIAG_LOG(("W3DDeferredRenderer: shadow map RT creation failed.\n"));
 		m_shadowMapAvailable = false;
 		m_shadowDepthStencilAvailable = false;
@@ -1532,6 +1536,10 @@ void W3DDeferredRenderer::releaseShadowResources()
 	if (m_shadowDepthSampler) {
 		m_shadowDepthSampler->Release();
 		m_shadowDepthSampler = NULL;
+	}
+	if (m_shadowCpuTex) {
+		m_shadowCpuTex->Release();
+		m_shadowCpuTex = NULL;
 	}
 	if (m_shadowDepthStencilTex) {
 		m_shadowDepthStencilTex->Release();
@@ -1897,6 +1905,9 @@ void W3DDeferredRenderer::endShadowMapPass()
 			dst->Release();
 		}
 		if (src) src->Release();
+		// 2026-09-08 ROUTE RESTART: the sampler copy now holds a real cast this
+		// session — the W3X receive (isShadowMapFresh gate) may sample it.
+		m_shadowMapFrameFresh = true;
 	}
 	// CAUSE-HUNT DIAG (2026-09-05): numeric ground truth of the shadow COLOR RT
 	// DIRECTLY (not the sampler copy - that removes the StretchRect from the
@@ -1908,7 +1919,7 @@ void W3DDeferredRenderer::endShadowMapPass()
 	// 2026-09-06 PERF tier 1: the readback+scan is a 16 MB GPU->CPU transfer
 	// plus a full float scan on the render thread - a recurring 100-200 ms
 	// stall. Gated off for ship; flip for shadow-map debugging only.
-	static const bool s_rtStatsEnabled = false;
+	static const bool s_rtStatsEnabled = false;	// 2026-09-10 OFF: the 16 MB readback blocked the render thread on slow machines (reset-race crash); the RT is A8R8G8B8 now anyway (float scan would misparse). Flip back with an A8R8G8B8 branch when empirics are needed again.
 	if (s_rtStatsEnabled && dev && m_shadowDepthRT && (s_rtStatN++ % 150) == 0) {
 		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 		IDirect3DSurface9 *src = getShadowRTSurface();
@@ -1950,6 +1961,39 @@ void W3DDeferredRenderer::endShadowMapPass()
 							DIAG_LOG(("W3DDeferredRenderer: [RTSTATS] min=%.4f max=%.4f mean=%.4f content=%d bbox x %d..%d y %d..%d\n",
 								mn, mx, n ? (float)(sum / n) : 0.0f,
 								(int)nContent, bx0, bx1, by0, by1));
+							// 2026-09-08 ROUTE RESTART (empirical): dump the SAME verified
+							// readback as a viewable PPM the first times real cast content
+							// appears - connected-component analysis of this image decides
+							// WHICH casters (buildings vs vehicles vs infantry) actually
+							// land pixels. Event-triggered (content>500), max 2 writes.
+							{
+								static int s_ppmWritten = 0;
+								if (nContent > 500 && s_ppmWritten < 2) {
+									s_ppmWritten++;
+									char ppname[64];
+									_snprintf(ppname, 63, "E:\\smap_evt_%d.ppm", s_ppmWritten);
+									ppname[63] = 0;
+									FILE *pp = fopen(ppname, "wb");
+									if (pp) {
+										fprintf(pp, "P6\n%d %d\n255\n", (int)sd.Width, (int)sd.Height);
+										for (UINT y = 0; y < sd.Height; y++) {
+											const float *row = (const float*)((const char*)lr.pBits + (size_t)y * lr.Pitch);
+											for (UINT x = 0; x < sd.Width; x++) {
+												int v = (int)(row[x] * 255.0f + 0.5f);
+												if (v < 0) v = 0;
+												if (v > 255) v = 255;
+												fputc(v, pp); fputc(v, pp); fputc(v, pp);
+											}
+										}
+									fclose(pp);
+								}
+							}
+						}
+							// 2026-09-10: the CPU bridge moved OUT of this 150-pass
+							// diagnostic block to its own high-cadence refresh below
+							// (the 5s-stale snapshot was the root cause of the
+							// 1-2s-late building shadow and the non-following tank
+							// shadow).
 							sys->UnlockRect();
 						}
 					}
@@ -1959,6 +2003,14 @@ void W3DDeferredRenderer::endShadowMapPass()
 			src->Release();
 		}
 	}
+	// 2026-09-10: the CPU bridge is REMOVED entirely. It began life inside the
+	// 150-pass RTSTATS block (5s-stale shadows), was briefly every-2-passes,
+	// and the 16 MB readback blocked the render thread long enough on slow
+	// machines to trigger device-reset races (15:12 crash in the font
+	// renderer). The receive now samples the every-frame StretchRect'd
+	// A8R8G8B8 SAMPLER copy directly - see getShadowCpuTexture().
+	static int s_bridgeN = 0;
+	(void)s_bridgeN;
 	// CAUSE-HUNT DIAG v2: dump the COLOR RT as rotating PPMs (E:\smap_000..009)
 	// so the actual cast content can be SEEN frame-accurately. Direct RT
 	// readback - the old effect-based dump returned flat 0.5 under dgVoodoo.
@@ -1966,8 +2018,11 @@ void W3DDeferredRenderer::endShadowMapPass()
 	// 2026-09-06 PERF tier 1: 16 MB readback + a 12 MB synchronous file write
 	// on the render thread every 450 passes - a recurring 200-500 ms stutter.
 	// Gated off for ship.
-	static const bool s_rtDumpEnabled = false;
-	if (s_rtDumpEnabled && dev && m_shadowDepthRT && (s_rtDumpN++ % 450) == 0) {
+	// 2026-09-08 ROUTE RESTART: TEMP ON (aligned with the RTSTATS cadence) for
+	// the cast-coverage empirical run - REVERT after the color-RT picture is
+	// captured (which W3X classes actually write depth pixels).
+	static const bool s_rtDumpEnabled = false;	// 2026-09-08: rotating dump OFF - the event-triggered smap_evt_*.ppm (content>500) in the RTSTATS block is the empirical capture.
+	if (s_rtDumpEnabled && dev && m_shadowDepthRT && (s_rtDumpN++ % 150) == 0) {
 		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 		IDirect3DSurface9 *src = getShadowRTSurface();
 		if (src) {
@@ -2268,7 +2323,9 @@ bool W3DDeferredRenderer::compileSunLightShadowShader()
 	"\t// Shadow map PCF 2x2\n"
 	"\tfloat4 shadProj = mul(float4(worldPos.xyz, 1), shadowVP);\n"
 	"\tfloat2 shadUV = shadProj.xy / shadProj.w;\n"
-	"\tshadUV = shadUV * 0.5 + 0.5;\n"
+	"\t// 2026-09-10 V-FLIP: y must be 0.5-0.5*ndc.y (cast RT is standard-\n"
+	"\t// rasterized, ndc.y=+1 -> top row). +0.5 mirrored V vertically.\n"
+	"\tshadUV = shadUV * float2(0.5, -0.5) + 0.5;\n"
 	"\tfloat shadDepth = shadProj.z / shadProj.w;\n"
 		"\tfloat bias = 0.002;\n"
 		"\tfloat2 texelSize = 1.0 / 2048;\n"

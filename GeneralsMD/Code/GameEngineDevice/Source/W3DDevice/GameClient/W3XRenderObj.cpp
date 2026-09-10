@@ -45,7 +45,10 @@
 static void W3XShadowDiag(const char *fmt, ...)
 {
 	static FILE *s_log = NULL;
-	if (!getenv("W3X_SHADOW_DIAG")) return;	// 2026-09-06 PERF tier 1: bursts of unbuffered I/O - env-gated
+	// 2026-09-10: env gate (W3X_SHADOW_DIAG) REMOVED for the tank-cast hunt -
+	// the test runs kept launching the exe directly and the census/CAST_MESH/
+	// CAST-DRAW data never landed. Every caller here is one-shot-budgeted or
+	// 3s-throttled, so the volume is bounded. Re-gate if it ever hurts.
 	if (!s_log) {
 		s_log = fopen("E:\\GeneralsMD_W3XShadow.log", "a");
 		if (s_log) setvbuf(s_log, NULL, _IONBF, 0);
@@ -1261,8 +1264,13 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		} else if (g_theW3DDeferredRenderer->isShadowMapAvailable()) {
 			Matrix4x4 bias;
 			bias.Make_Identity();
+			// 2026-09-10 V-FLIP FIX: row 1 Y scale is -0.5, NOT the RA3-copied +0.5.
+			// Our cast rasterizes with the RAW sun VP through standard D3D pipeline
+			// (ndc.y=+1 -> RT top row), so the receive must compute v = 0.5-0.5*ndc.y;
+			// +0.5 mirrored V vertically (UV domain still [0,1], so the xcheck passed)
+			// and every sample read the mirrored ground position's depth => no shadow.
 			bias[0] = Vector4(0.5f, 0.0f, 0.0f, 0.0f);
-			bias[1] = Vector4(0.0f, 0.5f, 0.0f, 0.0f);
+			bias[1] = Vector4(0.0f, -0.5f, 0.0f, 0.0f);
 			bias[2] = Vector4(0.0f, 0.0f, 1.0f, 0.0f);
 			bias[3] = Vector4(0.5f, 0.5f, 0.0f, 1.0f);
 			shadowW2S = Multiply(g_theW3DDeferredRenderer->getShadowViewProj(), bias);
@@ -1294,8 +1302,24 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// Load_Geom re-admits CLASSID_W3X). Sampling the map here would double-
 	// darken against the volumetric stencil and self-shadow (the map only ever
 	// contains the W3X casts themselves).
+	// 2026-09-08 ROUTE RESTART: the texture-shadow receive is RE-ENABLED. The
+	// 09-06 rollback was caused by the dgVoodoo D24 constant-0.502 sample (the
+	// conversion route feeding W3D-mesh casts), NOT by this W3X color-RT route:
+	// the W3X cast rasterizes sun depth straight into the COLOR RT via the RA3
+	// ShadowDepth technique, and the receive samples the StretchRect'd plain
+	// sampler copy (getShadowColorMapTexture) — no D24 effect-sampling anywhere.
+	// Gate on available + fresh (pass ran at least once) so an INI-disabled
+	// pass never exposes the never-cleared initial RT content. The volumetric
+	// W3X admission is dropped in the same restart (W3DVolumetricShadow
+	// Load_Geom) to avoid double-darkening against the stencil route.
 	bool receiveShadow = false;
 	IDirect3DBaseTexture9 *shadowTex = NULL;
+	if (!inShadowPass
+		&& g_theW3DDeferredRenderer->isShadowMapAvailable()
+		&& g_theW3DDeferredRenderer->isShadowMapFresh()) {
+		shadowTex = g_theW3DDeferredRenderer->getShadowColorMapTexture();
+		receiveShadow = (shadowTex != NULL);
+	}
 
 	// DIAG (one-shot, always-on in Release): report the texture-shadow chain
 	// state at this node — pass (CAST vs RECEIVE), shadow-map availability, and
@@ -1504,6 +1528,22 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	// wrong depth -> the blocky "rectangle-tile" overlay on surfaces.
 	D3DXHANDLE hTech = NULL;
 	if (inShadowPass) {
+		// 2026-09-08 CAST CENSUS (one-shot, first 24 objects): the RTSTATS readback
+		// shows ONLY buildings in the color RT — record which W3X objects ever
+		// REACH the cast branch and which technique they resolve, so "no cast" vs
+		// "cast rejected further down" is decidable from the log.
+		{
+			static int s_castCensusN = 0;
+			// 2026-09-10: 24 -> 64 - cover the vehicles too (the no-shadow tanks)
+			if (s_castCensusN < 64) {
+				s_castCensusN++;
+				D3DXHANDLE hT1 = effect->GetTechniqueByName("ShadowDepth");
+				D3DXHANDLE hT2 = hT1 ? NULL : effect->GetTechniqueByName("_CreateShadowMap");
+				W3XShadowDiag("[W3X_SHDW] CAST-CENSUS[%d] '%s' fx='%s' ShadowDepth=%s _CreateShadowMap=%s submeshes=%d\n",
+					s_castCensusN, m_name, m_fxName.str(),
+					hT1 ? "YES" : "no", hT2 ? "YES" : (hT1 ? "-" : "no"), (int)m_meshes.size());
+			}
+		}
 		// ISOLATION BUILD (2026-09-05): cast path reverted to the 9/3-proven
 		// shape - ShadowDepth lookup ONLY, set ONCE per object. The crashing run
 		// correlated exactly with the first W3X shadow-map cast: that frame's
@@ -1625,20 +1665,19 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			bool isTransparent = !os.isEmpty()
 				&& (strstr(os.str(), "muzzle") != NULL);
 			if (!isTransparent) {
-				// RA3-faithful (user 2026-09-04: RA3 does NOT name-exclude): a
-				// sub-mesh whose material declares AlphaTestEnable=true is an
-				// alpha-cutout lattice (SKIN_G00 grille: texture alpha ALL below
-				// the 0.375 cast clip - measured on TasCC3_G.dds) and must not
-				// rasterize into the shadow map. The solid meshes declare it false
-				// (SKIN_BODY*) or not at all (SKIN_G01-03 posts/frames = 立柱/框线)
-				// and keep casting - exactly 只投立柱+框线、网面无影.
-				for (size_t ci = 0; ci < sm.constants.size(); ci++) {
-					const W3XShaderConstant &cc = sm.constants[ci];
-					if (cc.type == W3X_CONSTANT_BOOL
-						&& strcmp(cc.name.str(), "AlphaTestEnable") == 0) {
-						if (cc.boolValue) isTransparent = true;
-						break;
-					}
+				// 2026-09-10 TANK-CAST FIX: the AlphaTestEnable blanket exclusion is
+				// GONE. It was meant for grille/lattice meshes, but it also killed
+				// the Battlemaster / GattTank BODY+TURRET cast - their materials
+				// declare AlphaTestEnable=true for alpha-channel textures whose
+				// alpha is actually 1 (solid), so both tanks cast ZERO pixels and
+				// had no ground shadow (the TroopCrawler's materials don't declare
+				// it, which is why IT had a shadow). The fx PS_ShadowDepth already
+				// clips by the REAL sampled alpha (RA3 behavior): true lattices
+				// self-clip into a net shadow, solids pass. Keep excluding by the
+				// SKIN_G* grille naming so the authored wire-grates still cast
+				// nothing (the old net-overlay complaint).
+				if (smeshName && strstr(smeshName, ".SKIN_G") != NULL) {
+					isTransparent = true;
 				}
 			}
 			// DIAG one-shot (first 12 sub-meshes, any object): dump each sub-mesh's
@@ -1646,7 +1685,10 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			// are excluded while BODY/other solid meshes still cast.
 			{
 				static int s_castMeshDiag = 0;
-				if (s_castMeshDiag < 12) {
+				// 2026-09-10: 12 -> 128 - the one-shot budget was consumed by the
+				// FIRST building's sub-meshes and the VEHICLE sub-mesh skip states
+				// (the no-shadow tanks) were never recorded.
+				if (s_castMeshDiag < 128) {
 					s_castMeshDiag++;
 					W3XShadowDiag("[W3X_SHDW] CAST_MESH obj='%s' mesh='%s' fx='%s' origShader='%s' skip=%d consts=%d\n",
 						m_name, smeshName ? smeshName : "(none)",
@@ -1843,7 +1885,9 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		// technique/ps variant - a missing shadow here shows a failed stage here.
 		if (inShadowPass) {
 			static int s_castDrawDiag = 0;
-			if (s_castDrawDiag < 10) {
+			// 2026-09-10: 10 -> 256 - the budget was consumed by the FIRST
+			// building's sub-meshes; the tanks' draw state was never recorded.
+			if (s_castDrawDiag < 256) {
 				s_castDrawDiag++;
 				D3DXHANDLE hATd = drawEffect->GetParameterByName(NULL, "AlphaTestEnable");
 				BOOL atv = FALSE;
@@ -1853,8 +1897,45 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				D3DXTECHNIQUE_DESC tdesc;
 				if (hCurTech && SUCCEEDED(drawEffect->GetTechniqueDesc(hCurTech, &tdesc)) && tdesc.Name)
 					techName = tdesc.Name;
-				W3XShadowDiag("[W3X_SHDW] CAST-DRAW '%s' mesh='%s' tech='%s' passes=%u atParam=%d vDecl=%p\n",
-					m_name, sm.name.str() ? sm.name.str() : "?", techName, passes, atv ? 1 : 0, (void*)vDecl);
+				// 2026-09-10 TANK HUNT: the draw EXECUTES (passes=1) but the RT gets
+				// zero tank pixels, so the break is inside the draw - record the
+				// geometry facts (soft/stride/vertex+triangle counts, first blend
+				// index) so one run settles whether it is data mismatch or clipping.
+				float firstBlend = -999.0f;
+				UINT lvStride = (UINT)(sm.softBinding ? sizeof(W3XSoftVertex) : 76);
+				{
+					unsigned char *lv = NULL;
+					if (sm.vb && SUCCEEDED(sm.vb->Lock(0, lvStride, (void**)&lv, D3DLOCK_READONLY))) {
+						firstBlend = sm.softBinding
+							? ((const float*)(lv + 96))[0]	// soft: BLENDINDICES x at offset 96
+							: ((const float*)(lv + 56))[0];	// hard: BLENDINDICES x at offset 56
+						sm.vb->Unlock();
+					}
+				}
+				// 2026-09-10 TANK HUNT 2: dump the ACTUAL ShadowMapWorldToShadow the
+				// draw will use. Buildings rasterize into the map with the SAME fx
+				// code path - if a tank's W2S differs from a building's, the break
+				// is the matrix bind; if identical, it is the skinning data.
+				if (s_castDrawDiag <= 6) {
+					D3DXHANDLE hW2Sd = drawEffect->GetParameterByName(NULL, "ShadowMapWorldToShadow");
+					D3DXMATRIX mw2s;
+					ZeroMemory(&mw2s, sizeof(mw2s));
+					HRESULT gmRes = hW2Sd ? drawEffect->GetMatrix(hW2Sd, &mw2s) : E_FAIL;
+					D3DXHANDLE hVPd = drawEffect->GetParameterByName(NULL, "ViewProjection");
+					D3DXMATRIX mvp;
+					ZeroMemory(&mvp, sizeof(mvp));
+					HRESULT gvRes = hVPd ? drawEffect->GetMatrix(hVPd, &mvp) : E_FAIL;
+					W3XShadowDiag("[W3X_SHDW] CAST-MTX '%s' W2S(hr=0x%X) r0=(%.4f,%.4f,%.4f,%.4f) r3=(%.4f,%.4f,%.4f,%.4f) | VP(hr=0x%X) r0=(%.4f,%.4f,%.4f,%.4f) r3=(%.4f,%.4f,%.4f,%.4f)\n",
+						m_name, (unsigned)gmRes,
+						mw2s._11, mw2s._12, mw2s._13, mw2s._14,
+						mw2s._41, mw2s._42, mw2s._43, mw2s._44,
+						(unsigned)gvRes,
+						mvp._11, mvp._12, mvp._13, mvp._14,
+						mvp._41, mvp._42, mvp._43, mvp._44);
+				}
+				W3XShadowDiag("[W3X_SHDW] CAST-DRAW '%s' mesh='%s' tech='%s' passes=%u atParam=%d vDecl=%p soft=%d stride=%u vc=%d tc=%d blend0=%.3f\n",
+					m_name, sm.name.str() ? sm.name.str() : "?", techName, passes, atv ? 1 : 0, (void*)vDecl,
+					sm.softBinding ? 1 : 0, lvStride, (int)sm.vertexCount, (int)sm.triangleCount, firstBlend);
 			}
 		}
 		for (UINT p = 0; p < passes; p++) {

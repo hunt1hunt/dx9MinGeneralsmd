@@ -196,6 +196,8 @@ bool								g_gbufferActive											= false;
 bool								g_shadowMapPassActive							= false;
 IDirect3DPixelShader9 *	g_gbufferPS												= NULL;
 IDirect3DVertexShader9 *	g_gbufferVS												= NULL;
+// 2026-09-10 W3D-mesh cast depth PS (see dx8wrapper.h)
+IDirect3DPixelShader9 *	g_w3dShadowDepthPS									= NULL;
 
 unsigned							number_of_DX8_calls										= 0;
 static unsigned				last_frame_matrix_changes								= 0;

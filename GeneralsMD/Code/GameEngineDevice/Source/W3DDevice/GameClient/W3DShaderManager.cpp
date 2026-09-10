@@ -1614,6 +1614,7 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRNoise1PixelShader;	///<ps_2_0 PBR + cloud (noise1)
 	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShader;	///<ps_2_0 PBR + lightmap (noise2)
 	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader;	///<ps_2_0 PBR + cloud + lightmap
+	IDirect3DVertexShader9* m_dwTerrainVS;			///<2026-09-09 RA3-faithful vs_3_0 terrain vertex shader (world pos + shadow UV)
 	virtual Int set(Int pass);
 	virtual void reset(void);
 	virtual Int init(void);
@@ -2071,6 +2072,22 @@ static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppSh
 		NULL, NULL, "main", profile, 0, &compiled, &errors, NULL);
 	DEBUG_LOG(("CP8_TERPBR: %s D3DXCompileShader hr = %d\n", tag, (int)hr));
 	TerrainDiagI(tag, (int)hr);
+	// 2026-09-08: dedicated compile log (E:\pbr_compile.log, APPEND) —
+	// terrain_diag.log resets ("w") on every map load and wipes the compile
+	// results; without this a terrain PBR init failure silently falls back to
+	// ST_TERRAIN_BASE and NO receive code ever runs.
+	{
+		FILE *clf = fopen("E:\\pbr_compile.log", "a");
+		if (clf) {
+			fprintf(clf, "[%d] %s (profile %s) compile hr=0x%08x\n",
+				(int)timeGetTime(), tag, profile, (unsigned)hr);
+			if (errors) {
+				const char* eText = (const char*)errors->GetBufferPointer();
+				if (eText) fprintf(clf, "    ERR: %s\n", eText);
+			}
+			fclose(clf);
+		}
+	}
 	if (errors) {
 		const char* errText = (const char*)errors->GetBufferPointer();
 		if (errText) {
@@ -2107,6 +2124,53 @@ Int TerrainShaderPBR::init( void )
 	m_dwPBRNoise1PixelShader = NULL;
 	m_dwPBRNoise2PixelShader = NULL;
 	m_dwPBRNoise12PixelShader = NULL;
+	m_dwTerrainVS = NULL;
+	// 2026-09-09 RA3-FAITHFUL TERRAIN VS (vs_3_0): the terrain has NO vertex
+	// shader today (FVF fixed-function), which is why every coordinate feed we
+	// tried (TSS stage6/7) was at the mercy of the driver's fixed-function black
+	// box. This VS does exactly what RA3 Terrain.fx does in its VS:
+	//   POSITION   = pos * ViewProj       (terrain verts ARE world coords)
+	//   TEXCOORD6  = pos                  (WorldPosition)
+	//   TEXCOORD7  = pos * ShadowUVZ      (RA3 ShadowMapTexCoord)
+	// UVs/colors/normals pass through. MUST pair with ps_3_0 (D3D9 rule).
+	{
+		const char* vsSrc =
+		"float4x4 ViewProj  : register(c0);\n"
+		"float4x4 ShadowUVZ : register(c4);\n"
+		"struct VSOut {\n"
+		"    float4 Position  : POSITION;\n"
+		"    float4 Diffuse   : COLOR0;\n"
+		"    float2 UV0       : TEXCOORD0;\n"
+		"    float2 UV1       : TEXCOORD1;\n"
+		"    float3 WorldPos  : TEXCOORD6;\n"
+		"    float4 ShadowUVZ : TEXCOORD7;\n"
+		"};\n"
+		"VSOut main(float3 pos : POSITION,\n"
+		"           float4 diffuse : COLOR0,\n"
+		"           float2 uv0 : TEXCOORD0, float2 uv1 : TEXCOORD1) {\n"
+		"    VSOut o;\n"
+		"    o.Position  = mul(float4(pos, 1.0), ViewProj);\n"
+		"    o.Diffuse   = diffuse;\n"
+		"    o.UV0       = uv0;\n"
+		"    o.UV1       = uv1;\n"
+		"    o.WorldPos  = pos;\n"
+		"    o.ShadowUVZ = mul(float4(pos, 1.0), ShadowUVZ);\n"
+		"    return o;\n"
+		"}\n"
+		;
+		ID3DXBuffer* vsCompiled = NULL; ID3DXBuffer* vsErrors = NULL;
+		HRESULT vsHr = D3DXCompileShader(vsSrc, (UINT)strlen(vsSrc), NULL, NULL, "main", "vs_3_0", 0, &vsCompiled, &vsErrors, NULL);
+		{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+			fprintf(vf, "[%d] terrainVS (vs_3_0) compile hr=0x%08x\n", (int)timeGetTime(), (unsigned)vsHr);
+			if (vsErrors) fprintf(vf, "    ERR: %s\n", (const char*)vsErrors->GetBufferPointer());
+			fclose(vf); } }
+		if (SUCCEEDED(vsHr) && vsCompiled) {
+			DX8Wrapper::_Get_D3D_Device8()->CreateVertexShader((const DWORD*)vsCompiled->GetBufferPointer(), &m_dwTerrainVS);
+			vsCompiled->Release();
+		}
+		if (vsErrors) vsErrors->Release();
+	}
+
 
 	// --- Base PBR shader: s0 + sun (GGX) ---
 	{
@@ -2118,7 +2182,45 @@ Int TerrainShaderPBR::init( void )
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
+			"float4x4 shadowVP : register(c3);\n"
+			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
+			"float4 shadowDbg : register(c8);\n"
+			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float terrainShadow(float3 shadowUVZ)\n"
+			"{\n"
+			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
+			"    // via TSS stage7 (object-space position x [sunVP*bias]) - the PS does\n"
+			"    // ZERO matrix math, exactly like RA3 Terrain.fx (VS-computed TEXCOORD6).\n"
+			"    float2 suv = shadowUVZ.xy;\n"
+			"    float sd = shadowUVZ.z - shadowParams.z;\n"
+			
+			"    // 2026-09-10 PCF 9-tap, 1.0-texel step (2.5 blurred the shadow SHAPE\n"
+			"    // away per user feedback; 1.0 keeps the outline readable).\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y);\n"
+			"    float s = 0.0;\n"
+			"    s += (sd > tex2D(s4, suv).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    float lit = 1.0 - s * (1.0 / 9.0);\n"
+			"    lit = 0.3 + 0.7 * lit;\n"
+			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
+			"    float base = lerp(1.0, lit, inB * shadowParams.w);\n"
+			"    float mViz = step(0.5, shadowParams.w);\n"
+			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
+			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
+			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
+			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
+			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
+			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
+			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
+			"}\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2152,10 +2254,34 @@ Int TerrainShaderPBR::init( void )
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
 			"    float3 result = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    result += sunColor * specular * 0.25;\n"
+			"    result *= terrainShadow(shadowUVZ);\n"
 			"    return float4(result, base0.a);\n"
 			"}\n";
+		// 2026-09-08: ps_3_0 REQUIRED for the shadow-map sample (the s7/ps_2_a
+		// combination read 0 - viz mode 22 proved all-black terrain).
 		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr_nm")))
 			return terrainShaderPixelShader.init();
+	}
+
+	// 2026-09-10 W3D-MESH CAST DEPTH PS: dx8renderer.cpp's shadow-pass branch
+	// binds this on W3D meshes (vehicles/infantry). TSS stage7 generates
+	// t7 = (u, v, z) from the view-space position x [Proj*bias] (the SAME
+	// fixed-pipeline trick as the terrain receive), and this PS just outputs
+	// t7.z (sun NDC depth, same domain the W3X ShadowDepth cast writes) as the
+	// R-channel color. Without it W3D meshes only wrote the D24X8 and the
+	// COLOR RT (what the terrain PCF samples) never saw them => no vehicle
+	// ground shadows.
+	{
+		const char* dsrc =
+			"float4 main(float4 t7 : TEXCOORD7) : COLOR\n"
+			"{\n"
+			"    return float4(t7.z, 0.0, 0.0, 1.0);\n"
+			"}\n";
+		IDirect3DPixelShader9 *depthPS = NULL;
+		if (SUCCEEDED(compilePBRShader(dsrc, &depthPS, "w3d_mesh_cast_depth", "ps_2_0"))) {
+			if (g_w3dShadowDepthPS) g_w3dShadowDepthPS->Release();
+			g_w3dShadowDepthPS = depthPS;
+		}
 	}
 
 	W3DShaders[W3DShaderManager::ST_TERRAIN_PBR] = &terrainShaderPBR;
@@ -2172,7 +2298,45 @@ Int TerrainShaderPBR::init( void )
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
+			"float4x4 shadowVP : register(c3);\n"
+			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
+			"float4 shadowDbg : register(c8);\n"
+			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float terrainShadow(float3 shadowUVZ)\n"
+			"{\n"
+			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
+			"    // via TSS stage7 (object-space position x [sunVP*bias]) - the PS does\n"
+			"    // ZERO matrix math, exactly like RA3 Terrain.fx (VS-computed TEXCOORD6).\n"
+			"    float2 suv = shadowUVZ.xy;\n"
+			"    float sd = shadowUVZ.z - shadowParams.z;\n"
+			
+			"    // 2026-09-10 PCF 9-tap, 1.0-texel step (2.5 blurred the shadow SHAPE\n"
+			"    // away per user feedback; 1.0 keeps the outline readable).\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y);\n"
+			"    float s = 0.0;\n"
+			"    s += (sd > tex2D(s4, suv).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    float lit = 1.0 - s * (1.0 / 9.0);\n"
+			"    lit = 0.3 + 0.7 * lit;\n"
+			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
+			"    float base = lerp(1.0, lit, inB * shadowParams.w);\n"
+			"    float mViz = step(0.5, shadowParams.w);\n"
+			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
+			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
+			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
+			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
+			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
+			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
+			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
+			"}\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2208,6 +2372,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
+			"    lit *= terrainShadow(shadowUVZ);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
@@ -2227,7 +2392,45 @@ Int TerrainShaderPBR::init( void )
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
+			"float4x4 shadowVP : register(c3);\n"
+			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
+			"float4 shadowDbg : register(c8);\n"
+			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float terrainShadow(float3 shadowUVZ)\n"
+			"{\n"
+			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
+			"    // via TSS stage7 (object-space position x [sunVP*bias]) - the PS does\n"
+			"    // ZERO matrix math, exactly like RA3 Terrain.fx (VS-computed TEXCOORD6).\n"
+			"    float2 suv = shadowUVZ.xy;\n"
+			"    float sd = shadowUVZ.z - shadowParams.z;\n"
+			
+			"    // 2026-09-10 PCF 9-tap, 1.0-texel step (2.5 blurred the shadow SHAPE\n"
+			"    // away per user feedback; 1.0 keeps the outline readable).\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y);\n"
+			"    float s = 0.0;\n"
+			"    s += (sd > tex2D(s4, suv).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    float lit = 1.0 - s * (1.0 / 9.0);\n"
+			"    lit = 0.3 + 0.7 * lit;\n"
+			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
+			"    float base = lerp(1.0, lit, inB * shadowParams.w);\n"
+			"    float mViz = step(0.5, shadowParams.w);\n"
+			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
+			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
+			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
+			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
+			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
+			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
+			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
+			"}\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2263,6 +2466,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= lightmapTex.rgb;\n"
+			"    lit *= terrainShadow(shadowUVZ);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
@@ -2283,7 +2487,45 @@ Int TerrainShaderPBR::init( void )
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6) : COLOR\n"
+			"float4x4 shadowVP : register(c3);\n"
+			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
+			"float4 shadowDbg : register(c8);\n"
+			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float terrainShadow(float3 shadowUVZ)\n"
+			"{\n"
+			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
+			"    // via TSS stage7 (object-space position x [sunVP*bias]) - the PS does\n"
+			"    // ZERO matrix math, exactly like RA3 Terrain.fx (VS-computed TEXCOORD6).\n"
+			"    float2 suv = shadowUVZ.xy;\n"
+			"    float sd = shadowUVZ.z - shadowParams.z;\n"
+			
+			"    // 2026-09-10 PCF 9-tap, 1.0-texel step (2.5 blurred the shadow SHAPE\n"
+			"    // away per user feedback; 1.0 keeps the outline readable).\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y);\n"
+			"    float s = 0.0;\n"
+			"    s += (sd > tex2D(s4, suv).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, -ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, 0.0)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(-ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(0.0, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    s += (sd > tex2D(s4, suv + float2(ts.x, ts.y)).r) ? 1.0 : 0.0;\n"
+			"    float lit = 1.0 - s * (1.0 / 9.0);\n"
+			"    lit = 0.3 + 0.7 * lit;\n"
+			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
+			"    float base = lerp(1.0, lit, inB * shadowParams.w);\n"
+			"    float mViz = step(0.5, shadowParams.w);\n"
+			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
+			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
+			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
+			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
+			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
+			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
+			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
+			"}\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
@@ -2320,6 +2562,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
+			"    lit *= terrainShadow(shadowUVZ);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
@@ -2503,6 +2746,263 @@ Int TerrainShaderPBR::set(Int pass)
 		static float s_terrainBumpSignY = -1.0f;
 		float nmWeight[4] = { normalWeight, s_terrainRoughness, s_terrainBumpSignX, s_terrainBumpSignY };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, nmWeight, 1);
+		// 2026-09-08 DEVICE TRUTH PROBE (throttled): read back what the device
+		// ACTUALLY has on s1/s4/s5 at set() ENTRY - this reflects what the LAST
+		// frame's terrain draw left bound (post material-apply, post
+		// DrawPrimitive). Compare against what we bind below to see who swaps
+		// the stage between our bind and the primitive.
+		{
+			static int s_devProbeN = 0;
+			if ((s_devProbeN++ % 300) == 0) {
+				IDirect3DDevice9 *d9p = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+				IDirect3DBaseTexture9 *t1 = NULL, *t4 = NULL, *t5 = NULL;
+				d9p->GetTexture(1, &t1); d9p->GetTexture(4, &t4); d9p->GetTexture(5, &t5);
+				FILE *pf = fopen("E:\\pbr_compile.log", "a");
+				if (pf) {
+					fprintf(pf, "[%d] TER-DEVENTRY: s1=%p s4=%p s5=%p (0=NULL!)\n",
+						(int)timeGetTime(), (void*)t1, (void*)t4, (void*)t5);
+					fclose(pf);
+				}
+				if (t1) t1->Release();
+				if (t4) t4->Release();
+				if (t5) t5->Release();
+			}
+		}
+		// Texture shadow receive (forward pass, 2026-09-06): bind the R32F
+		// shadow-map copy at s7 and upload the sun view-proj (c3-c6) plus
+		// params (c7: texel.xy, depth bias, receive-enable). endShadowMapPass
+		// StretchRects the copy before the forward pass draws, so the sampler
+		// is fresh every frame. With shadow disabled, w=0 lerps the receive
+		// to 1.0 in the PS.
+			{
+				static bool s_terReceiveEnable = true;	// A/B re-enabled after the viz-mask fix
+				// 2026-09-08: gate on the CPU copy being READY - until the first
+				// RTSTATS readback fills it, s1 holds the native detail texture
+				// and sampling it as depth would read as full shadow.
+				bool shadowReceive = s_terReceiveEnable && TheGlobalData && TheGlobalData->m_useShadowMap
+					&& g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isShadowMapAvailable()
+					&& g_theW3DDeferredRenderer->getShadowCpuTexture() != NULL;
+				if (shadowReceive) {
+				// 2026-09-08 BINARY PROBE (TEMP): bind the BASE TERRAL TEXTURE to s7
+				// instead of the R32F shadow copy. viz mode 22 then SHOWS the s7
+				// sample: pattern visible => the s7 BIND+SAMPLE path is fine and the
+				// R32F format is what reads 0 under the D3D8-style binding; still
+				// black => the binding itself never lands. Revert after the probe.
+				// 2026-09-08 WRAPPER-VISIBLE BIND v2: wrap ONLY the A8R8G8B8 CPU
+				// copy — the R32F wrap goes through TextureClass's format switch
+				// with an UNKNOWN format and the 14:33/14:50 builds never even
+				// reached this block's logging (set() died around the wrap).
+				IDirect3DBaseTexture9 *shTex9 = g_theW3DDeferredRenderer->getShadowCpuTexture();
+				static TextureClass *s_shWrap = NULL;
+				static IDirect3DBaseTexture9 *s_shWrapSrc = NULL;
+				if (shTex9 && s_shWrapSrc != shTex9) {
+					{
+						FILE *wf = fopen("E:\\pbr_compile.log", "a");
+						if (wf) { fprintf(wf, "[%d] WRAP-TRY create TextureClass for %p\n", (int)timeGetTime(), (void*)shTex9); fclose(wf); }
+					}
+					if (s_shWrap) { delete s_shWrap; s_shWrap = NULL; }
+					s_shWrap = NEW TextureClass((IDirect3DBaseTexture8*)shTex9);
+					s_shWrapSrc = shTex9;
+					{
+						FILE *wf = fopen("E:\\pbr_compile.log", "a");
+						if (wf) { fprintf(wf, "[%d] WRAP-OK wrap=%p\n", (int)timeGetTime(), (void*)s_shWrap); fclose(wf); }
+					}
+				}
+				if (s_shWrap) {
+					DX8Wrapper::Set_Texture(4, s_shWrap);
+					DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, shTex9);
+				} else {
+					DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, shTex9);
+				}
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MINFILTER, D3DTEXF_POINT);
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MAGFILTER, D3DTEXF_POINT);
+				Matrix4x4 svp = g_theW3DDeferredRenderer->getShadowViewProj();
+				float sc3[4] = { svp[0][0], svp[0][1], svp[0][2], svp[0][3] };
+				float sc4[4] = { svp[1][0], svp[1][1], svp[1][2], svp[1][3] };
+				float sc5[4] = { svp[2][0], svp[2][1], svp[2][2], svp[2][3] };
+				float sc6[4] = { svp[3][0], svp[3][1], svp[3][2], svp[3][3] };
+				// 2026-09-10 evening: fp16 shadow RT trial - the quantum drops to
+				// ~0.0005 so the bias shrinks back (0.005 = 42 units of
+				// peter-panning at the 8200-unit window). PAIRED with the fp16
+				// RT: if the fp16 trial rolls back to A8R8G8B8, restore 0.005.
+				float sc7[4] = { 1.0f / 2048.0f, 1.0f / 2048.0f, 0.001f, 1.0f };
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, sc3, 1);
+				// 2026-09-09 RA3-FAITHFUL TSS STAGE 7: the fixed-function 'VS' computes
+				// shadow UV+depth per-vertex, exactly like RA3 Terrain.fx does in its VS:
+				//   TEXCOORD7 = objectSpacePos * [sunVP * bias]
+				// Terrain vertices ARE world coordinates (WORLD stays identity), so
+				// object space == world space. The PS then does zero matrix math.
+				{
+					// 2026-09-10 V-FLIP FIX: the cast writes the RT via STANDARD D3D
+					// rasterization (W3X ShadowDepth VS = raw sunVP, ndc.y=+1 lands on
+					// the RT TOP row), so the receive UV must be v = 0.5 - 0.5*ndc.y.
+					// _22 was +0.5 (v mirrored top/bottom): the UV domain still read
+					// [0,1] - the CPU xcheck "domain correct" passed - but every texel
+					// sampled the MIRRORED ground position, comparing depth from the
+					// wrong place => no shadow. Reference: standard D3D shadow-map
+					// ScaleBias (D3D9 docs / cross-confirmed Doubao+Kimi 2026-09-10).
+					D3DXMATRIX mBias;
+					mBias._11 = 0.5f; mBias._12 = 0.0f; mBias._13 = 0.0f; mBias._14 = 0.0f;
+					mBias._21 = 0.0f; mBias._22 = -0.5f; mBias._23 = 0.0f; mBias._24 = 0.0f;
+					mBias._31 = 0.0f; mBias._32 = 0.0f; mBias._33 = 1.0f; mBias._34 = 0.0f;
+					mBias._41 = 0.5f; mBias._42 = 0.5f; mBias._43 = 0.0f; mBias._44 = 1.0f;
+					D3DXMATRIX mSunVP;  // engine Matrix4x4 row-major == D3DXMATRIX memory
+					memcpy(&mSunVP, &svp, sizeof(D3DXMATRIX));
+					// 2026-09-09 CORRECT FORMULA (MSDN row-vector TSS): out = camPos(row) * M,
+					// M = InvView * SunVP * Bias. Engine Matrix4x4 memory IS row-major D3D
+					// math (fixed-pipeline VIEW/PROJ prove it); sunVP is the same convention
+					// the W3X cast validated. NO transposes anywhere.
+					D3DXMATRIX mShadowUVZ, mTmp;
+					D3DXMatrixMultiply(&mTmp, &inv, &mSunVP);        // InvView * SunVP
+					D3DXMatrixMultiply(&mShadowUVZ, &mTmp, &mBias);  // ... * Bias
+					// 2026-09-09 TERRAIN VS: upload the SAME validated matrix chain as VS
+					// constants c4-c7 (ShadowUVZ = inv*sunVP*bias, row-major) and c0-c3
+					// (ViewProj), then bind the VS. The TSS stage7 setup below stays
+					// harmless (VS bypasses fixed-function coordinate generation).
+					// 2026-09-09 ENGINE-NATIVE VS CONSTANTS: W3XRenderObj.cpp's proven net
+					// convention - engine Matrix4x4 memory reaches the shader VERBATIM (its
+					// pre-Transpose + SetMatrix's internal transpose cancel out). We reproduce
+					// that net effect directly: engine Multiply on raw engine memory, uploaded
+					// as one block. No D3DX transposes anywhere.
+					static const bool s_terrainVsEnabled = false;  // 2026-09-09 ROLLBACK: VS route broke the terrain - restore stable fixed-pipeline vertices
+					if (s_terrainVsEnabled && m_dwTerrainVS) {
+						// 2026-09-09 PROVEN-BY-MATH: the fixed pipeline renders terrain correctly
+						// with the DEVICE VIEW/PROJ memory as row-vector math. HLSL mul(v,M).x
+						// = dot(v,c0); uploading the device memory verbatim puts the math rows
+						// in the registers - strictly correct with ZERO transposes. The earlier
+						// water-cover bug was the FVF-missing NORMAL (undefined behavior),
+						// NOT this matrix. Device memory, engine Multiply, no transpose.
+						Matrix4x4 projM;
+						DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projM);
+						Matrix4x4 vp = Multiply(curView, projM);
+						Matrix4x4 biasM;
+						biasM.Make_Identity();
+						// 2026-09-10 V-FLIP: -0.5 matches the TSS bias above (cast RT is
+						// standard-rasterized; see the mBias comment for the full chain).
+						biasM[0] = Vector4(0.5f, 0.0f, 0.0f, 0.0f);        // was W3XRenderObj.cpp:1262-1268 (+0.5, mirrored)
+						biasM[1] = Vector4(0.0f, -0.5f, 0.0f, 0.0f);
+						biasM[2] = Vector4(0.0f, 0.0f, 1.0f, 0.0f);
+						biasM[3] = Vector4(0.5f, 0.5f, 0.0f, 1.0f);
+						Matrix4x4 shadowUVZm = Multiply(svp, biasM);  // VERBATIM W3XRenderObj.cpp:1268 (receive matrix)
+						DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vp, 4);
+						DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shadowUVZm, 4);
+						DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(m_dwTerrainVS);
+						// VPCHECK: the yard point is ON SCREEN - the correct vp must map it to |x|<1,|y|<1
+						{
+							static int s_vpN = 0;
+							if ((s_vpN++ % 600) == 0) {
+								Vector4 P(2076.0f, 680.8f, 25.6f, 1.0f);
+								float rx = P.X*vp[0][0] + P.Y*vp[1][0] + P.Z*vp[2][0] + P.W*vp[3][0];
+								float ry = P.X*vp[0][1] + P.Y*vp[1][1] + P.Z*vp[2][1] + P.W*vp[3][1];
+								float rz = P.X*vp[0][2] + P.Y*vp[1][2] + P.Z*vp[2][2] + P.W*vp[3][2];
+								float rw = P.X*vp[0][3] + P.Y*vp[1][3] + P.Z*vp[2][3] + P.W*vp[3][3];
+								float ux = P.X*shadowUVZm[0][0] + P.Y*shadowUVZm[1][0] + P.Z*shadowUVZm[2][0] + P.W*shadowUVZm[3][0];
+								FILE* vf = fopen("E:\\pbr_compile.log", "a");
+								if (vf) { fprintf(vf, "[%d] VPCHECK-ENG vp=(%.3f, %.3f, %.3f, %.2f) %s | shadowU=%.3f%s\n",
+									(int)timeGetTime(), rx, ry, rz, rw,
+									(fabsf(rx) < 1.0f && fabsf(ry) < 1.0f && rw > 0.0f) ? "<== NDC-OK" : "WRONG",
+									ux, (ux > 0.0f && ux < 1.0f) ? " UV-OK" : ""); fclose(vf); }
+							}
+						}
+					}
+
+					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
+					DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE7, &mShadowUVZ);
+					// CPU CROSS-CHECK (throttled): project the known construction-yard point
+					// through the same matrix so the PS's TEXCOORD7 can be validated against it.
+					{
+						static int s_uvzN = 0;
+						if ((s_uvzN++ % 300) == 0) {
+							D3DXVECTOR4 out, camPos;
+							D3DXMATRIX mView;  memcpy(&mView, &curView, sizeof(D3DXMATRIX));
+							D3DXVec4Transform(&camPos, &D3DXVECTOR4(2076.0f, 680.8f, 25.6f, 1.0f), &mView);
+							D3DXVec4Transform(&out, &camPos, &mShadowUVZ);
+							FILE *uf = fopen("E:\\pbr_compile.log", "a");
+							if (uf) {
+								fprintf(uf, "[%d] UVZ-XCHECK yard=(%.4f, %.4f, %.4f, %.2f)  (expect uv ~0.8 z ~0.5; V-FLIP: v = old_v mirrored about 0.5)\n",
+									(int)timeGetTime(), out.x, out.y, out.z, out.w);
+								fclose(uf);
+							}
+						}
+					}
+				}
+
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(4, sc4, 1);
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(5, sc5, 1);
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(6, sc6, 1);
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
+				// 2026-09-09: c9-c12 = TRANSPOSED inverse view. The engine
+				// Matrix4x4 stores column-major memory; reinterpreting it as a
+				// row-major D3DXMATRIX and inverting yields the TRANSPOSE of the
+				// true camera inverse (c9 readback: rotation correct, but mul
+				// gave rotation-only results - translation in wrong rows).
+				// Uploading the transpose restores mul(float4(camPos,1), M) to
+				// true world coordinates.
+				{
+					D3DXMATRIX invT;
+					D3DXMatrixTranspose(&invT, &inv);
+					float iv0[4] = { invT._11, invT._12, invT._13, invT._14 };
+					float iv1[4] = { invT._21, invT._22, invT._23, invT._24 };
+					float iv2[4] = { invT._31, invT._32, invT._33, invT._34 };
+					float iv3[4] = { invT._41, invT._42, invT._43, invT._44 };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(9, iv0, 1);
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(10, iv1, 1);
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, iv2, 1);
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(12, iv3, 1);
+				}
+				// 2026-09-08 CONSTANT READBACK (throttled): read c3/c6 straight
+				// back from the DEVICE right after upload. If these differ from
+				// sc3/sc6 the upload path is broken; if they match, the suv=0
+				// ghost lives in the PS inputs (worldPos) or codegen.
+				{
+					static int s_crb = 0;
+					if ((s_crb++ % 300) == 0) {
+						IDirect3DDevice9 *d9c = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+						float rb3[4] = {0,0,0,0}, rb6[4] = {0,0,0,0}, rb9[4] = {0,0,0,0};
+						d9c->GetPixelShaderConstantF(3, rb3, 1);
+						d9c->GetPixelShaderConstantF(6, rb6, 1);
+						d9c->GetPixelShaderConstantF(9, rb9, 1);
+						FILE *cf = fopen("E:\\pbr_compile.log", "a");
+						if (cf) {
+							fprintf(cf, "[%d] CONST-READBACK c3=(%.5f,%.5f,%.5f,%.5f) c6=(%.5f,%.5f,%.5f,%.5f) c9=(%.4f,%.4f,%.4f,%.4f)\n",
+								(int)timeGetTime(), rb3[0], rb3[1], rb3[2], rb3[3], rb6[0], rb6[1], rb6[2], rb6[3], rb9[0], rb9[1], rb9[2], rb9[3]);
+							fclose(cf);
+						}
+					}
+				}
+				// 2026-09-06 INGAME-TERRECV (throttled): receive-end truth.
+				{ static int s_trx = 0; if ((s_trx++ % 300) == 0) {
+				FILE *f = fopen("E:\\pbr_compile.log", "a");
+				if (f) {
+					// 2026-09-08: also dump what the device holds on s1/s4 RIGHT
+					// AFTER our bind (compare with TER-DEVENTRY next frame).
+					IDirect3DDevice9 *d9q = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+					IDirect3DBaseTexture9 *a1 = NULL, *a4 = NULL;
+					d9q->GetTexture(1, &a1); d9q->GetTexture(4, &a4);
+					fprintf(f, "[%d] TER-RECV: on=1 c7=(%.5f,%.5f,%.4f,%.1f) vpR3=(%.4f,%.4f,%.4f,%.4f) postbind s1=%p s4=%p\n",
+						(int)timeGetTime(), sc7[0], sc7[1], sc7[2], sc7[3], sc6[0], sc6[1], sc6[2], sc6[3],
+						(void*)a1, (void*)a4);
+					if (a1) a1->Release();
+					if (a4) a4->Release();
+					fclose(f);
+					} } }
+			} else {
+				float sc7[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
+				{ static int s_trx0 = 0; if ((s_trx0++ % 3000) == 0) {
+					FILE *f = fopen("E:\\pbr_compile.log", "a");
+					if (f) { fprintf(f, "[%d] TER-RECV: on=0 (gate false)\n", (int)timeGetTime()); fclose(f); } } }
+			}
+			// c8.x = PBRDebugMode - uploaded UNCONDITIONALLY. A stale c8 left by
+			// other shader systems' constant uploads activated the viz masks with
+			// garbage and blackened PBR geometry when receive was off.
+			float sdbgT[4] = { TheGlobalData ? (float)TheGlobalData->m_pbrDebugMode : 0.0f, 0.0f, 0.0f, 0.0f };
+			DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(8, sdbgT, 1);
+		}
+
 
 	// Select the correct pixel shader for this variant
 	switch (curShader) {
@@ -2547,6 +3047,12 @@ void TerrainShaderPBR::reset(void)
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(5, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(6, NULL);
+	DX8Wrapper::Set_Texture(4, NULL);
+	// 2026-09-09: unbind the terrain VS so other passes get fixed-function vertices
+	DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 7);
+	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);	// 2026-09-08: shadow receive stage (s4 - DEVENTRY proved s1 swapped by material replay)
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
@@ -4643,6 +5149,10 @@ void W3DShaderManager::releaseDeviceResources(void)
 	m_newRenderSurface = NULL;
 	m_oldDepthSurface = NULL;
 	m_oldRenderSurface = NULL;
+	// 2026-09-10: dgVoodoo Reset destroys shaders - drop the W3D cast depth PS
+	// with the other device resources (dx8renderer.cpp must see NULL until
+	// init() recompiles it, or it would bind a dead shader).
+	if (g_w3dShadowDepthPS) { g_w3dShadowDepthPS->Release(); g_w3dShadowDepthPS = NULL; }
 }
 
 // W3DShaderManager::shutdown =======================================================
@@ -4658,6 +5168,7 @@ void W3DShaderManager::shutdown(void)
 	m_newRenderSurface = NULL;
 	m_oldDepthSurface = NULL;
 	m_oldRenderSurface = NULL;
+	if (g_w3dShadowDepthPS) { g_w3dShadowDepthPS->Release(); g_w3dShadowDepthPS = NULL; }
 	m_currentShader = ST_INVALID;
 	m_currentFilter = FT_NULL_FILTER;
 	//release any assets associated with a shader (vertex/pixel shaders, textures, etc.)

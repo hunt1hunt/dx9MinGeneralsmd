@@ -1172,7 +1172,13 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				// (median 183 ms) that has no visible consumer on the volumetric
 				// route. Flip s_shadowRasterize to true to revive the texture-
 				// shadow route (WIP archived in E:/backup_20260906_shadow_wip/).
-				static const bool s_shadowRasterize = false;
+				// 2026-09-08 ROUTE RESTART: texture-shadow revival. The W3X cast
+				// writes sun depth into the COLOR RT via the RA3 ShadowDepth
+				// technique and the W3X receive (W3XRenderObj receiveShadow)
+				// samples the StretchRect'd color copy — the dgVoodoo D24 0.502
+				// constant-sample defect that killed the 09-06 attempt only
+				// affects the D24-sampling conversion route, not this one.
+				static const bool s_shadowRasterize = true;
 				if (TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
 				{
 					// Refresh the scene visibility flags BEFORE the shadow-map
@@ -1194,7 +1200,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						RefRenderObjListIterator si(&RenderList);
 						int smObjCount = 0;	// DIAG: objects actually rasterized into the shadow map
 						static bool s_objListOnce = false;	// DIAG: one-shot name list
-						static char s_objNames[15][128];
+						static char s_objNames[64][128];	// 2026-09-08 CAST CENSUS: 15 -> 64 (first 15 cut off the W3X units)
 						static int s_objNamesN = 0;
 						if (s_shadowRasterize) {
 						for (si.First(); !si.Is_Done(); si.Next()) {
@@ -1205,10 +1211,11 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 							if (_cn && PBR_IsMeshExcluded(_cn)) continue;
 						}
 						if (r->Is_Really_Visible()) {
-						if (!s_objListOnce && s_objNamesN < 15) {
+						if (!s_objListOnce && s_objNamesN < 64) {
 							const char *nm = r->Get_Name();
 							if (nm) {
-								strncpy(s_objNames[s_objNamesN], nm, 127); s_objNames[s_objNamesN][127]=0;
+								_snprintf(s_objNames[s_objNamesN], 127, "%s [cid=%04X]", nm, (unsigned)r->Class_ID());
+								s_objNames[s_objNamesN][127]=0;
 								s_objNamesN++;
 							}
 						}

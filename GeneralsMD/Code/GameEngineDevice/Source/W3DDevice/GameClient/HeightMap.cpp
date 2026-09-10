@@ -2158,6 +2158,27 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 					}
 				}
  				W3DShaderManager::setShader(st, pass);
+				// 2026-09-08 PRE-DRAW TRUTH PROBE (throttled): read the device's
+				// s4 IMMEDIATELY BEFORE the tile loop issues its draws. Every
+				// earlier probe observed either set()-entry (frame-end residue)
+				// or post-bind — never the actual draw-time state. This is the
+				// decisive observation for the "last meter" swap.
+				{
+					static unsigned s_pdLast = 0;
+					unsigned nowMs = timeGetTime();
+					if (nowMs - s_pdLast >= 2000) {
+						s_pdLast = nowMs;
+						IDirect3DDevice9 *d9pd = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+						IDirect3DBaseTexture9 *p4 = NULL;
+						d9pd->GetTexture(4, &p4);
+						FILE *fpd = fopen("E:\\pbr_compile.log", "a");
+						if (fpd) {
+							fprintf(fpd, "[%u] PRE-DRAW st=%d s4=%p\n", nowMs, (int)st, (void*)p4);
+							fclose(fpd);
+						}
+						if (p4) p4->Release();
+					}
+				}
 			}
 		}
 

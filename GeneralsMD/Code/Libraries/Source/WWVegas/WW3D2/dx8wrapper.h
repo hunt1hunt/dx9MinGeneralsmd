@@ -127,6 +127,11 @@ extern bool g_gbufferActive;
 extern bool g_shadowMapPassActive;
 extern IDirect3DPixelShader9 *g_gbufferPS;
 extern IDirect3DVertexShader9 *g_gbufferVS;
+// 2026-09-10 W3D-mesh cast depth PS: outputs the TSS stage7 z (sun NDC depth)
+// as the R-channel color so W3D meshes (vehicles/infantry) rasterize depth
+// into the shadow COLOR RT in the sun pass (compiled by W3DShaderManager,
+// consumed by dx8renderer.cpp's shadow branch). NULL = cast depth disabled.
+extern IDirect3DPixelShader9 *g_w3dShadowDepthPS;
 
 void DX8_Assert();
 void Log_DX8_ErrorCode(unsigned res);
