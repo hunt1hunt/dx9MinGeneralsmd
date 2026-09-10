@@ -1610,52 +1610,71 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	Vector3 lightDir = sunDir;
 	if (lightDir.Length2() < 1e-6f) { lightDir.Set(0, 0, -1); }
 	lightDir.Normalize();
-	// FIT-TO-MAP FIXED window (2026-09-05): the fixed-origin +-2000 window left
-	// most of a naval map OUTSIDE the shadow map (zero W3X shadows once the
-	// volumetric stepped back - every model hit the out-of-map "fully lit"
-	// guard), while the camera-following window swept at its edges. A STATIC
-	// window fitted to the whole map has neither defect: every caster is always
-	// inside (the hp out-of-map guard stays as a safety) and the texel grid
-	// never moves. Resolution = extent/2048 (a 5000-unit map keeps ~2.4 units
-	// per texel; the 4000 floor keeps small maps at the tuned ~1.95). The eye
-	// distance and far plane scale with the window so big-map corners stay
-	// inside the depth range.
-	Vector3 target(0, 0, 0);	// FIXED shadow-map center (map center, NOT the camera)
-	float winSize = 4000.0f;
-	float mapSpan = 0.0f;
-	if (TheTerrainRenderObject) {
-		// CAUSE-HUNT FINDING (2026-09-05): the WORLD-space cached bounds
-		// (Get_Bounding_Box) return an EMPTY box for the terrain (Extent=0 ->
-		// [WINDOW] mapSpan=0 -> the fit-to-map never engaged and the window
-		// stayed 4000 at the origin while the base sat at (2033,596) - outside
-		// -> every base caster rasterized outside the viewport = no shadow).
-		// The terrain class IMPLEMENTS the OBJ-SPACE box from the heightmap
-		// (BaseHeightMap.h Get_Obj_Space_Bounding_Box) and its transform is
-		// identity, so obj-space IS world-space for the terrain.
-		AABoxClass tbox;
-		TheTerrainRenderObject->Get_Obj_Space_Bounding_Box(tbox);
-		mapSpan = tbox.Extent.X * 2.0f;
-		if (tbox.Extent.Y * 2.0f > mapSpan) mapSpan = tbox.Extent.Y * 2.0f;
-		if (mapSpan > 500.0f) {
-			winSize = mapSpan * 1.2f;
-			if (winSize < 4000.0f) winSize = 4000.0f;
-			if (winSize > 16000.0f) winSize = 16000.0f;
-			target.Set(tbox.Center.X, tbox.Center.Y, 0.0f);
-		} else {
-			mapSpan = 0.0f;	// degenerate terrain (menu) - keep the 4000 default
-		}
-	}
-	static float s_lastLoggedSpan = -1.0f;
-	if (mapSpan != s_lastLoggedSpan) {
-		// log on CHANGE (the one-shot fired at the menu and reported the
-		// degenerate 0-span while the in-game window was never recorded)
-		s_lastLoggedSpan = mapSpan;
-		DIAG_LOG(("W3DDeferredRenderer: [WINDOW] mapSpan=%.0f winSize=%.0f center=(%.1f,%.1f)\n",
-			mapSpan, winSize, target.X, target.Y));
-	}
-	Vector3 up(0, 0, 1);
-	if (fabsf(lightDir.Z) > 0.99f) { up.Set(0, 1, 0); }
-	// SUN-SIDE CAMERA FIX (2026-09-05 late, THE root cause of "no ground shadow
+				// 2026-09-10 CAMERA-FOLLOW WINDOW (stage-2 precision): the fit-to-map
+				// window (4000-16000 units over 2048 texels = 2-7.8 units/texel)
+				// starved small casters - a soldier spans UNDER one texel (no visible
+				// shadow) and the gattling turret casts ~7x7 texels. An ~800-unit
+				// window following the camera's look-at point over the same 2048
+				// texels (~0.39 units/texel) restores them. The 09-05 follow attempt
+				// was rolled back because the window edges CRAWLED as the camera
+				// panned (texel swimming); the snap below rounds the window center
+				// onto the world-anchored texel lattice (the ortho rotation depends
+				// only on sunDir/up, so the lattice is fixed in world space) - the
+				// window then moves in whole-texel steps and shadow edges stay put.
+				Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
+				float winSize = 800.0f;
+				float mapSpan = 0.0f;
+				if (TheTerrainRenderObject) {
+					// Small-map fallback: a window fitted to the WHOLE map has both
+					// full coverage and a finer texel than the 800 follow window -
+					// keep the static fit there (it never swam; only large maps
+					// starve precision).
+					AABoxClass tbox;
+					TheTerrainRenderObject->Get_Obj_Space_Bounding_Box(tbox);
+					mapSpan = tbox.Extent.X * 2.0f;
+					if (tbox.Extent.Y * 2.0f > mapSpan) mapSpan = tbox.Extent.Y * 2.0f;
+					if (mapSpan > 500.0f && mapSpan < winSize) {
+						winSize = mapSpan * 1.2f;
+						if (winSize < 400.0f) winSize = 400.0f;
+						target.Set(tbox.Center.X, tbox.Center.Y, 0.0f);
+					} else {
+						mapSpan = 0.0f;	// degenerate terrain (menu) - keep the follow window
+					}
+				}
+				static float s_lastLoggedSpan = -1.0f;
+				if (mapSpan != s_lastLoggedSpan) {
+					// log on CHANGE (the follow window logs its center in [VPFOLLOW])
+					s_lastLoggedSpan = mapSpan;
+					DIAG_LOG(("W3DDeferredRenderer: [WINDOW] camera-follow mapSpan=%.0f winSize=%.0f center=(%.1f,%.1f)\n",
+						mapSpan, winSize, target.X, target.Y));
+				}
+				Vector3 up(0, 0, 1);
+				if (fabsf(lightDir.Z) > 0.99f) { up.Set(0, 1, 0); }
+				// 2026-09-10 TEXEL SNAP: round the window center onto the world-anchored
+				// texel lattice along the light's right/up axes. The ortho rotation of
+				// the provisional LookAt depends ONLY on lightDir/up (the center shifts
+				// along it change nothing), so the lattice this rounds onto is fixed in
+				// WORLD space - panning the camera moves the window in whole-texel
+				// steps and shadow edges never swim (the defect that killed the 09-05
+				// follow window). Rows of a row-vector view: view.x = dot(v-eye, xaxis),
+				// so xaxis/yaxis live in the matrix's first/second COLUMNS.
+				{
+					float texelW = winSize / 2048.0f;
+					Vector3 snapEye = target + lightDir * (winSize * 0.75f);
+					D3DXMATRIX vSnap;
+					D3DXMatrixLookAtLH(&vSnap,
+						(const D3DXVECTOR3*)&snapEye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
+					Vector3 right(vSnap._11, vSnap._21, vSnap._31);
+					Vector3 upAxis(vSnap._12, vSnap._22, vSnap._32);
+					float rx = target.X * right.X + target.Y * right.Y + target.Z * right.Z;
+					float ry = target.X * upAxis.X + target.Y * upAxis.Y + target.Z * upAxis.Z;
+					float sx = floorf(rx / texelW + 0.5f) * texelW;
+					float sy = floorf(ry / texelW + 0.5f) * texelW;
+					target.X += right.X * (sx - rx) + upAxis.X * (sy - ry);
+					target.Y += right.Y * (sx - rx) + upAxis.Y * (sy - ry);
+					target.Z += right.Z * (sx - rx) + upAxis.Z * (sy - ry);
+				}
+				// SUN-SIDE CAMERA FIX (2026-09-05 late, THE root cause of "no ground shadow
 	// ever"): sunDir points TOWARD the sun - runtime [VPFOLLOW] sunDir z=+0.515
 	// (UP; the terrain PBR lights with the same vector). eye = target -
 	// lightDir*dist therefore placed the shadow camera on the ANTI-SUN side,
