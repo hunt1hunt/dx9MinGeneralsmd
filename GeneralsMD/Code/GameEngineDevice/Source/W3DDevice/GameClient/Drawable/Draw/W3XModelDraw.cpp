@@ -1061,6 +1061,15 @@ void W3XModelDraw::removeRenderObject(void)
 	}
 }
 
+// ObjectDrawInterface: render object for the fog-memory snapshots
+// (W3DGhostObject::snapShot). Returning the real object here (instead of the
+// old blind cast to W3DModelDraw, which read a garbage pointer from this
+// class's different layout) is what fixes the fogged-W3X-building crash.
+RenderObjClass *W3XModelDraw::peekRenderObj(void) const
+{
+	return m_renderObj;
+}
+
 //-----------------------------------------------------------------------------
 // doDrawModule: load/refresh the model and update the scene render object.
 // NOTE: actual D3D drawing happens in W3XRenderObjClass::Render(), which the

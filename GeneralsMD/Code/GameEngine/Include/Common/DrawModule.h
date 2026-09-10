@@ -42,6 +42,7 @@
 class Matrix3D;
 class RenderCost;
 class OBBoxClass;
+class RenderObjClass;
 
 // TYPES //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -225,6 +226,15 @@ public:
 // srj sez: not sure if this is a good idea, for net sync reasons...
 	virtual Real getAnimationScrubScalar( void ) const { return 0.0f;};
 #endif
+
+	/**
+		Render object access for the client's fog-memory snapshots (W3DGhostObject).
+		Returns this module's current render object, or NULL if it has none.
+		Only modules that own a render object override this (W3DModelDraw,
+		W3XModelDraw). Call this instead of casting to W3DModelDraw - W3XModelDraw
+		is a different class and the old blind cast returned a garbage pointer.
+	*/
+	virtual RenderObjClass *peekRenderObj( void ) const { return NULL; }
 };
 
 //-------------------------------------------------------------------------------------------------

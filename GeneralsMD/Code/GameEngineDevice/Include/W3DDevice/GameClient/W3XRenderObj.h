@@ -90,7 +90,11 @@ public:
 
 	// RenderObjClass interface
 	virtual int Class_ID(void) const { return CLASSID_W3X; }
-	virtual RenderObjClass *Clone(void) const { return NULL; }
+	// Shares the D3D MANAGED vertex/index buffers (AddRef; each object Releases
+	// its own reference in the dtor) and deep-copies the bone arrays. Used by
+	// the fog-memory snapshots (W3DRenderObjectSnapshot::update). Returning NULL
+	// here crashed the game when a fogged W3X building was snapshotted.
+	virtual RenderObjClass *Clone(void) const;
 	virtual void Render(RenderInfoClass &rinfo);
 
 	// Data population

@@ -343,10 +343,10 @@ void W3DGhostObject::snapShot(int playerIndex)
 		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
 		if (di)
 		{
-			W3DModelDraw *w3dDraw= (W3DModelDraw *)di;
-			RenderObjClass *robj=NULL;
-
-			robj=w3dDraw->getRenderObject();
+			//ask the interface for its render object; a blind cast to
+			//W3DModelDraw returned a garbage pointer for W3XModelDraw modules
+			//(different class layout) and crashed the game on Clone().
+			RenderObjClass *robj = di->peekRenderObj();
 			//robj may be null for modules which have no render objects such
 			//as for build-ups that are currently disabled.
 			if (robj)
@@ -415,10 +415,8 @@ void W3DGhostObject::removeParentObject(void)
 		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
 		if (di)
 		{
-			W3DModelDraw *w3dDraw= (W3DModelDraw *)di;
-			RenderObjClass *robj=NULL;
-
-			robj=w3dDraw->getRenderObject();
+			//see snapShot() - must not blind-cast to W3DModelDraw here
+			RenderObjClass *robj = di->peekRenderObj();
 			if (robj)
 			{
 				DEBUG_ASSERTCRASH(robj->Peek_Scene() != NULL, ("Removing GhostObject parent not in scene "));
@@ -446,10 +444,8 @@ void W3DGhostObject::restoreParentObject(void)
 		const ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
 		if (di)
 		{
-			W3DModelDraw *w3dDraw= (W3DModelDraw *)di;
-			RenderObjClass *robj=NULL;
-
-			robj=w3dDraw->getRenderObject();
+			//see snapShot() - must not blind-cast to W3DModelDraw here
+			RenderObjClass *robj = di->peekRenderObj();
 			//robj may be null for modules which have no render objects such
 			//as for build-ups that are currently disabled.
 			if (robj)

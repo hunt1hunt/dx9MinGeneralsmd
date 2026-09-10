@@ -422,8 +422,9 @@ public:
 	virtual ObjectDrawInterface* getObjectDrawInterface() { return this; }
 	virtual const ObjectDrawInterface* getObjectDrawInterface() const { return this; }
 
-	///@todo: I had to make this public because W3DDevice needs access for casting shadows -MW 
+	///@todo: I had to make this public because W3DDevice needs access for casting shadows -MW
 	inline RenderObjClass *getRenderObject() { return m_renderObject; }
+	virtual RenderObjClass *peekRenderObj( void ) const { return m_renderObject; }
 	virtual Bool updateBonesForClientParticleSystems( void );///< this will reposition particle systems on the fly ML
 
 	virtual void onDrawableBoundToObject();

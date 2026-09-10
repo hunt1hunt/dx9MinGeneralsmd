@@ -192,6 +192,57 @@ W3XRenderObjClass::~W3XRenderObjClass()
 	m_constants.clear();
 }
 
+//-----------------------------------------------------------------------------
+// Clone: used by the fog-memory snapshots (W3DRenderObjectSnapshot::update).
+// The clone must survive on its own after the real object is destroyed or
+// changes state, so:
+//  - D3D MANAGED vertex/index buffers are SHARED (AddRef here; both objects
+//    Release their own reference in their dtor)
+//  - bone arrays (WorldBones, bind local pose) are DEEP-COPIED (each object
+//    owns its own copies, see SetBones/SetBoneLocalPose)
+//  - the current world transform, bounds, shader setup and the frozen bone
+//    control/animation state are copied so the fogged copy renders exactly
+//    like the real object did at snapshot time.
+// The old stub (return NULL) made W3DRenderObjectSnapshot call Set_ObjectColor
+// on a NULL pointer -> crash whenever a fogged W3X building was snapshotted.
+//-----------------------------------------------------------------------------
+RenderObjClass *W3XRenderObjClass::Clone(void) const
+{
+	W3XRenderObjClass *clone = new W3XRenderObjClass();
+	clone->Set_Name(m_name);
+	// share the GPU buffers
+	clone->m_meshes = m_meshes;
+	for (size_t i = 0; i < clone->m_meshes.size(); i++) {
+		if (clone->m_meshes[i].vb) clone->m_meshes[i].vb->AddRef();
+		if (clone->m_meshes[i].ib) clone->m_meshes[i].ib->AddRef();
+	}
+	// shader setup
+	clone->m_fxName = m_fxName;
+	clone->m_technique = m_technique;
+	clone->m_constants = m_constants;
+	// bones (deep copy - each object owns its arrays)
+	if (m_bones && m_boneCount > 0)
+		clone->SetBones(m_bones, m_boneCount);
+	clone->m_boneNames = m_boneNames;
+	clone->m_boneParents = m_boneParents;
+	if (m_boneLocalQuat && m_boneLocalTrans && m_boneCount > 0)
+		clone->SetBoneLocalPose(m_boneLocalQuat, m_boneLocalTrans, m_boneCount);
+	// frozen bone control/animation state
+	memcpy(clone->m_boneCtrlActive, m_boneCtrlActive, sizeof(m_boneCtrlActive));
+	memcpy(clone->m_boneCtrlQuat, m_boneCtrlQuat, sizeof(m_boneCtrlQuat));
+	memcpy(clone->m_boneAnimQuat, m_boneAnimQuat, sizeof(m_boneAnimQuat));
+	memcpy(clone->m_boneAnimQuatActive, m_boneAnimQuatActive, sizeof(m_boneAnimQuatActive));
+	memcpy(clone->m_boneAnimTrans, m_boneAnimTrans, sizeof(m_boneAnimTrans));
+	memcpy(clone->m_boneAnimTransActive, m_boneAnimTransActive, sizeof(m_boneAnimTransActive));
+	// bounds / colors / transform
+	clone->m_bmin = m_bmin;
+	clone->m_bmax = m_bmax;
+	clone->m_recolorHex = m_recolorHex;
+	clone->m_worldTransform = m_worldTransform;	// freeze at the snapshot transform
+	clone->m_valid = m_valid;
+	return clone;
+}
+
 void W3XRenderObjClass::AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuffer9 *ib, int vertexCount, int triangleCount, bool softBinding)
 {
 	SubMesh sm;

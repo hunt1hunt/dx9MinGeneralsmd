@@ -153,6 +153,8 @@ private:
 	static void parseConditionState(INI *ini, void *instance, void *, const void *);
 };
 
+class RenderObjClass;
+
 class W3XModelDraw : public DrawModule, public ObjectDrawInterface
 {
 	MEMORY_POOL_GLUE_WITH_USERLOOKUP_CREATE(W3XModelDraw, "W3XModelDraw")
@@ -197,6 +199,10 @@ public:
 	virtual void setPauseAnimation(Bool pauseAnim) { }
 	virtual void updateSubObjects() { }
 	virtual void showSubObject(const AsciiString &name, Bool show) { }
+	// ObjectDrawInterface: render object for the fog-memory snapshots
+	// (W3DGhostObject). Implemented in the .cpp (needs W3XRenderObjClass's
+	// base class).
+	virtual RenderObjClass *peekRenderObj(void) const;
 
 private:
 	// Resolve a single bone name -> skeleton index (0 = not found / root).
