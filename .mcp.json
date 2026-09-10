@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph-mcp",
+      "args": [
+        "--workspace",
+        "E:\\Source\\repos\\MinGeneralsfreebuild2ok"
+      ],
+      "env": {}
+    },
+    "bb-browser": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "bb-browser",
+        "--mcp"
+      ],
+      "env": {}
+    }
+  }
+}

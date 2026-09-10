@@ -5,33 +5,27 @@ description: 使用 MemPalace(记忆宫殿)检索和存入本项目的长期记�
 
 # 记忆宫殿(MemPalace)
 
-本项目的宫殿位于 `C:\Users\hjzhhzc\.mempalace`,当前约 791 个抽屉,已建两翼:
-
-- **wing `MinGenerals`**:rooms `root-cause`(根因分析)、`fix-in-progress`(进行中的修复)
-- **wing `code`**:rooms `gameengine`(607)、`libraries`(107)、`build`(45)、`gameenginedevice`(15)、`general`
-
-通过 `mempalace` MCP 使用,工具名以 `mcp__mempalace__` 开头。
+本机宫殿(npm 全局 `mempalace@2.0.0`,数据位于 `C:\Users\Administrator\.memorypalace`,已初始化)通过 `mempalace` MCP 使用,工具名以 `mcp__mempalace__` 开头。记忆为加密存储,按 short_id(如 `hgb9ink`)引用。
 
 ## 开始任务前:先查记忆
 
-修改 SAGE 引擎代码前,先检索相关避坑记录(如跨 DLL 调用、shader 签名、Edit 工具编码等历史事故):
+修改 SAGE 引擎代码前,先检索相关避坑记录:
 
-- MCP 首选:`mempalace_search(query, wing?, room?)`,必要时 `mempalace_list_wings` / `mempalace_list_rooms(wing)` / `mempalace_get_taxonomy` / `mempalace_traverse(room)`
-- CLI 兜底:`mempalace search "query" --wing MinGenerals`
+- MCP 首选:宫殿的 search / list / recover 工具
+- CLI 兜底:`mempalace list`、`mempalace recover <short_id>`
 
 ## 完成任务后:归档经验
 
-根因分析放入 `MinGenerals` 翼,代码知识放入 `code` 翼:
-
 ```bash
-mempalace mine <目录或文件>            # 项目文件挖掘
-mempalace search "关键词"              # 检索
-mempalace status                       # 查看宫殿现状
-mempalace wake-up                      # L0+L1 唤醒上下文(约 600-900 tokens)
+mempalace list                       # 查看近期记忆
+mempalace save <json_file>           # 加密签名后存入新记忆
+mempalace recover <short_id>         # 恢复某条记忆的上下文
+mempalace mcp                        # 手动拉起 MCP 服务(stdio)
 ```
+
+存入时把经验写成 JSON 文件再 `save`,内容应包含:问题现象、根因、修复方案、避坑要点。
 
 ## 展示结果时
 
-- 每条结果标注来源(wing / room / drawer)
-- 多条命中按 wing/room 分组
-- 命中后给出下一步:深入某个 room、遍历知识图谱、或缩小查询
+- 每条结果标注来源(short_id / 日期 / 录入 agent)
+- 命中后给出下一步:recover 深入某条记忆、或继续检索

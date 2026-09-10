@@ -19,13 +19,11 @@ argument-hint: "[分析/修改/编译/架构/模块/网络/渲染/调试/地图]
 
 本技能触发后，先从记忆宫殿恢复既往经验，再动手：
 
-1. **唤醒上下文**：运行 `mempalace wake-up`（约 600-900 tokens 的 L0/L1 概要），或调用 `mempalace` MCP 的唤醒/检索工具。
-2. **定向检索**：根据本次任务关键词检索避坑记录，优先 `MinGenerals` 翼（root-cause / fix-in-progress）：
-   ```bash
-   mempalace search "<任务关键词>" --wing MinGenerals
-   ```
-   涉及具体文件的修改，再查 `code` 翼对应 room（gameengine / libraries / build / gameenginedevice）。
-3. **任务收尾归档**：修复完成或发现新根因后，把结论 mine 回宫殿（`MinGenerals` 翼存根因，`code` 翼存代码知识），下次会话即可直接检索到。
+本机 mempalace 为 npm v2.0.0 加密记忆版（无 wing/room），工具用法：
+
+1. **浏览既往记忆**：调用 `mempalace` MCP 工具（`mcp__mempalace__*`），或 CLI `mempalace list` 列出近期记忆。
+2. **定向检索**：用 `mempalace recover <short_id>`（或 MCP 的 recover 工具）恢复与本次任务相关的记忆上下文。
+3. **任务收尾归档**：修复完成或发现新根因后，把结论写成 JSON 文件（问题现象、根因、修复方案、避坑要点），用 `mempalace save <json_file>` 或 MCP 的 save 工具存入宫殿，下次会话即可直接检索到。
 
 已知高频教训（详见宫殿记录）：跨 DLL/EXE 函数指针调用会崩溃；新增 shader 变体 ≠ 修改现有签名；Edit 失败时先查 tab/空格与编码，勿直接上 Python 批处理写 C++ 文件。
 

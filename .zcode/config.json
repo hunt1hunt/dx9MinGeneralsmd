@@ -3,17 +3,18 @@
     "servers": {
       "codegraph": {
         "type": "stdio",
-        "command": "codegraph",
-        "args": ["serve", "--mcp"],
+        "command": "codegraph-mcp",
+        "args": [
+          "--mcp",
+          "--workspace",
+          "E:\\Source\\repos\\MinGeneralsfreebuild2ok"
+        ],
         "env": {}
       },
       "mempalace": {
         "type": "stdio",
-        "command": "C:\\Users\\hjzhhzc\\AppData\\Roaming\\Python\\Python314\\Scripts\\mempalace-mcp.exe",
-        "args": [
-          "--palace",
-          "C:\\Users\\hjzhhzc\\.mempalace"
-        ],
+        "command": "mempalace",
+        "args": ["mcp"],
         "env": {}
       }
     }

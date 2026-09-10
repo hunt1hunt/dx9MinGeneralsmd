@@ -5,7 +5,7 @@ description: 使用 CodeGraph MCP(代码导图)浏览和检索本仓库(SAGE 引
 
 # 代码导图(CodeGraph)
 
-本仓库已建有 CodeGraph 索引(数据库位于仓库根 `.codegraph/codegraph.db`,约 1600+ 个文件已同步,守护进程带文件监听自动增量同步)。通过 `codegraph` MCP 使用,工具名以 `mcp__codegraph__` 开头。
+本仓库已建有 CodeGraph 索引(数据库位于仓库根 `.codegraph/codegraph.db`,守护进程带文件监听自动增量同步)。通过 `codegraph` MCP 使用,工具名以 `mcp__codegraph__` 开头。
 
 ## 何时用
 
@@ -25,8 +25,8 @@ description: 使用 CodeGraph MCP(代码导图)浏览和检索本仓库(SAGE 引
 若 MCP 不可用,CLI 兜底(在仓库根运行):
 
 ```bash
-codegraph --help          # 查看子命令
-codegraph serve --mcp     # 手动拉起 MCP 服务(daemon 默认自动运行)
+codegraph-mcp --help           # 查看选项
+codegraph-mcp --mcp --workspace E:\Source\repos\MinGeneralsfreebuild2ok   # 手动拉起 MCP 服务
 ```
 
 ## 本仓库注意点
