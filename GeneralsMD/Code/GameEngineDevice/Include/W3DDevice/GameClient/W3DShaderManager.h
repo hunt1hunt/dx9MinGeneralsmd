@@ -82,6 +82,10 @@ public:
 		ST_PBR_UNIT_OPAQUE,			//unit/building PBR opaque pass (Phase 4)
 		ST_PBR_UNIT_ALPHA,			//unit/building PBR alpha pass (Phase 4)
 		ST_PBR_TERRAIN,				//terrain PBR (Phase 2 already done, reserved)
+		ST_ROAD_PBR,			//ps_3_0 road shader + shadow-map receive (road fix 2026-09-10)
+		ST_ROAD_PBR_NOISE1,	//road PBR + cloud texture
+		ST_ROAD_PBR_NOISE2,	//road PBR + lightmap texture
+		ST_ROAD_PBR_NOISE12,	//road PBR + cloud + lightmap
 		ST_MAX
 	};
 

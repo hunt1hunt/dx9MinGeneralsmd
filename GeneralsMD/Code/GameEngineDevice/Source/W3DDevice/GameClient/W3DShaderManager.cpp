@@ -4664,15 +4664,43 @@ class RoadShaderPixelShader : public W3DShaderInterface
 
 class RoadShader2Stage : public W3DShaderInterface
 {	friend class RoadShaderPixelShader;	//pixel shader version uses some of the same features.
+	friend class RoadShaderPBR;			//PBR shadow-receive version reuses init()/set() as fallback + noise helpers.
 
 	virtual Int set(Int pass);		///<setup shader for the specified rendering pass.
 	virtual Int init(void);			///<perform any one time initialization and validation
 	virtual void reset(void);
 } roadShader2Stage;
 
+// 2026-09-10 ROAD SHADOW-MAP RECEIVE (road fix, plan A):
+// Roads were the ONLY ground surface left on the 2003 fixed-function
+// RoadShader2Stage path (base*diffuse + cloud/lightmap TSS modulation), so a
+// W3X model's texture shadow visibly stopped at the road edge while the
+// terrain right next to it was darkened. This shader re-renders the SAME
+// road geometry with a ps_3_0 pixel shader that replicates the fixed-function
+// blend semantics (pass-0 base*diffuse, cloud modulate; the NOISE12 second
+// lightmap pass becomes an in-shader lerp(1,lightmap,roadAlpha)) and
+// multiplies in the SAME 9-tap PCF terrainShadow() TerrainShaderPBR uses.
+// Mechanism is copied verbatim from the PROVEN terrain receive: shadow UVZ
+// arrives per-vertex via TSS stage7 (TCI_CAMERASPACEPOSITION x
+// InvView*SunVP*Bias, COUNT3), the shadow map is the A8R8G8B8 CPU copy on
+// sampler s4, c7 = {texel, texel, depth bias, receive-enable}. Cloud and
+// lightmap keep their fixed-function TCI_CAMERASPACEPOSITION stage1/stage2
+// projections (the rasterizer feeds them to the PS as TEXCOORD1/2), so the
+// projected cloud drift is pixel-identical to the old road look.
+class RoadShaderPBR : public W3DShaderInterface
+{
+public:
+	IDirect3DPixelShader9*	m_dwRoadPixelShader;	///<ps_3_0 road + shadow-receive pixel shader
+	virtual Int set(Int pass);
+	virtual void reset(void);
+	virtual Int init(void);
+	virtual Int shutdown(void);
+} roadShaderPBR;
+
 ///List of different terrain shader implementations in order of preference
 W3DShaderInterface *RoadShaderList[]=
 {
+	&roadShaderPBR,
 	&roadShaderPixelShader,
 	&roadShader2Stage,
 	NULL
@@ -4969,6 +4997,325 @@ void RoadShader2Stage::reset(void)
 
 	DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|1);
+}
+
+Int RoadShaderPBR::init( void )
+{
+	D3DCAPS8 caps;
+	memset(&caps, 0, sizeof(caps));
+	if (FAILED(DX8Wrapper::_Get_D3D_Device8()->GetDeviceCaps(&caps)) ||
+		caps.PixelShaderVersion < D3DPS_VERSION(3,0))
+	{
+		// ps_3_0 required for the shadow-map sample (same constraint as the
+		// terrain PBR receive) - fall through to the legacy road shaders.
+		return FALSE;
+	}
+
+	// 2Stage must initialize anyway: its updateNoise1/updateNoise2 helpers
+	// build the cloud/lightmap projection matrices we reuse below.
+	roadShader2Stage.init();
+
+	m_dwRoadPixelShader = NULL;
+	{
+		// Single shader serves all four variants: c2.x = cloud on, c2.y =
+		// lightmap on. TEXCOORD1/2 come from the SAME fixed-function TCI
+		// projections the legacy road pass used (stage1/stage2 view-matrix),
+		// TEXCOORD7 from the terrain-proven shadow projection (stage7).
+		const char* src =
+			"sampler s0 : register(s0);\n"		// road base (uv0)
+			"sampler s1 : register(s1);\n"		// cloud (TEXCOORD1, projected)
+			"sampler s2 : register(s2);\n"		// lightmap (TEXCOORD2, projected)
+			"sampler s4 : register(s4);\n"		// shadow map A8R8G8B8 CPU copy
+			"float4 c2 : register(c2);\n"		// x=useCloud y=useLightmap
+			"float4 c7 : register(c7);\n"		// x,y = shadow texel, z = depth bias, w = receive enable
+			"float4 c8 : register(c8);\n"		// x = PBRDebugMode (>=23.5 = raw shadow viz)
+			"float roadShadow(float3 uvz)\n"
+			"{\n"
+			"    float2 suv = uvz.xy;\n"
+			"    float sd = uvz.z - c7.z;\n"
+			// 9-tap spatial kernel @2 texels + RA3 continuous transition band -
+			// verbatim from TerrainShaderPBR::terrainShadow (2026-09-10 v3) so
+			// road and terrain shadows have IDENTICAL edges and softening.
+			"    float2 ts = float2(c7.x, c7.y) * 2.0;\n"
+			"    float f = 0.0;\n"
+			"    f += saturate((sd - tex2D(s4, suv).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    float sun = 1.0 - f * (1.0 / 9.0);\n"
+			"    float lit = 0.3 + 0.7 * sun;\n"
+			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
+			"    return lerp(1.0, lit, inB * c7.w);\n"
+			"}\n"
+			"float4 main(float2 uv0 : TEXCOORD0, float4 diffuse : COLOR0,\n"
+			"           float2 uvCloud : TEXCOORD1, float2 uvLM : TEXCOORD2,\n"
+			"           float3 shadowUVZ : TEXCOORD7) : COLOR\n"
+			"{\n"
+			"    float4 base = tex2D(s0, uv0);\n"
+			// legacy pass-0 semantics: color AND alpha modulate diffuse
+			"    float3 col = base.rgb * diffuse.rgb;\n"
+			"    float alpha = base.a * diffuse.a;\n"
+			"    if (c2.x > 0.5) { col *= tex2D(s1, uvCloud).rgb; }\n"
+			// legacy NOISE12 pass-1: dest *= lerp(1, lightmap, roadAlpha)
+			"    if (c2.y > 0.5) { col *= lerp(float3(1,1,1), tex2D(s2, uvLM).rgb, alpha); }\n"
+			"    float shadow = roadShadow(shadowUVZ);\n"
+			// NO viz branch: terrain's final terrainShadow() ignores the
+			// PBRDebugMode chain (2026-09-08 HARDCODED bypass) and a leftover
+			// PBRDebugMode=27 in GameData.ini made roads render as the raw
+			// shadow grayscale (white + shadows, no texture). Match terrain.
+			"    return float4(col * shadow, alpha);\n"
+			"}\n";
+		if (FAILED(compilePBRShader(src, &m_dwRoadPixelShader, "road_pbr_shadow", "ps_3_0")))
+			return FALSE;
+	}
+	if (m_dwRoadPixelShader == NULL)
+		return FALSE;
+
+	// Register ONLY the new ST_ROAD_PBR* slots; ST_ROAD_BASE* stay on the
+	// legacy shaders so the call sites' fallback keeps working.
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR]=&roadShaderPBR;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR]=1;
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR_NOISE1]=&roadShaderPBR;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR_NOISE1]=1;
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR_NOISE2]=&roadShaderPBR;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR_NOISE2]=1;
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR_NOISE12]=&roadShaderPBR;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR_NOISE12]=1;
+	m_numPasses = 1;
+	return TRUE;
+}
+
+Int RoadShaderPBR::set(Int pass)
+{
+	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
+	if (curShader < W3DShaderManager::ST_ROAD_PBR || curShader > W3DShaderManager::ST_ROAD_PBR_NOISE12) {
+		return roadShader2Stage.set(pass);
+	}
+	if (m_dwRoadPixelShader == NULL) {
+		return roadShader2Stage.set(pass);
+	}
+
+	//Base road texture on stage 0 with vertex UV set 0 (CLAMP like terrain base).
+	// 2026-09-10 BLACK-ROAD FIX: bind with a RAW device call like TerrainShaderPBR
+	// does - the wrapper-only Set_Texture + replay left sampler s0 EMPTY when a
+	// pixel shader reads it (terrain hit the same wall: its comment records the
+	// material replay swapping stages; raw SetTexture is the proven path). The
+	// wrapper call stays for stage bookkeeping (matches terrain's s4 dance).
+	{
+		TextureClass *roadTex0 = W3DShaderManager::getShaderTexture(0);
+		if (roadTex0) {
+			DX8Wrapper::Set_Texture(0, roadTex0);
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, roadTex0->Peek_D3D_Texture());
+		}
+	}
+	DX8Wrapper::Apply_Render_State_Changes();
+
+	//Same depth/blend states as the legacy road pass 0 - roads still alpha-
+	//blend INTO the terrain and never write z.
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_ZWRITEENABLE, FALSE);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_LIGHTING, FALSE);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHABLENDENABLE, TRUE);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	DX8Wrapper::Set_DX8_Render_State(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, 0);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+
+	Matrix4x4 curView;
+	DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, curView);
+	D3DXMATRIX inv;
+	float det;
+	D3DXMatrixInverse(&inv, &det, (D3DXMATRIX*)&curView);
+
+	float useCloud = 0.0f;
+	float useLightmap = 0.0f;
+
+	//Stage 1: cloud projection - identical TSS setup to the legacy NOISE1/
+	//NOISE12 pass 0 (TCI_CAMERASPACEPOSITION x view matrix, COUNT2, WRAP).
+	if (curShader == W3DShaderManager::ST_ROAD_PBR_NOISE1 || curShader == W3DShaderManager::ST_ROAD_PBR_NOISE12) {
+		useCloud = 1.0f;
+		// RAW bind (see BLACK-ROAD FIX above): an empty s1 multiplies the road
+		// to black (cloud.rgb=0), same wrapper-replay failure mode as s0.
+		{
+			TextureClass *cloudTex = W3DShaderManager::getShaderTexture(1);
+			if (cloudTex) {
+				DX8Wrapper::Set_Texture(1, cloudTex);
+				DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, cloudTex->Peek_D3D_Texture());
+			}
+		}
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		Matrix4x4 viewCopy = curView;
+		terrainShader2Stage.updateNoise1(((D3DXMATRIX*)&viewCopy), &inv, false);
+		DX8Wrapper::_Set_DX8_Transform(D3DTS_TEXTURE1, viewCopy);
+	}
+
+	//Stage 2: lightmap projection - the legacy NOISE12 second pass, done
+	//in-shader now (single pass); NOISE2 uses it alone.
+	if (curShader == W3DShaderManager::ST_ROAD_PBR_NOISE2 || curShader == W3DShaderManager::ST_ROAD_PBR_NOISE12) {
+		useLightmap = 1.0f;
+		// RAW bind (see BLACK-ROAD FIX above).
+		{
+			TextureClass *lmTex = W3DShaderManager::getShaderTexture(2);
+			if (lmTex) {
+				DX8Wrapper::Set_Texture(2, lmTex);
+				DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, lmTex->Peek_D3D_Texture());
+			}
+		}
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MINFILTER, D3DTEXF_POINT);
+		DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		Matrix4x4 viewCopy2 = curView;
+		terrainShader2Stage.updateNoise2(((D3DXMATRIX*)&viewCopy2), &inv, false);
+		DX8Wrapper::_Set_DX8_Transform(D3DTS_TEXTURE2, viewCopy2);
+	}
+
+	//c2 = { cloud, lightmap, 0, 0 }
+	float c2v[4] = { useCloud, useLightmap, 0.0f, 0.0f };
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, c2v, 1);
+
+	//Shadow receive: bind the A8R8G8B8 CPU copy on s4 + stage7 UVZ projection,
+	//byte-for-byte the TerrainShaderPBR receive (its s_shWrap dance included:
+	//wrapping the raw D3D9 tex through TextureClass keeps the DX8-wrapper's
+	//stage bookkeeping in sync with the raw SetTexture below).
+	{
+		static bool s_roadReceiveEnable = true;
+		bool shadowReceive = s_roadReceiveEnable && TheGlobalData && TheGlobalData->m_useShadowMap
+			&& g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isShadowMapAvailable()
+			&& g_theW3DDeferredRenderer->getShadowCpuTexture() != NULL;
+		float sc7[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		if (shadowReceive) {
+			IDirect3DBaseTexture9 *shTex9 = g_theW3DDeferredRenderer->getShadowCpuTexture();
+			static TextureClass *s_shWrap = NULL;
+			static IDirect3DBaseTexture9 *s_shWrapSrc = NULL;
+			if (shTex9 && s_shWrapSrc != shTex9) {
+				if (s_shWrap) { delete s_shWrap; s_shWrap = NULL; }
+				s_shWrap = NEW TextureClass((IDirect3DBaseTexture8*)shTex9);
+				s_shWrapSrc = shTex9;
+			}
+			if (s_shWrap) {
+				DX8Wrapper::Set_Texture(4, s_shWrap);
+				DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, shTex9);
+			} else {
+				DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, shTex9);
+			}
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MINFILTER, D3DTEXF_POINT);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MAGFILTER, D3DTEXF_POINT);
+
+			Matrix4x4 svp = g_theW3DDeferredRenderer->getShadowViewProj();
+			// V-FLIP bias matrix - identical to the terrain receive (_22=-0.5:
+			// the cast RT is standard-rasterized, ndc.y=+1 is the TOP row).
+			D3DXMATRIX mBias;
+			mBias._11 = 0.5f; mBias._12 = 0.0f; mBias._13 = 0.0f; mBias._14 = 0.0f;
+			mBias._21 = 0.0f; mBias._22 = -0.5f; mBias._23 = 0.0f; mBias._24 = 0.0f;
+			mBias._31 = 0.0f; mBias._32 = 0.0f; mBias._33 = 1.0f; mBias._34 = 0.0f;
+			mBias._41 = 0.5f; mBias._42 = 0.5f; mBias._43 = 0.0f; mBias._44 = 1.0f;
+			D3DXMATRIX mSunVP;
+			memcpy(&mSunVP, &svp, sizeof(D3DXMATRIX));
+			D3DXMATRIX mShadowUVZ, mTmp;
+			D3DXMatrixMultiply(&mTmp, &inv, &mSunVP);		// InvView * SunVP
+			D3DXMatrixMultiply(&mShadowUVZ, &mTmp, &mBias);	// ... * Bias
+			DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+			DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
+			DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE7, &mShadowUVZ);
+
+			// Match the terrain receive constants: fp16-RT-era bias 0.001.
+			sc7[0] = 1.0f / 2048.0f;
+			sc7[1] = 1.0f / 2048.0f;
+			sc7[2] = 0.001f;
+			sc7[3] = 1.0f;
+			{ static int s_roadRecvN = 0; if ((s_roadRecvN++ % 600) == 0) {
+				FILE *f = fopen("E:\\pbr_compile.log", "a");
+				if (f) { fprintf(f, "[%d] ROAD-RECV: on=1 c7=(%.5f,%.5f,%.4f,%.1f)\n",
+					(int)timeGetTime(), sc7[0], sc7[1], sc7[2], sc7[3]); fclose(f); } } }
+		} else {
+			{ static int s_roadRecv0 = 0; if ((s_roadRecv0++ % 6000) == 0) {
+				FILE *f = fopen("E:\\pbr_compile.log", "a");
+				if (f) { fprintf(f, "[%d] ROAD-RECV: on=0 (gate false)\n", (int)timeGetTime()); fclose(f); } } }
+		}
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
+	}
+
+	//c8.x = PBRDebugMode, uploaded UNCONDITIONALLY (stale-value lesson from
+	//the terrain shader: a garbage c8 blacks out everything).
+	float sdbg[4] = { TheGlobalData ? (float)TheGlobalData->m_pbrDebugMode : 0.0f, 0.0f, 0.0f, 0.0f };
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(8, sdbg, 1);
+
+	// DEVICE TRUTH PROBE (throttled): what s0/s1/s4 ACTUALLY hold at set()
+	// exit - if the road renders black again, a NULL here names the culprit
+	// stage immediately (compare against the next draw's post-replay state).
+	{ static int s_roadTexN = 0; if ((s_roadTexN++ % 600) == 0) {
+		IDirect3DDevice9 *d9q = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+		IDirect3DBaseTexture9 *r0 = NULL, *r1 = NULL, *r4 = NULL;
+		d9q->GetTexture(0, &r0); d9q->GetTexture(1, &r1); d9q->GetTexture(4, &r4);
+		FILE *f = fopen("E:\\pbr_compile.log", "a");
+		if (f) { fprintf(f, "[%d] ROAD-TEX: s0=%p s1=%p s4=%p variant=%d (0=NULL!)\n",
+			(int)timeGetTime(), (void*)r0, (void*)r1, (void*)r4, (int)(curShader - W3DShaderManager::ST_ROAD_PBR));
+			fclose(f); }
+		if (r0) r0->Release();
+		if (r1) r1->Release();
+		if (r4) r4->Release();
+	} }
+
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwRoadPixelShader);
+	return TRUE;
+}
+
+void RoadShaderPBR::reset(void)
+{
+	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(NULL);
+	ShaderClass::Invalidate();
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(0, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(1, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(2, NULL);
+	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
+	DX8Wrapper::Set_Texture(4, NULL);
+	//Unhook the shadow UVZ projection so later passes get plain passthrough.
+	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 7);
+	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|1);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(2, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|2);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|4);
+}
+
+Int RoadShaderPBR::shutdown(void)
+{
+	if (m_dwRoadPixelShader) {
+		m_dwRoadPixelShader->Release();
+		m_dwRoadPixelShader = NULL;
+	}
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR]=NULL;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR]=0;
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR_NOISE1]=NULL;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR_NOISE1]=0;
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR_NOISE2]=NULL;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR_NOISE2]=0;
+	W3DShaders[W3DShaderManager::ST_ROAD_PBR_NOISE12]=NULL;
+	W3DShadersPassCount[W3DShaderManager::ST_ROAD_PBR_NOISE12]=0;
+	return TRUE;
 }
 
 /** List of all custom shader lists - each list in this list contains variations of the same

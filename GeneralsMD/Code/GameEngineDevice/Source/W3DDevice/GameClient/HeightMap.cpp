@@ -2548,17 +2548,26 @@ void HeightMapRenderObjClass::renderExtraBlendTiles(void)
 				doCloud = false;
 			}
 
+			// 2026-09-10 road shadow receive: prefer the PBR road shader (it
+			// samples the W3X shadow map like the terrain PBR does) and fall
+			// back to the legacy fixed-function variants when unavailable.
+			Bool roadPbrAvail = (W3DShaderManager::getShaderPasses(W3DShaderManager::ST_ROAD_PBR) > 0);
+
 			if (TheGlobalData->m_useLightMap && doCloud)
- 			{	
-				st = W3DShaderManager::ST_ROAD_BASE_NOISE12;
+ 			{
+				st = roadPbrAvail ? W3DShaderManager::ST_ROAD_PBR_NOISE12 : W3DShaderManager::ST_ROAD_BASE_NOISE12;
  			}
  			else if (TheGlobalData->m_useLightMap)
  			{	//lightmap only
- 				st = W3DShaderManager::ST_ROAD_BASE_NOISE2;
+ 				st = roadPbrAvail ? W3DShaderManager::ST_ROAD_PBR_NOISE2 : W3DShaderManager::ST_ROAD_BASE_NOISE2;
  			}
  			else if (doCloud)
  			{	//cloudmap only
- 				st = W3DShaderManager::ST_ROAD_BASE_NOISE1;
+ 				st = roadPbrAvail ? W3DShaderManager::ST_ROAD_PBR_NOISE1 : W3DShaderManager::ST_ROAD_BASE_NOISE1;
+ 			}
+ 			else if (roadPbrAvail)
+ 			{	//base only
+ 				st = W3DShaderManager::ST_ROAD_PBR;
  			}
 
 			Int devicePasses=W3DShaderManager::getShaderPasses(st);

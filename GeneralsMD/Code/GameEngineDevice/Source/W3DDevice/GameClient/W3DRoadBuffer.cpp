@@ -3313,14 +3313,20 @@ void W3DRoadBuffer::drawRoads(CameraClass * camera, TextureClass *cloudTexture, 
 	}
 	Int stacking;
 	W3DShaderManager::ShaderTypes st=W3DShaderManager::ST_ROAD_BASE; //set default shader
-	if (cloudTexture) {	
-		st=W3DShaderManager::ST_ROAD_BASE_NOISE1;
+	// 2026-09-10 road shadow receive: prefer the PBR road shader (samples the
+	// W3X shadow map like the terrain PBR does), fall back to legacy variants.
+	Bool roadPbrAvail = (W3DShaderManager::getShaderPasses(W3DShaderManager::ST_ROAD_PBR) > 0);
+	if (cloudTexture) {
+		st= roadPbrAvail ? W3DShaderManager::ST_ROAD_PBR_NOISE1 : W3DShaderManager::ST_ROAD_BASE_NOISE1;
 		if (noiseTexture)
-			st=W3DShaderManager::ST_ROAD_BASE_NOISE12;
+			st= roadPbrAvail ? W3DShaderManager::ST_ROAD_PBR_NOISE12 : W3DShaderManager::ST_ROAD_BASE_NOISE12;
 	}
 	else
 	if (noiseTexture)
-		st=W3DShaderManager::ST_ROAD_BASE_NOISE2;
+		st= roadPbrAvail ? W3DShaderManager::ST_ROAD_PBR_NOISE2 : W3DShaderManager::ST_ROAD_BASE_NOISE2;
+	else
+	if (roadPbrAvail)
+		st= W3DShaderManager::ST_ROAD_PBR;
 
 	Int devicePasses = 1;	//assume regular rendering
  	//Find number of passes required to render current shader
