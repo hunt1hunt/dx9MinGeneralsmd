@@ -192,7 +192,6 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_shadowDepthSampler(NULL),
 	m_shadowMapAvailable(false),
 	m_shadowMapPassActive(false),
-	m_shadowMapSize(1024),
 	m_sunLightShadowPS(NULL),
 	m_shadowDepthStencilTex(NULL),
 	m_shadowDepthStencilAvailable(false),
@@ -1432,13 +1431,7 @@ void W3DDeferredRenderer::toneMapPass()
 // ============================================================================
 bool W3DDeferredRenderer::createShadowResources()
 {
-	// 2026-09-11 INI-SIZABLE (NordLicht opt #4): ShadowMapSize from GameData.ini,
-	// default 1024 (the 9-tap PCF blur makes 2048 detail moot; 4x VRAM/fill saved).
-	int SM_SIZE = TheGlobalData ? TheGlobalData->m_shadowMapSize : 1024;
-	if (SM_SIZE < 256) SM_SIZE = 256;
-	if (SM_SIZE > 4096) SM_SIZE = 4096;
-	m_shadowMapSize = SM_SIZE;
-
+	const int SM_SIZE = 2048;
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	// The shadow map is a COLOR RT that stores the sun-space depth as color.
 	// RA3-ALIGNED (Shadow.scrapeh): RA3's shadow map is R32F (32-bit float) — full
@@ -1591,8 +1584,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		// SunLightShadow PS samples this for the W3D building/unit shadows, so the
 		// clear value MUST be 1.0 (a wrong value corrupts every object's shadow).
 		DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
-		int smSz = (m_shadowMapSize >= 256) ? m_shadowMapSize : 1024;
-	D3DVIEWPORT9 vp2 = { 0, 0, smSz, smSz, 0.0f, 1.0f };
+		D3DVIEWPORT9 vp2 = { 0, 0, 2048, 2048, 0.0f, 1.0f };
 		DX8CALL(SetViewport(&vp2));
 		// Set COLORWRITEENABLE DIRECTLY on the device, not just via DX8Wrapper's
 		// deferred state cache: the W3X render reads the raw device state to detect
@@ -1629,80 +1621,8 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 				// onto the world-anchored texel lattice (the ortho rotation depends
 				// only on sunDir/up, so the lattice is fixed in world space) - the
 				// window then moves in whole-texel steps and shadow edges stay put.
-				// 2026-09-11 LOOK-AT CLAMP (NordLicht opt #6): a near-horizon or
-				// past-map-edge look-at point drags the shadow window far from
-				// the camera. Clamp the center to the 45-degree downward ray:
-				// horizontal distance from the camera <= camera height (floor
-				// 300 so a low camera keeps a usable window).
-				Vector3 centerClamped(shadowCenter.X, shadowCenter.Y, 0.0f);
-				{
-					D3DXMATRIX invView;
-					float detV;
-					D3DXMatrixInverse(&invView, &detV, (const D3DXMATRIX*)&camView);
-					float camEx = invView._41, camEy = invView._42, camEz = invView._43;
-					float dxc = shadowCenter.X - camEx;
-					float dyc = shadowCenter.Y - camEy;
-					float distC = sqrtf(dxc * dxc + dyc * dyc);
-					float maxDistC = (camEz > 300.0f) ? camEz : 300.0f;
-					if (distC > maxDistC && distC > 0.001f) {
-						float scC = maxDistC / distC;
-						centerClamped.Set(camEx + dxc * scC, camEy + dyc * scC, 0.0f);
-					}
-				}
-				Vector3 target(centerClamped.X, centerClamped.Y, 0.0f);	// camera look-at, ground plane
-				// 2026-09-11 FRUSTUM-FIT WINDOW (NordLicht opt #3): size the shadow
-				// window to the VISIBLE ground area instead of a fixed 800 units -
-				// zoomed-in views stop wasting ~16x map area, zoomed-out views stop
-				// losing shadows at the screen edges. Intersect the 4 far-plane
-				// frustum corner rays with the ground; clamp [400,1600] keeps the
-				// texel-lattice snap meaningful and bounds worst-case fill.
+				Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
 				float winSize = 800.0f;
-				{
-					D3DXMATRIX invViewF;
-					float detVF;
-					D3DXMatrixInverse(&invViewF, &detVF, (const D3DXMATRIX*)&camView);
-					float camFx = invViewF._41, camFy = invViewF._42, camFz = invViewF._43;
-					Matrix4x4 projF;
-					DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projF);
-					Matrix4x4 vpF = Multiply(camView, projF);
-					D3DXMATRIX invVPF;
-					float detVPF;
-					D3DXMatrixInverse(&invVPF, &detVPF, (const D3DXMATRIX*)&vpF);
-					if (detVPF != 0.0f && camFz > 1.0f) {
-						float loX = 1e9f, loY = 1e9f, hiX = -1e9f, hiY = -1e9f;
-						int hitsF = 0;
-						for (int cfy = -1; cfy <= 1; cfy += 2) {
-							for (int cfx = -1; cfx <= 1; cfx += 2) {
-								D3DXVECTOR4 corner(cfx, cfy, 1.0f, 1.0f);	// far-plane corner (row-vector)
-								D3DXVECTOR4 world;
-								D3DXVec4Transform(&world, &corner, &invVPF);
-								if (world.w == 0.0f) continue;
-								float wx = world.x / world.w, wy = world.y / world.w, wz = world.z / world.w;
-								float dx = wx - camFx, dy = wy - camFy, dz = wz - camFz;
-								if (dz < -1.0f) {
-									float t = -camFz / dz;	// z=0 ground intersection along the ray
-									if (t > 0.0f && t < 1.0f) {	// inside the rendered far plane
-										float gx = camFx + dx * t;
-										float gy = camFy + dy * t;
-										if (gx < loX) loX = gx;
-										if (gx > hiX) hiX = gx;
-										if (gy < loY) loY = gy;
-										if (gy > hiY) hiY = gy;
-										hitsF++;
-									}
-								}
-							}
-						}
-						if (hitsF >= 2) {
-							float spanF = hiX - loX;
-							if (hiY - loY > spanF) spanF = hiY - loY;
-							spanF *= 1.15f;	// edge margin so border casters still resolve
-							if (spanF < 400.0f) spanF = 400.0f;
-							if (spanF > 1600.0f) spanF = 1600.0f;
-							winSize = spanF;
-						}
-					}
-				}
 				float mapSpan = 0.0f;
 				if (TheTerrainRenderObject) {
 					// Small-map fallback: a window fitted to the WHOLE map has both
@@ -1739,8 +1659,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 				// follow window). Rows of a row-vector view: view.x = dot(v-eye, xaxis),
 				// so xaxis/yaxis live in the matrix's first/second COLUMNS.
 				{
-					int smSzT = (m_shadowMapSize >= 256) ? m_shadowMapSize : 1024;
-				float texelW = winSize / (float)smSzT;
+					float texelW = winSize / 2048.0f;
 					Vector3 snapEye = target + lightDir * (winSize * 0.75f);
 					D3DXMATRIX vSnap;
 					D3DXMatrixLookAtLH(&vSnap,
@@ -1774,12 +1693,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
-	// 2026-09-11 DEPTH RANGE TIGHTEN (NordLicht opt #5): geometry only spans
-	// [~0.25W, ~1.25W] along the light axis from the eye at 0.75W; the old
-	// near=1/far=1.2W+1000 wasted most of the depth range. Tightening buys
-	// ~2.3x depth precision at the 800-unit window (1960 -> 880 span), which
-	// shrinks the world-space size of the NDC depth bias (less peter-panning).
-	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, spanEff * 0.2f, spanEff * 1.3f);
+	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, 1.0f, winSize * 1.2f + 1000.0f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
@@ -1812,6 +1726,26 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 			m_shadowViewProj[1].X, m_shadowViewProj[1].Y, m_shadowViewProj[1].Z, m_shadowViewProj[1].W,
 			m_shadowViewProj[2].X, m_shadowViewProj[2].Y, m_shadowViewProj[2].Z, m_shadowViewProj[2].W,
 			m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W));
+	}
+	// DIAG (every 60 frames): does m_shadowViewProj's TRANSLATION (r3) change as
+	// the camera orbits? The shadow camera is centered on the LOOK-AT POINT
+	// (shadowCenter, = the tactical view's m_pos projected to the ground). When
+	// you ORBIT a model the look-at point stays fixed, so r3 stays fixed and the
+	// model's self-shadow UV is stable at the map center (no sweep). When you PAN
+	// or ZOOM the look-at point moves and r3 follows. If W3X receive samples with
+	// a per-frame matrix while the cast used a different one, the surface shadow
+	// UV would shift every frame — cast/receive both read m_shadowViewProj this
+	// frame, so they agree (log-verified: receive W2S = cast sunVP * bias). W3D's
+	// SunLightShadow PS uses the same m_shadowViewProj but its effect is a
+	// projected ground shape, so it tolerates the follow.
+	{
+		static int s_vpFrame = 0;
+		if ((s_vpFrame++ % 60) == 0) {
+			DIAG_LOG(("W3DDeferredRenderer: [VPFOLLOW] FIXED map (origin) sunDir=(%.3f,%.3f,%.3f) shadowVP r3=(%.4f,%.4f,%.4f,%.4f) eye=(%.1f,%.1f,%.1f)\n",
+				sunDir.X, sunDir.Y, sunDir.Z,
+				m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W,
+				eye.X, eye.Y, eye.Z));
+		}
 	}
 
 	// DIAG (one-shot): verify the sun LookAt inputs and resulting view matrix
@@ -2261,7 +2195,7 @@ void W3DDeferredRenderer::dumpShadowTexToPPM(IDirect3DBaseTexture9 *srcTex, cons
 		// Viewport = the RT's OWN size (2048x2048), NOT the G-Buffer size - the old
 		// gbuffer-sized viewport clipped the dump (stale 1920x1080 gray PPM).
 		D3DVIEWPORT9 vp; vp.X = 0; vp.Y = 0;
-		vp.Width = TheGlobalData ? ((TheGlobalData->m_shadowMapSize < 256) ? 256 : TheGlobalData->m_shadowMapSize) : 1024; vp.Height = vp.Width;
+		vp.Width = 2048; vp.Height = 2048;
 		vp.MinZ = 0.0f; vp.MaxZ = 1.0f;
 		d9->SetViewport(&vp);
 		dev->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -2324,7 +2258,7 @@ void W3DDeferredRenderer::dumpShadowTexToPPM(IDirect3DBaseTexture9 *srcTex, cons
 		// (1,1,1 white). Write only the viewport-sized top-left block so the PPM
 		// is the full shadow map scaled to the viewport, not mostly blank.
 		int w = (int)desc.Width, h = (int)desc.Height;
-		int vw = TheGlobalData ? TheGlobalData->m_shadowMapSize : 1024, vh = vw;	// dump the full shadow map (viewport now matches)
+		int vw = 2048, vh = 2048;	// dump the full shadow map (viewport now matches)
 		if (w > vw) w = vw;
 		if (h > vh) h = vh;
 		fprintf(fp, "P6\n%d %d\n255\n", w, h);

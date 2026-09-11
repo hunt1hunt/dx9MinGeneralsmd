@@ -718,7 +718,7 @@ GlobalData::GlobalData()
 	m_enableStaticLOD = TRUE;
 	m_useDeferredRendering = FALSE;
 	m_useShadowMap = TRUE;
-	m_shadowMapSize = 1024;
+	m_shadowMapSize = 2048;
 	m_useSSAO = FALSE;
 	m_ssaoLevel = 2;
 	m_useHDR = TRUE;

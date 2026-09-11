@@ -2754,6 +2754,28 @@ Int TerrainShaderPBR::set(Int pass)
 		static float s_terrainBumpSignY = -1.0f;
 		float nmWeight[4] = { normalWeight, s_terrainRoughness, s_terrainBumpSignX, s_terrainBumpSignY };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, nmWeight, 1);
+		// 2026-09-08 DEVICE TRUTH PROBE (throttled): read back what the device
+		// ACTUALLY has on s1/s4/s5 at set() ENTRY - this reflects what the LAST
+		// frame's terrain draw left bound (post material-apply, post
+		// DrawPrimitive). Compare against what we bind below to see who swaps
+		// the stage between our bind and the primitive.
+		{
+			static int s_devProbeN = 0;
+			if ((s_devProbeN++ % 300) == 0) {
+				IDirect3DDevice9 *d9p = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+				IDirect3DBaseTexture9 *t1 = NULL, *t4 = NULL, *t5 = NULL;
+				d9p->GetTexture(1, &t1); d9p->GetTexture(4, &t4); d9p->GetTexture(5, &t5);
+				FILE *pf = fopen("E:\\pbr_compile.log", "a");
+				if (pf) {
+					fprintf(pf, "[%d] TER-DEVENTRY: s1=%p s4=%p s5=%p (0=NULL!)\n",
+						(int)timeGetTime(), (void*)t1, (void*)t4, (void*)t5);
+					fclose(pf);
+				}
+				if (t1) t1->Release();
+				if (t4) t4->Release();
+				if (t5) t5->Release();
+			}
+		}
 		// Texture shadow receive (forward pass, 2026-09-06): bind the R32F
 		// shadow-map copy at s7 and upload the sun view-proj (c3-c6) plus
 		// params (c7: texel.xy, depth bias, receive-enable). endShadowMapPass
@@ -2782,9 +2804,17 @@ Int TerrainShaderPBR::set(Int pass)
 				static TextureClass *s_shWrap = NULL;
 				static IDirect3DBaseTexture9 *s_shWrapSrc = NULL;
 				if (shTex9 && s_shWrapSrc != shTex9) {
+					{
+						FILE *wf = fopen("E:\\pbr_compile.log", "a");
+						if (wf) { fprintf(wf, "[%d] WRAP-TRY create TextureClass for %p\n", (int)timeGetTime(), (void*)shTex9); fclose(wf); }
+					}
 					if (s_shWrap) { delete s_shWrap; s_shWrap = NULL; }
 					s_shWrap = NEW TextureClass((IDirect3DBaseTexture8*)shTex9);
 					s_shWrapSrc = shTex9;
+					{
+						FILE *wf = fopen("E:\\pbr_compile.log", "a");
+						if (wf) { fprintf(wf, "[%d] WRAP-OK wrap=%p\n", (int)timeGetTime(), (void*)s_shWrap); fclose(wf); }
+					}
 				}
 				if (s_shWrap) {
 					DX8Wrapper::Set_Texture(4, s_shWrap);
@@ -2805,8 +2835,7 @@ Int TerrainShaderPBR::set(Int pass)
 				// ~0.0005 so the bias shrinks back (0.005 = 42 units of
 				// peter-panning at the 8200-unit window). PAIRED with the fp16
 				// RT: if the fp16 trial rolls back to A8R8G8B8, restore 0.005.
-				float invSmTexel = 1.0f / (float)((g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getShadowMapSize() >= 256) ? g_theW3DDeferredRenderer->getShadowMapSize() : 1024);
-				float sc7[4] = { invSmTexel, invSmTexel, 0.001f, 1.0f };
+				float sc7[4] = { 1.0f / 2048.0f, 1.0f / 2048.0f, 0.001f, 1.0f };
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, sc3, 1);
 				// 2026-09-09 RA3-FAITHFUL TSS STAGE 7: the fixed-function 'VS' computes
 				// shadow UV+depth per-vertex, exactly like RA3 Terrain.fx does in its VS:
@@ -2868,10 +2897,45 @@ Int TerrainShaderPBR::set(Int pass)
 						DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vp, 4);
 						DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shadowUVZm, 4);
 						DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(m_dwTerrainVS);
+						// VPCHECK: the yard point is ON SCREEN - the correct vp must map it to |x|<1,|y|<1
+						{
+							static int s_vpN = 0;
+							if ((s_vpN++ % 600) == 0) {
+								Vector4 P(2076.0f, 680.8f, 25.6f, 1.0f);
+								float rx = P.X*vp[0][0] + P.Y*vp[1][0] + P.Z*vp[2][0] + P.W*vp[3][0];
+								float ry = P.X*vp[0][1] + P.Y*vp[1][1] + P.Z*vp[2][1] + P.W*vp[3][1];
+								float rz = P.X*vp[0][2] + P.Y*vp[1][2] + P.Z*vp[2][2] + P.W*vp[3][2];
+								float rw = P.X*vp[0][3] + P.Y*vp[1][3] + P.Z*vp[2][3] + P.W*vp[3][3];
+								float ux = P.X*shadowUVZm[0][0] + P.Y*shadowUVZm[1][0] + P.Z*shadowUVZm[2][0] + P.W*shadowUVZm[3][0];
+								FILE* vf = fopen("E:\\pbr_compile.log", "a");
+								if (vf) { fprintf(vf, "[%d] VPCHECK-ENG vp=(%.3f, %.3f, %.3f, %.2f) %s | shadowU=%.3f%s\n",
+									(int)timeGetTime(), rx, ry, rz, rw,
+									(fabsf(rx) < 1.0f && fabsf(ry) < 1.0f && rw > 0.0f) ? "<== NDC-OK" : "WRONG",
+									ux, (ux > 0.0f && ux < 1.0f) ? " UV-OK" : ""); fclose(vf); }
+							}
 						}
+					}
+
 					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
 					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
 					DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE7, &mShadowUVZ);
+					// CPU CROSS-CHECK (throttled): project the known construction-yard point
+					// through the same matrix so the PS's TEXCOORD7 can be validated against it.
+					{
+						static int s_uvzN = 0;
+						if ((s_uvzN++ % 300) == 0) {
+							D3DXVECTOR4 out, camPos;
+							D3DXMATRIX mView;  memcpy(&mView, &curView, sizeof(D3DXMATRIX));
+							D3DXVec4Transform(&camPos, &D3DXVECTOR4(2076.0f, 680.8f, 25.6f, 1.0f), &mView);
+							D3DXVec4Transform(&out, &camPos, &mShadowUVZ);
+							FILE *uf = fopen("E:\\pbr_compile.log", "a");
+							if (uf) {
+								fprintf(uf, "[%d] UVZ-XCHECK yard=(%.4f, %.4f, %.4f, %.2f)  (expect uv ~0.8 z ~0.5; V-FLIP: v = old_v mirrored about 0.5)\n",
+									(int)timeGetTime(), out.x, out.y, out.z, out.w);
+								fclose(uf);
+							}
+						}
+					}
 				}
 
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(4, sc4, 1);
@@ -2897,9 +2961,48 @@ Int TerrainShaderPBR::set(Int pass)
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, iv2, 1);
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(12, iv3, 1);
 				}
+				// 2026-09-08 CONSTANT READBACK (throttled): read c3/c6 straight
+				// back from the DEVICE right after upload. If these differ from
+				// sc3/sc6 the upload path is broken; if they match, the suv=0
+				// ghost lives in the PS inputs (worldPos) or codegen.
+				{
+					static int s_crb = 0;
+					if ((s_crb++ % 300) == 0) {
+						IDirect3DDevice9 *d9c = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+						float rb3[4] = {0,0,0,0}, rb6[4] = {0,0,0,0}, rb9[4] = {0,0,0,0};
+						d9c->GetPixelShaderConstantF(3, rb3, 1);
+						d9c->GetPixelShaderConstantF(6, rb6, 1);
+						d9c->GetPixelShaderConstantF(9, rb9, 1);
+						FILE *cf = fopen("E:\\pbr_compile.log", "a");
+						if (cf) {
+							fprintf(cf, "[%d] CONST-READBACK c3=(%.5f,%.5f,%.5f,%.5f) c6=(%.5f,%.5f,%.5f,%.5f) c9=(%.4f,%.4f,%.4f,%.4f)\n",
+								(int)timeGetTime(), rb3[0], rb3[1], rb3[2], rb3[3], rb6[0], rb6[1], rb6[2], rb6[3], rb9[0], rb9[1], rb9[2], rb9[3]);
+							fclose(cf);
+						}
+					}
+				}
+				// 2026-09-06 INGAME-TERRECV (throttled): receive-end truth.
+				{ static int s_trx = 0; if ((s_trx++ % 300) == 0) {
+				FILE *f = fopen("E:\\pbr_compile.log", "a");
+				if (f) {
+					// 2026-09-08: also dump what the device holds on s1/s4 RIGHT
+					// AFTER our bind (compare with TER-DEVENTRY next frame).
+					IDirect3DDevice9 *d9q = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+					IDirect3DBaseTexture9 *a1 = NULL, *a4 = NULL;
+					d9q->GetTexture(1, &a1); d9q->GetTexture(4, &a4);
+					fprintf(f, "[%d] TER-RECV: on=1 c7=(%.5f,%.5f,%.4f,%.1f) vpR3=(%.4f,%.4f,%.4f,%.4f) postbind s1=%p s4=%p\n",
+						(int)timeGetTime(), sc7[0], sc7[1], sc7[2], sc7[3], sc6[0], sc6[1], sc6[2], sc6[3],
+						(void*)a1, (void*)a4);
+					if (a1) a1->Release();
+					if (a4) a4->Release();
+					fclose(f);
+					} } }
 			} else {
 				float sc7[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
+				{ static int s_trx0 = 0; if ((s_trx0++ % 3000) == 0) {
+					FILE *f = fopen("E:\\pbr_compile.log", "a");
+					if (f) { fprintf(f, "[%d] TER-RECV: on=0 (gate false)\n", (int)timeGetTime()); fclose(f); } } }
 			}
 			// c8.x = PBRDebugMode - uploaded UNCONDITIONALLY. A stale c8 left by
 			// other shader systems' constant uploads activated the viz masks with
@@ -5139,7 +5242,8 @@ Int RoadShaderPBR::set(Int pass)
 			sc7[1] = 1.0f / 2048.0f;
 			sc7[2] = 0.001f;
 			sc7[3] = 1.0f;
-		}
+					} else {
+					}
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
 	}
 

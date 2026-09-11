@@ -44,16 +44,7 @@
 //=============================================================================
 static void W3XShadowDiag(const char *fmt, ...)
 {
-	// 2026-09-11 PERF GATE (NordLicht cleanup): this unbuffered log wrote
-	// WBONES bursts every 3s per skinned object - hot-path I/O. Off unless
-	// W3X_SHADOW_DIAG is set in the environment.
 	static FILE *s_log = NULL;
-	static bool s_gateChecked = false;
-	if (!s_gateChecked) {
-		s_gateChecked = true;
-		char gate[2];
-		if (GetEnvironmentVariableA("W3X_SHADOW_DIAG", gate, 2) == 0) return;
-	}
 	// 2026-09-10: env gate (W3X_SHADOW_DIAG) REMOVED for the tank-cast hunt -
 	// the test runs kept launching the exe directly and the census/CAST_MESH/
 	// CAST-DRAW data never landed. Every caller here is one-shot-budgeted or
@@ -1032,8 +1023,7 @@ static void BindW3XMatrices(ID3DXEffect *effect, const Matrix4x4 &world,
 		}
 		D3DXHANDLE hTexel = effect->GetParameterByName(NULL, "Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize");
 		if (hTexel) {
-			float smInvTexel = 1.0f / (float)((g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getShadowMapSize() >= 256) ? g_theW3DDeferredRenderer->getShadowMapSize() : 1024);
-			float smt[4] = { 0, 0, smInvTexel, smInvTexel };
+			float smt[4] = { 0, 0, 1.0f/2048.0f, 1.0f/2048.0f };
 			effect->SetVector(hTexel, (const D3DXVECTOR4*)smt);
 		}
 		// W3X shadow NORMAL BIAS (world units): push the receive shadow-map query
