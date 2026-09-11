@@ -44,7 +44,16 @@
 //=============================================================================
 static void W3XShadowDiag(const char *fmt, ...)
 {
+	// 2026-09-11 PERF GATE (NordLicht cleanup): this unbuffered log wrote
+	// WBONES bursts every 3s per skinned object - hot-path I/O. Off unless
+	// W3X_SHADOW_DIAG is set in the environment.
 	static FILE *s_log = NULL;
+	static bool s_gateChecked = false;
+	if (!s_gateChecked) {
+		s_gateChecked = true;
+		char gate[2];
+		if (GetEnvironmentVariableA("W3X_SHADOW_DIAG", gate, 2) == 0) return;
+	}
 	// 2026-09-10: env gate (W3X_SHADOW_DIAG) REMOVED for the tank-cast hunt -
 	// the test runs kept launching the exe directly and the census/CAST_MESH/
 	// CAST-DRAW data never landed. Every caller here is one-shot-budgeted or

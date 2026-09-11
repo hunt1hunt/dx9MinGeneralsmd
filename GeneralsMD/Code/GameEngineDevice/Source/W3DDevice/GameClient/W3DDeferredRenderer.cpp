@@ -1727,26 +1727,6 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 			m_shadowViewProj[2].X, m_shadowViewProj[2].Y, m_shadowViewProj[2].Z, m_shadowViewProj[2].W,
 			m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W));
 	}
-	// DIAG (every 60 frames): does m_shadowViewProj's TRANSLATION (r3) change as
-	// the camera orbits? The shadow camera is centered on the LOOK-AT POINT
-	// (shadowCenter, = the tactical view's m_pos projected to the ground). When
-	// you ORBIT a model the look-at point stays fixed, so r3 stays fixed and the
-	// model's self-shadow UV is stable at the map center (no sweep). When you PAN
-	// or ZOOM the look-at point moves and r3 follows. If W3X receive samples with
-	// a per-frame matrix while the cast used a different one, the surface shadow
-	// UV would shift every frame — cast/receive both read m_shadowViewProj this
-	// frame, so they agree (log-verified: receive W2S = cast sunVP * bias). W3D's
-	// SunLightShadow PS uses the same m_shadowViewProj but its effect is a
-	// projected ground shape, so it tolerates the follow.
-	{
-		static int s_vpFrame = 0;
-		if ((s_vpFrame++ % 60) == 0) {
-			DIAG_LOG(("W3DDeferredRenderer: [VPFOLLOW] FIXED map (origin) sunDir=(%.3f,%.3f,%.3f) shadowVP r3=(%.4f,%.4f,%.4f,%.4f) eye=(%.1f,%.1f,%.1f)\n",
-				sunDir.X, sunDir.Y, sunDir.Z,
-				m_shadowViewProj[3].X, m_shadowViewProj[3].Y, m_shadowViewProj[3].Z, m_shadowViewProj[3].W,
-				eye.X, eye.Y, eye.Z));
-		}
-	}
 
 	// DIAG (one-shot): verify the sun LookAt inputs and resulting view matrix
 	// (row0 must be a non-zero unit "right" vector, else the depth pass is empty).
