@@ -2835,7 +2835,8 @@ Int TerrainShaderPBR::set(Int pass)
 				// ~0.0005 so the bias shrinks back (0.005 = 42 units of
 				// peter-panning at the 8200-unit window). PAIRED with the fp16
 				// RT: if the fp16 trial rolls back to A8R8G8B8, restore 0.005.
-				float sc7[4] = { 1.0f / 2048.0f, 1.0f / 2048.0f, 0.001f, 1.0f };
+				float invSmTexel = 1.0f / (float)((g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getShadowMapSize() >= 256) ? g_theW3DDeferredRenderer->getShadowMapSize() : 2048);
+				float sc7[4] = { invSmTexel, invSmTexel, 0.001f, 1.0f };
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, sc3, 1);
 				// 2026-09-09 RA3-FAITHFUL TSS STAGE 7: the fixed-function 'VS' computes
 				// shadow UV+depth per-vertex, exactly like RA3 Terrain.fx does in its VS:
@@ -5238,8 +5239,9 @@ Int RoadShaderPBR::set(Int pass)
 			DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE7, &mShadowUVZ);
 
 			// Match the terrain receive constants: fp16-RT-era bias 0.001.
-			sc7[0] = 1.0f / 2048.0f;
-			sc7[1] = 1.0f / 2048.0f;
+			float invSmTexelR = 1.0f / (float)((g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getShadowMapSize() >= 256) ? g_theW3DDeferredRenderer->getShadowMapSize() : 2048);
+			sc7[0] = invSmTexelR;
+			sc7[1] = invSmTexelR;
 			sc7[2] = 0.001f;
 			sc7[3] = 1.0f;
 					} else {

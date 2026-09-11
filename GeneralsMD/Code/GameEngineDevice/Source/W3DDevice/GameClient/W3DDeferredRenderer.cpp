@@ -192,6 +192,7 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_shadowDepthSampler(NULL),
 	m_shadowMapAvailable(false),
 	m_shadowMapPassActive(false),
+	m_shadowMapSize(2048),
 	m_sunLightShadowPS(NULL),
 	m_shadowDepthStencilTex(NULL),
 	m_shadowDepthStencilAvailable(false),
@@ -1431,7 +1432,11 @@ void W3DDeferredRenderer::toneMapPass()
 // ============================================================================
 bool W3DDeferredRenderer::createShadowResources()
 {
-	const int SM_SIZE = 2048;
+	// INI ShadowMapSize (default 2048 = the proven value; try 1024 for 4x VRAM/fill savings).
+	int SM_SIZE = TheGlobalData ? TheGlobalData->m_shadowMapSize : 2048;
+	if (SM_SIZE < 256) SM_SIZE = 256;
+	if (SM_SIZE > 4096) SM_SIZE = 4096;
+	m_shadowMapSize = SM_SIZE;
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	// The shadow map is a COLOR RT that stores the sun-space depth as color.
 	// RA3-ALIGNED (Shadow.scrapeh): RA3's shadow map is R32F (32-bit float) — full
@@ -1584,7 +1589,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 		// SunLightShadow PS samples this for the W3D building/unit shadows, so the
 		// clear value MUST be 1.0 (a wrong value corrupts every object's shadow).
 		DX8Wrapper::Clear(true, true, Vector3(1, 1, 1), 0, 1.0f, 0);
-		D3DVIEWPORT9 vp2 = { 0, 0, 2048, 2048, 0.0f, 1.0f };
+		D3DVIEWPORT9 vp2 = { 0, 0, m_shadowMapSize, m_shadowMapSize, 0.0f, 1.0f };
 		DX8CALL(SetViewport(&vp2));
 		// Set COLORWRITEENABLE DIRECTLY on the device, not just via DX8Wrapper's
 		// deferred state cache: the W3X render reads the raw device state to detect
@@ -1659,7 +1664,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 				// follow window). Rows of a row-vector view: view.x = dot(v-eye, xaxis),
 				// so xaxis/yaxis live in the matrix's first/second COLUMNS.
 				{
-					float texelW = winSize / 2048.0f;
+					float texelW = winSize / (float)m_shadowMapSize;
 					Vector3 snapEye = target + lightDir * (winSize * 0.75f);
 					D3DXMATRIX vSnap;
 					D3DXMatrixLookAtLH(&vSnap,
@@ -2195,7 +2200,7 @@ void W3DDeferredRenderer::dumpShadowTexToPPM(IDirect3DBaseTexture9 *srcTex, cons
 		// Viewport = the RT's OWN size (2048x2048), NOT the G-Buffer size - the old
 		// gbuffer-sized viewport clipped the dump (stale 1920x1080 gray PPM).
 		D3DVIEWPORT9 vp; vp.X = 0; vp.Y = 0;
-		vp.Width = 2048; vp.Height = 2048;
+		vp.Width = m_shadowMapSize; vp.Height = m_shadowMapSize;
 		vp.MinZ = 0.0f; vp.MaxZ = 1.0f;
 		d9->SetViewport(&vp);
 		dev->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -2258,7 +2263,7 @@ void W3DDeferredRenderer::dumpShadowTexToPPM(IDirect3DBaseTexture9 *srcTex, cons
 		// (1,1,1 white). Write only the viewport-sized top-left block so the PPM
 		// is the full shadow map scaled to the viewport, not mostly blank.
 		int w = (int)desc.Width, h = (int)desc.Height;
-		int vw = 2048, vh = 2048;	// dump the full shadow map (viewport now matches)
+		int vw = m_shadowMapSize, vh = m_shadowMapSize;	// dump the full shadow map (viewport now matches)
 		if (w > vw) w = vw;
 		if (h > vh) h = vh;
 		fprintf(fp, "P6\n%d %d\n255\n", w, h);
