@@ -122,6 +122,7 @@ public:
 	Bool m_enableStaticLOD;
 	Bool m_useDeferredRendering;	///< Enable deferred rendering path (G-Buffer + light pass)
 	Bool m_useShadowMap;		///< Enable shadow map in deferred rendering (default: true)
+	Int m_shadowMapSize;		///< Shadow map resolution (INI ShadowMapSize, default 1024; 2048=old default, 512=low VRAM)
 	Bool m_useSSAO;			///< Enable SSAO in deferred rendering (default: false)
 	Int m_ssaoLevel;		///< SSAO quality level: 1=low, 2=medium, 3=high (default: 2)
 	Bool m_useHDR;			///< Enable HDR tone mapping in deferred rendering (default: true)

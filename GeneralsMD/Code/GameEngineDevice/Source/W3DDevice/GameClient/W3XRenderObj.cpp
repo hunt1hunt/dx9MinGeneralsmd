@@ -1032,7 +1032,8 @@ static void BindW3XMatrices(ID3DXEffect *effect, const Matrix4x4 &world,
 		}
 		D3DXHANDLE hTexel = effect->GetParameterByName(NULL, "Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize");
 		if (hTexel) {
-			float smt[4] = { 0, 0, 1.0f/2048.0f, 1.0f/2048.0f };
+			float smInvTexel = 1.0f / (float)((g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getShadowMapSize() >= 256) ? g_theW3DDeferredRenderer->getShadowMapSize() : 1024);
+			float smt[4] = { 0, 0, smInvTexel, smInvTexel };
 			effect->SetVector(hTexel, (const D3DXVECTOR4*)smt);
 		}
 		// W3X shadow NORMAL BIAS (world units): push the receive shadow-map query

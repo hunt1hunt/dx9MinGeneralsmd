@@ -76,6 +76,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseFPSLimit",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useFpsLimit ) },
 	{ "UseDeferredRendering",				INI::parseBool,				NULL,			offsetof( GlobalData, m_useDeferredRendering ) },
 	{ "UseShadowMap",					INI::parseBool,				NULL,			offsetof( GlobalData, m_useShadowMap ) },
+	{ "ShadowMapSize",			INI::parseInt,			NULL,			offsetof( GlobalData, m_shadowMapSize ) },
 	{ "UseSSAO",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useSSAO ) },
 	{ "SSAOLevel",						INI::parseInt,				NULL,			offsetof( GlobalData, m_ssaoLevel ) },
 	{ "UseHDR",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useHDR ) },
@@ -717,6 +718,7 @@ GlobalData::GlobalData()
 	m_enableStaticLOD = TRUE;
 	m_useDeferredRendering = FALSE;
 	m_useShadowMap = TRUE;
+	m_shadowMapSize = 1024;
 	m_useSSAO = FALSE;
 	m_ssaoLevel = 2;
 	m_useHDR = TRUE;

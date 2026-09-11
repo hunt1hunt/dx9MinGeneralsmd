@@ -210,6 +210,8 @@ public:
 	// dgVoodoo (the read-0 defect was R32F-specific), so the sampler copy is
 	// directly consumable. Accessor name kept so consumers stay unchanged.
 	IDirect3DBaseTexture9 *getShadowCpuTexture() const { return m_shadowDepthSampler; }
+	/// Shadow map edge size actually used for the RTs (INI ShadowMapSize, cached at createShadowResources).
+	int getShadowMapSize() const { return m_shadowMapSize; }
 
 private:
 
@@ -289,6 +291,7 @@ private:
 	void releaseShadowResources();
 
 	TextureClass *m_shadowDepthRT;			///< Shadow map depth RT (1024x1024 color RT).
+	int m_shadowMapSize;				///< cached INI ShadowMapSize (default 1024).
 	IDirect3DTexture9 *m_shadowDepthSampler; ///< Plain sampler copy of the shadow map (StretchRect'd each frame, reliable RT->SRV under dgVoodoo2).
 	bool m_shadowMapAvailable;				///< Shadow map resources OK.
 	bool m_shadowMapPassActive;			///< beginShadowMapPass()..endShadowMapPass() active (W3X casts into it).
