@@ -5242,15 +5242,8 @@ Int RoadShaderPBR::set(Int pass)
 			sc7[1] = 1.0f / 2048.0f;
 			sc7[2] = 0.001f;
 			sc7[3] = 1.0f;
-			{ static int s_roadRecvN = 0; if ((s_roadRecvN++ % 600) == 0) {
-				FILE *f = fopen("E:\\pbr_compile.log", "a");
-				if (f) { fprintf(f, "[%d] ROAD-RECV: on=1 c7=(%.5f,%.5f,%.4f,%.1f)\n",
-					(int)timeGetTime(), sc7[0], sc7[1], sc7[2], sc7[3]); fclose(f); } } }
-		} else {
-			{ static int s_roadRecv0 = 0; if ((s_roadRecv0++ % 6000) == 0) {
-				FILE *f = fopen("E:\\pbr_compile.log", "a");
-				if (f) { fprintf(f, "[%d] ROAD-RECV: on=0 (gate false)\n", (int)timeGetTime()); fclose(f); } } }
-		}
+					} else {
+					}
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
 	}
 
@@ -5259,21 +5252,6 @@ Int RoadShaderPBR::set(Int pass)
 	float sdbg[4] = { TheGlobalData ? (float)TheGlobalData->m_pbrDebugMode : 0.0f, 0.0f, 0.0f, 0.0f };
 	DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(8, sdbg, 1);
 
-	// DEVICE TRUTH PROBE (throttled): what s0/s1/s4 ACTUALLY hold at set()
-	// exit - if the road renders black again, a NULL here names the culprit
-	// stage immediately (compare against the next draw's post-replay state).
-	{ static int s_roadTexN = 0; if ((s_roadTexN++ % 600) == 0) {
-		IDirect3DDevice9 *d9q = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
-		IDirect3DBaseTexture9 *r0 = NULL, *r1 = NULL, *r4 = NULL;
-		d9q->GetTexture(0, &r0); d9q->GetTexture(1, &r1); d9q->GetTexture(4, &r4);
-		FILE *f = fopen("E:\\pbr_compile.log", "a");
-		if (f) { fprintf(f, "[%d] ROAD-TEX: s0=%p s1=%p s4=%p variant=%d (0=NULL!)\n",
-			(int)timeGetTime(), (void*)r0, (void*)r1, (void*)r4, (int)(curShader - W3DShaderManager::ST_ROAD_PBR));
-			fclose(f); }
-		if (r0) r0->Release();
-		if (r1) r1->Release();
-		if (r4) r4->Release();
-	} }
 
 	DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwRoadPixelShader);
 	return TRUE;

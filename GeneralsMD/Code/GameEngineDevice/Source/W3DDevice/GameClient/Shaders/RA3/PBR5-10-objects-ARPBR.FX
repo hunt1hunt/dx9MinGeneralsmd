@@ -62,6 +62,9 @@ fxc.exe /O2 /T fx_2_0 /Fo   objectsARPBR.fxo   PBR5-10-objects-ARPBR.FX
 // Values tuned to avoid a "wet black paint" look: matte-ish metal, bright enough.
 static const float4 SPM_threshold = { 0.45, 0.15, 0.125, 0.5 }; //careful gen evo values
 static const float glow_mult = 4;
+// 2026-09-11 SHADOW-SIDE FILL: fake sun-bounce on sun-opposed faces so
+// building backsides stay readable instead of ambient-only black.
+static const float shadowFillStrength = 0.3 ;
 static const float MinRoughness = 0.12 ;
 static const float SpecBaseMultiply = 0.22 ;
 static const bool InfantrySkin = 0 ;
@@ -336,6 +339,11 @@ float4 PS_H_ARPBR (PS_H_input i) : COLOR
   #endif
 
     float  sun_tilt  = dot(N,Lsun) ;
+    // SHADOW-SIDE FILL base: capture the sun color BEFORE the facing
+    // gates zero it below - the fill needs it on exactly those
+    // sun-opposed faces (the original fill read the gated SUNcolor and
+    // multiplied 0 - no visible effect regardless of strength).
+    float3 SUNcolorFill = SUNcolor ;
     SUNcolor *= (sun_tilt > 0 )? 1 : 0 ; 
     SUNcolor *= (vertex_suntilt > 0 )? 1 : 0 ; 
 
@@ -357,7 +365,20 @@ float4 PS_H_ARPBR (PS_H_input i) : COLOR
       transition_range_mult = 1 ;
       transition_start_bias_mult = 1 ;
     #endif
-    SUNcolor *= hp_invshadow_trilinear(ShadowMapUV, transition_range_mult, transition_start_bias_mult) ;
+    float arpbrShadowTerm = hp_invshadow_trilinear(ShadowMapUV, transition_range_mult, transition_start_bias_mult) ;
+    SUNcolor *= arpbrShadowTerm ;
+    // 2026-09-11 BASEPLATE VISIBILITY FIX: ambient was fully unshadowed, so on
+    // ground-level plates (ambient-dominant) the cast shadow washed out. The
+    // shadow-viz proved the shadow TERM is correct on the plate, so soft-
+    // shadow the ambient at half strength (terrain uses 0.3+0.7*sun).
+    ambientALL *= (0.5 + 0.5 * arpbrShadowTerm) ;
+    // 2026-09-11 SHADOW-SIDE FILL: diffcolor * sun * strength, only on
+    // faces pointing AWAY from the sun (saturate(-sun_tilt)), already
+    // shadow-attenuated via SUNcolor (arpbrShadowTerm applied above).
+    // NOTE: deliberately NOT multiplied by arpbrShadowTerm - the shadow
+    // term is 0 exactly on these self-shadowed back walls; gating the
+    // bounce by it zeroed the fill AGAIN (second time this pattern bit).
+    ambientALL += diffcolor * SUNcolorFill * shadowFillStrength * saturate(-sun_tilt) ;
     //cubic hermit is in helper function, open when no dither
     //};
 
