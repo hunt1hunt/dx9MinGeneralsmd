@@ -1621,7 +1621,27 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 				// onto the world-anchored texel lattice (the ortho rotation depends
 				// only on sunDir/up, so the lattice is fixed in world space) - the
 				// window then moves in whole-texel steps and shadow edges stay put.
-				Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
+				// 2026-09-11 LOOK-AT CLAMP (NordLicht opt #6): a near-horizon or
+				// past-map-edge look-at point drags the shadow window far from
+				// the camera. Clamp the center to the 45-degree downward ray:
+				// horizontal distance from the camera <= camera height (floor
+				// 300 so a low camera keeps a usable window).
+				Vector3 centerClamped(shadowCenter.X, shadowCenter.Y, 0.0f);
+				{
+					D3DXMATRIX invView;
+					float detV;
+					D3DXMatrixInverse(&invView, &detV, (const D3DXMATRIX*)&camView);
+					float camEx = invView._41, camEy = invView._42, camEz = invView._43;
+					float dxc = shadowCenter.X - camEx;
+					float dyc = shadowCenter.Y - camEy;
+					float distC = sqrtf(dxc * dxc + dyc * dyc);
+					float maxDistC = (camEz > 300.0f) ? camEz : 300.0f;
+					if (distC > maxDistC && distC > 0.001f) {
+						float scC = maxDistC / distC;
+						centerClamped.Set(camEx + dxc * scC, camEy + dyc * scC, 0.0f);
+					}
+				}
+				Vector3 target(centerClamped.X, centerClamped.Y, 0.0f);	// camera look-at, ground plane
 				float winSize = 800.0f;
 				float mapSpan = 0.0f;
 				if (TheTerrainRenderObject) {
@@ -1693,7 +1713,12 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
-	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, 1.0f, winSize * 1.2f + 1000.0f);
+	// 2026-09-11 DEPTH RANGE TIGHTEN (NordLicht opt #5): geometry only spans
+	// [~0.25W, ~1.25W] along the light axis from the eye at 0.75W; the old
+	// near=1/far=1.2W+1000 wasted most of the depth range. Tightening buys
+	// ~2.3x depth precision at the 800-unit window (1960 -> 880 span), which
+	// shrinks the world-space size of the NDC depth bias (less peter-panning).
+	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, spanEff * 0.2f, spanEff * 1.3f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
