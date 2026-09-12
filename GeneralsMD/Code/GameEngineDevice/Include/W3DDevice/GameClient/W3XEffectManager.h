@@ -70,6 +70,10 @@ void W3XRegisterPointLight(void *owner, int submesh, const float pos[3],
 void W3XUnregisterPointLights(void *owner);
 int W3XGetForwardPointLightCount(void);
 const W3XForwardPointLight *W3XGetForwardPointLights(void);
+// Select the (up to 8) lights nearest to camPos, nearest first. Both light
+// consumers (W3X effects and the terrain shader) call this so a busy base
+// with many lamp lights cannot crowd out nearer, brighter ones.
+int W3XSelectPointLights(const float camPos[3], W3XForwardPointLight out[8]);
 
 // ----------------------------------------------------------------------------
 // W3XEffectManager: singleton that caches D3DXEffect objects and auto-binds

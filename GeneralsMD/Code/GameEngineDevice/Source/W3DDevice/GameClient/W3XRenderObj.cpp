@@ -260,6 +260,8 @@ void W3XRenderObjClass::AddSubMesh(IDirect3DVertexBuffer9 *vb, IDirect3DIndexBuf
 	sm.hasTangents = false;
 	sm.hasBinormals = false;
 	sm.softBinding = softBinding;
+	sm.lampCenter[0] = sm.lampCenter[1] = sm.lampCenter[2] = 0.0f;
+	sm.lampCenterValid = false;
 	m_meshes.push_back(sm);
 	m_valid = true;
 }
@@ -1699,6 +1701,9 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		if (!inShadowPass
 			&& sm.name.str() && strstr(sm.name.str(), ".FX_LIGHT") != NULL) {
 			float lightPos[3] = { world[3].X, world[3].Y, world[3].Z };
+			lightPos[2] += 18.0f;	// 2026-09-12 ②B: lift ground-origin markers
+									// to lamp height so walls light evenly and
+									// the ground pool reads as a raised source.
 			float lightCol[3] = { 1.0f, 0.82f, 0.55f };	// warm default
 			float range = 220.0f, hdr = 2.5f;
 			int colN = 0;
@@ -1720,6 +1725,62 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			float colFinal[3] = { lightCol[0] * hdr, lightCol[1] * hdr, lightCol[2] * hdr };
 			W3XRegisterPointLight((void*)this, (int)si, lightPos, colFinal, range * 0.25f, range);
 			continue;	// never draw the marker volume
+		}
+
+		// 2026-09-12 ②B: each exterior SKIN_LIGHT lamp quad ALSO registers its
+		// own small point light AT THE LAMP (mesh centroid - lamp meshes are
+		// rigid bone-0, so the model-space vertex average IS the lamp
+		// position). Small radius = a light pool under each exterior lamp.
+		// The lamp itself still renders below (w3x_lights additive quad) -
+		// this branch never skips the draw.
+		if (!inShadowPass
+			&& sm.name.str() && strstr(sm.name.str(), ".SKIN_LIGHT") != NULL) {
+			if (!sm.lampCenterValid && sm.vb) {
+				void *lptr = NULL;
+				if (SUCCEEDED(sm.vb->Lock(0, 0, &lptr, D3DLOCK_READONLY))) {
+					const int lstride = sm.softBinding ? (int)sizeof(W3XSoftVertex) : 76;
+					float lsx = 0.0f, lsy = 0.0f, lsz = 0.0f;
+					int lsn = 0;
+					const float *lf = (const float *)lptr;
+					for (int lvi = 0; lvi < sm.vertexCount && lsn < 256; lvi++, lsn++) {
+						const float *lv = lf + lvi * (lstride / 4);
+						lsx += lv[0]; lsy += lv[1]; lsz += lv[2];
+					}
+					if (lsn > 0) {
+						sm.lampCenter[0] = lsx / lsn;
+						sm.lampCenter[1] = lsy / lsn;
+						sm.lampCenter[2] = lsz / lsn;
+						sm.lampCenterValid = true;
+					}
+					sm.vb->Unlock();
+				}
+			}
+			if (sm.lampCenterValid) {
+				// model-space centroid -> world (same row-vector math the FX
+				// applies with World: mul(float4(p,1), World))
+				D3DXMATRIX mLW;
+				memcpy(&mLW, &world, sizeof(D3DXMATRIX));
+				float lp[3] = {
+					sm.lampCenter[0]*mLW._11 + sm.lampCenter[1]*mLW._21 + sm.lampCenter[2]*mLW._31 + mLW._41,
+					sm.lampCenter[0]*mLW._12 + sm.lampCenter[1]*mLW._22 + sm.lampCenter[2]*mLW._32 + mLW._42,
+					sm.lampCenter[0]*mLW._13 + sm.lampCenter[1]*mLW._23 + sm.lampCenter[2]*mLW._33 + mLW._43
+				};
+				float lc[3] = { 1.0f, 0.82f, 0.55f };
+				float lhdr = 2.5f;
+				int lcolN = 0;
+				for (size_t lci = 0; lci < sm.constants.size(); lci++) {
+					const W3XShaderConstant &lcst = sm.constants[lci];
+					if (lcst.type == W3X_CONSTANT_FLOAT) {
+						if (lcst.name.compare("EmissiveHDRMultipler") == 0) lhdr = lcst.floatValue;
+						else if (lcst.name.compare("ColorEmissive") == 0 && lcolN < 3) lc[lcolN++] = lcst.floatValue;
+					} else if (lcst.type == W3X_CONSTANT_VECTOR && lcst.name.compare("ColorEmissive") == 0) {
+						for (int lk = 0; lk < 3 && lk < lcst.vecSize; lk++) lc[lk] = lcst.vecValue[lk];
+						lcolN = 3;
+					}
+				}
+				float lcf[3] = { lc[0] * lhdr, lc[1] * lhdr, lc[2] * lhdr };
+				W3XRegisterPointLight((void*)this, (int)si, lp, lcf, 70.0f * 0.25f, 70.0f);
+			}
 		}
 
 		// Shadow-map (CAST) pass: skip the genuinely-transparent meshes, matching

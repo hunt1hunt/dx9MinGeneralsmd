@@ -63,6 +63,7 @@
 #include "Common/FileSystem.h"
 #include <vector>
 #include "W3DDevice/GameClient/W3DShaderManager.h"
+#include "W3DDevice/GameClient/W3XEffectManager.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
@@ -2106,6 +2107,42 @@ static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppSh
 	return hr;
 }
 
+// 2026-09-12 ②B: terrain forward point lights. Prepended to every terrain
+// PBR PS variant; fed from the same W3X registry the object PBR shaders use
+// (TerrainShaderPBR::set uploads c13-c29). World position arrives per-pixel
+// via TEXCOORD6 (TSS stage 6 = camera-space position x inverse view), which
+// the TBN derivative math has consumed all along. SM2-SAFE by construction:
+// fully unrolled, zero control flow - each slot masked by step(count). The
+// light vector is normalized properly (the PLL lesson from PS_H_ARPBR).
+static const char* TERRAIN_POINTLIGHT_HLSL =
+	"float4 plPosR[8] : register(c13);\n"
+	"float4 plColI[8] : register(c21);\n"
+	"float4 plCount4 : register(c29);\n"
+	"float3 terrainPointLight(float3 wp, float3 N, float3 albedo, float4 posR, float4 colI)\n"
+	"{\n"
+	"    float outer = posR.w;\n"
+	"    float3 L = posR.xyz - wp;\n"
+	"    float dist = length(L);\n"
+	"    float nd = dist / max(outer, 0.001);\n"
+	"    float inR = saturate(1.0 - nd);\n"
+	"    float core = clamp(colI.w / max(outer, 0.001), 0.125, 0.5);\n"
+	"    float fall = saturate(core / max(nd, 0.01) - core * nd);\n"
+	"    float ndl = saturate(dot(N, L / max(dist, 0.001)));\n"
+	"    return albedo * colI.rgb * (ndl * fall * inR);\n"
+	"}\n"
+	"float3 terrainPointLights(float3 wp, float3 N, float3 albedo)\n"
+	"{\n"
+	"    float3 acc = terrainPointLight(wp, N, albedo, plPosR[0], plColI[0]) * step(0.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[1], plColI[1]) * step(1.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[2], plColI[2]) * step(2.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[3], plColI[3]) * step(3.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[4], plColI[4]) * step(4.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[5], plColI[5]) * step(5.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[6], plColI[6]) * step(6.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, plPosR[7], plColI[7]) * step(7.5, plCount4.x);\n"
+	"    return acc;\n"
+	"}\n";
+
 Int TerrainShaderPBR::init( void )
 {
 	D3DCAPS8 caps;
@@ -2257,11 +2294,12 @@ Int TerrainShaderPBR::init( void )
 			"    float3 result = terrainColor * (0.4 + 0.6 * NdotL);\n"
 			"    result += sunColor * specular * 0.25;\n"
 			"    result *= terrainShadow(shadowUVZ);\n"
+			"    result += terrainPointLights(worldPos, N, terrainColor);\n"
 			"    return float4(result, base0.a);\n"
 			"}\n";
 		// 2026-09-08: ps_3_0 REQUIRED for the shadow-map sample (the s7/ps_2_a
 		// combination read 0 - viz mode 22 proved all-black terrain).
-		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "terrain_pbr_nm")))
+		if (FAILED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader, "terrain_pbr_nm")))
 			return terrainShaderPixelShader.init();
 	}
 
@@ -2377,9 +2415,10 @@ Int TerrainShaderPBR::init( void )
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
+			"    lit += terrainPointLights(worldPos, N, terrainColor);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
-		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
+		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
 		}
@@ -2473,9 +2512,10 @@ Int TerrainShaderPBR::init( void )
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
+			"    lit += terrainPointLights(worldPos, N, terrainColor);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
-		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
+		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
 		}
@@ -2571,9 +2611,10 @@ Int TerrainShaderPBR::init( void )
 			"    lit += sunColor * specular * 0.25;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
+			"    lit += terrainPointLights(worldPos, N, terrainColor);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
-		if (SUCCEEDED(compilePBRShader(src, &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
+		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
 		}
@@ -2907,6 +2948,35 @@ Int TerrainShaderPBR::set(Int pass)
 			// garbage and blackened PBR geometry when receive was off.
 			float sdbgT[4] = { TheGlobalData ? (float)TheGlobalData->m_pbrDebugMode : 0.0f, 0.0f, 0.0f, 0.0f };
 			DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(8, sdbgT, 1);
+			// 2026-09-12 ②B: forward point lights - the same W3X registry the
+			// object PBR shaders feed from. c13-c20 = pos.xyz+outerRange,
+			// c21-c28 = color.rgb+innerRange, c29.x = count. Terrain renders
+			// BEFORE the W3X objects in the forward pass, so this reads the
+			// previous frame's registrations (buildings are static - exact).
+			// Camera position = the true inverse-view translation row (invT,
+			// uploaded as c9-c12) - cam-space origin mapped to world.
+			{
+				float plPosR[8][4], plColI[8][4];
+				for (int pi = 0; pi < 8; pi++) {
+					for (int pk = 0; pk < 4; pk++) { plPosR[pi][pk] = 0.0f; plColI[pi][pk] = 0.0f; }
+				}
+				float plCam[3];
+				{
+					D3DXMATRIX invT2;
+					D3DXMatrixTranspose(&invT2, &inv);
+					plCam[0] = invT2._41; plCam[1] = invT2._42; plCam[2] = invT2._43;
+				}
+				W3XForwardPointLight plSel[8];
+				int pln = W3XSelectPointLights(plCam, plSel);
+				for (int pj = 0; pj < pln; pj++) {
+					plPosR[pj][0] = plSel[pj].x; plPosR[pj][1] = plSel[pj].y; plPosR[pj][2] = plSel[pj].z; plPosR[pj][3] = plSel[pj].outerRadius;
+					plColI[pj][0] = plSel[pj].r;  plColI[pj][1] = plSel[pj].g;  plColI[pj][2] = plSel[pj].b;  plColI[pj][3] = plSel[pj].innerRadius;
+				}
+				float plCnt[4] = { (float)pln, 0.0f, 0.0f, 0.0f };
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(13, (const float*)plPosR, 8);
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(21, (const float*)plColI, 8);
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(29, plCnt, 1);
+			}
 		}
 
 
@@ -6874,6 +6944,7 @@ void FlatTerrainShaderPixelShader::reset(void)
 
 	DX8Wrapper::Invalidate_Cached_Render_States();
 }
+
 
 
 
