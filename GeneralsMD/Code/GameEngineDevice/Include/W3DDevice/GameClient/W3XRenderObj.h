@@ -300,6 +300,11 @@ private:
 		// Authoring sub-mesh render name (e.g. "...SKIN_G01"). Used by the cast
 		// pass to recognize grille/lattice meshes via the SKIN_G* prefix.
 		AsciiString name;
+		// 2026-09-12 ②B: SKIN_LIGHT lamp quads register a small point light at
+		// their mesh centroid (lamp meshes are rigid bone-0, so the model-space
+		// vertex average IS the lamp position). Cached once from the VB.
+		float lampCenter[3];
+		bool lampCenterValid;
 	};
 
 	enum { kMaxBones = 64 };	// must match BindW3XBones' 64-bone array

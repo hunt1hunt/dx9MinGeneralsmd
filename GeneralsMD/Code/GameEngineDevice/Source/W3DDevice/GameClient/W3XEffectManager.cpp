@@ -229,6 +229,36 @@ const W3XForwardPointLight *W3XGetForwardPointLights(void)
 	return s_plights;
 }
 
+int W3XSelectPointLights(const float camPos[3], W3XForwardPointLight out[8])
+{
+	// Selection sort by squared distance (registry is tiny - 32 max).
+	int n = s_plightCount;
+	if (n > 8) {
+		// build an index list sorted nearest-first, take the first 8
+		int idx[W3X_PLIGHT_REG_MAX];
+		float d2[W3X_PLIGHT_REG_MAX];
+		for (int i = 0; i < n; i++) {
+			float dx = s_plights[i].x - camPos[0];
+			float dy = s_plights[i].y - camPos[1];
+			float dz = s_plights[i].z - camPos[2];
+			d2[i] = dx * dx + dy * dy + dz * dz;
+			idx[i] = i;
+		}
+		for (int a = 0; a < 8; a++) {
+			int best = a;
+			for (int b = a + 1; b < n; b++) {
+				if (d2[idx[b]] < d2[idx[best]]) best = b;
+			}
+			int t = idx[a]; idx[a] = idx[best]; idx[best] = t;
+		}
+		for (int c = 0; c < 8; c++) out[c] = s_plights[idx[c]];
+		n = 8;
+	} else {
+		for (int i = 0; i < n; i++) out[i] = s_plights[i];
+	}
+	return n;
+}
+
 
 //=============================================================================
 // Camera matrix helpers
@@ -932,9 +962,13 @@ bool W3XEffectManager::BindParameter(ID3DXEffect *effect,
 				case 22: // PointLight struct array (head0-COMMON c89) - feed the
 					// registered forward lights element-by-element (old D3DX has
 					// no bulk struct-array setter; GetParameterElement + member
-					// SetVector is the documented route).
+					// SetVector is the documented route). Nearest-8 selection:
+					// a lamp-lit base has more than 8 lights registered.
 				{
-					int n = s_plightCount < 8 ? s_plightCount : 8;
+					W3XForwardPointLight sel[8];
+					Vector3 camP = rinfo.Camera.Get_Position();
+					float camF[3] = { camP.X, camP.Y, camP.Z };
+					int n = W3XSelectPointLights(camF, sel);
 					if (n > 0) {
 						D3DXHANDLE hArr = effect->GetParameterByName(NULL, "PointLight");
 						if (hArr) {
@@ -945,7 +979,7 @@ bool W3XEffectManager::BindParameter(ID3DXEffect *effect,
 								D3DXHANDLE hCol = effect->GetParameterByName(hElem, "Color");
 								D3DXHANDLE hRng = effect->GetParameterByName(hElem, "Range_Inner_Outer");
 								if (!hPos || !hCol || !hRng) break;
-								const W3XForwardPointLight &L = s_plights[i];
+								const W3XForwardPointLight &L = sel[i];
 								D3DXVECTOR4 vPos(L.x, L.y, L.z, 1.0f);
 								D3DXVECTOR4 vCol(L.r, L.g, L.b, 1.0f);
 								D3DXVECTOR4 vRng(L.innerRadius, L.outerRadius, 0.0f, 1.0f);
