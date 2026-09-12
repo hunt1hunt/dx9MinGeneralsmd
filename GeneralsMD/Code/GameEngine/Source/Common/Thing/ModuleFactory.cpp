@@ -131,6 +131,7 @@
 #include "GameLogic/Module/JetAIUpdate.h"
 #include "GameLogic/Module/LaserUpdate.h"
 #include "GameLogic/Module/PointDefenseLaserUpdate.h"
+#include "GameLogic/Module/WeaponFireLaserUpdate.h"
 #include "GameLogic/Module/CleanupHazardUpdate.h"
 #include "GameLogic/Module/AutoFindHealingUpdate.h"
 #include "GameLogic/Module/CommandButtonHuntUpdate.h"
@@ -425,6 +426,7 @@ void ModuleFactory::init( void )
 	addModule( FirestormDynamicGeometryInfoUpdate );
 	addModule( LaserUpdate );
 	addModule( PointDefenseLaserUpdate );
+	addModule( WeaponFireLaserUpdate );
 	addModule( CleanupHazardUpdate );
 	addModule( CommandButtonHuntUpdate );
 	addModule( PilotFindVehicleUpdate );

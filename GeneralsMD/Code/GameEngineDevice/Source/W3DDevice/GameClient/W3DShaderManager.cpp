@@ -2324,6 +2324,59 @@ Int TerrainShaderPBR::init( void )
 		}
 	}
 
+	// 2026-09-12 ④ STARRY LASER: SegLineRenderer override pair. A laser line
+	// whose TEXTURE NAME contains "starry" (INI: Texture = FXstarrysky256quad)
+	// draws with this ps_2_a PS plus the starfield on s1. Screen-space coords
+	// arrive as TEXCOORD1 from a stage-1 TSS camera-space-position x PROJECTION
+	// transform (set per-draw in SegLineRendererClass::Render); c0 = viewport
+	// pixels per 256px star tile. ps_2_a deliberately - VPOS would force
+	// ps_3_0, which D3D9 forbids pairing with fixed-function FVF vertices.
+	{
+		extern IDirect3DPixelShader9 *g_segLineStarryPS;
+		extern IDirect3DBaseTexture9 *g_segLineStarrySky;
+		extern IDirect3DBaseTexture9 *g_segLineStarryCore;
+		const char* slSrc =
+			"sampler s1 : register(s1);\n"	// screen-space starfield
+			"sampler s2 : register(s2);\n"	// EXLaser beam-core gradient
+			"float4 tileScale : register(c0);\n"
+			"float4 main(float2 uv0 : TEXCOORD0, float4 t1 : TEXCOORD1, float4 col : COLOR0) : COLOR\n"
+			"{\n"
+			"    float4 core = tex2D(s2, uv0);\n"
+			"    float2 suv = (t1.xy * float2(0.5, -0.5) + 0.5) * tileScale.xy;\n"
+			"    float4 stars = tex2D(s1, suv);\n"
+			"    float a = core.a * col.a;\n"
+			"    float3 rgb = core.rgb * col.rgb * 2.0;\n"						// warm INI-colored beam core
+			"    rgb += stars.rgb * stars.a * 2.5 * (0.35 + 0.65 * a);\n"	// strong screen-locked sparkle
+			"    rgb += stars.rgb * 0.15;\n"													// ambient star wash
+			"    return float4(rgb, 1.0);\n"													// additive, no gamma crush
+			"}\n";
+		IDirect3DPixelShader9 *slPS = NULL;
+		if (SUCCEEDED(compilePBRShader(slSrc, &slPS, "starry_laser", "ps_2_a")) && slPS) {
+			if (g_segLineStarryPS) g_segLineStarryPS->Release();
+			g_segLineStarryPS = slPS;
+		}
+		// Starfield texture: loose FXstarrysky256quad.dds (game root wins over
+		// big files). The TextureClass wrapper is intentionally kept alive by
+		// the global (device object must outlive every draw).
+		TextureClass *skyTex = WW3DAssetManager::Get_Instance()->Get_Texture("FXstarrysky256quad.dds");
+		if (skyTex) {
+			if (!skyTex->Is_Initialized()) skyTex->Init();
+			IDirect3DBaseTexture9 *sky9 = static_cast<IDirect3DBaseTexture9*>(skyTex->Peek_D3D_Texture());
+			if (sky9) g_segLineStarrySky = sky9;
+		} else {
+			DEBUG_LOG(("STARRY_LASER: FXstarrysky256quad.dds not found - starry lines disabled\n"));
+		}
+		// Beam core: the VANILLA laser gradient (big-file EXLaser.tga) - the
+		// line's own s0 texture is only the name-tag/UV provider, its starfield
+		// content is mostly black and would crush the beam to nothing.
+		TextureClass *coreTex = WW3DAssetManager::Get_Instance()->Get_Texture("EXLaser.tga");
+		if (coreTex) {
+			if (!coreTex->Is_Initialized()) coreTex->Init();
+			IDirect3DBaseTexture9 *core9 = static_cast<IDirect3DBaseTexture9*>(coreTex->Peek_D3D_Texture());
+			if (core9) g_segLineStarryCore = core9;
+		}
+	}
+
 	W3DShaders[W3DShaderManager::ST_TERRAIN_PBR] = &terrainShaderPBR;
 	W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR] = 1;
 

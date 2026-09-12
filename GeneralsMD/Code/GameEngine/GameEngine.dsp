@@ -1838,6 +1838,10 @@ SOURCE=.\Source\GameLogic\Object\Update\LaserUpdate.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\Source\GameLogic\Object\Update\WeaponFireLaserUpdate.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\Source\GameClient\Drawable\Update\SwayClientUpdate.cpp
 # End Source File
 # End Group
@@ -3238,6 +3242,10 @@ SOURCE=.\Include\GameLogic\Module\AssaultTransportAIUpdate.h
 # Begin Source File
 
 SOURCE=.\Include\GameLogic\Module\AssistedTargetingUpdate.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\GameLogic\Module\WeaponFireLaserUpdate.h
 # End Source File
 # Begin Source File
 

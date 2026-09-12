@@ -48,6 +48,18 @@
 #include "v3_rnd.h"
 #include "meshgeometry.h"
 
+// 2026-09-12 ④ STARRY LASER: game-layer override pair. W3DShaderManager
+// (GameEngineDevice) compiles the pixel shader and loads the starfield
+// texture into these; any line whose TEXTURE NAME contains "starry" then
+// draws with them - the screen-space starfield arrives as ps TEXCOORD1 via
+// a TSS stage-1 camera-space-position x PROJECTION transform (|PROJECTED),
+// the same fixed-pipeline trick the terrain shadow receive uses for stage 7.
+// ps_2_a keeps the fixed-function vertex pipeline pairing legal (VPOS would
+// need ps_3_0, which D3D9 forbids mixing with FVF vertices).
+IDirect3DPixelShader9 *g_segLineStarryPS = NULL;
+IDirect3DBaseTexture9 *g_segLineStarrySky = NULL;
+IDirect3DBaseTexture9 *g_segLineStarryCore = NULL;	// EXLaser beam-core gradient (s2)
+
 
 /* We have chunking logic which handles N segments at a time. To simplify the subdivision logic,
 ** we will ensure that N is a power of two and that N >= 2^MAX_SEGLINE_SUBDIV_LEVELS, so that the
@@ -246,6 +258,11 @@ void SegLineRendererClass::Render
 
 	// Used later
 	TextureMapMode map_mode = Get_Texture_Mapping_Mode();
+
+	// ④ STARRY LASER: computed once for the whole line (the chunk loop and
+	// the post-loop state restore both need it).
+	bool starry = (g_segLineStarryPS != NULL) && (Texture != NULL)
+		&& (strstr(Texture->Get_Texture_Name().Peek_Buffer(), "starry") != NULL);
 
 	/*
 	** Process line geometry:
@@ -1108,7 +1125,10 @@ void SegLineRendererClass::Render
 		bool rgba_all=(rgba==0xFFFFFFFF);
 
 		// Enable sorting if sorting has not been disabled and line is translucent and alpha testing is not enabled.
-		bool sorting = (!Is_Sorting_Disabled()) && (Shader.Get_Dst_Blend_Func() != ShaderClass::DSTBLEND_ZERO && Shader.Get_Alpha_Test() == ShaderClass::ALPHATEST_DISABLE);
+		// ④ STARRY LASER: starry lines draw immediately instead - the sorting
+		// queue snapshots FF state and cannot carry a raw pixel shader, while
+		// additive beams are order-independent anyway.
+		bool sorting = !starry && (!Is_Sorting_Disabled()) && (Shader.Get_Dst_Blend_Func() != ShaderClass::DSTBLEND_ZERO && Shader.Get_Alpha_Test() == ShaderClass::ALPHATEST_DISABLE);
 
 		ShaderClass shader = Shader;
 		shader.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);
@@ -1185,12 +1205,34 @@ void SegLineRendererClass::Render
 		}
 		
 		DX8Wrapper::Set_Index_Buffer(ib_access,0);
-		DX8Wrapper::Set_Vertex_Buffer(Verts);				
-		DX8Wrapper::Set_Material(mat);		
+		DX8Wrapper::Set_Vertex_Buffer(Verts);
+		DX8Wrapper::Set_Material(mat);
 		DX8Wrapper::Set_Texture(0,Texture);
 		DX8Wrapper::Set_Shader(shader);
 
-		if (sorting) {	
+		// ④ STARRY LASER: bind the override pair + the stage-1 projected
+		// transform that feeds the PS its screen-space coordinate. All raw
+		// device calls (wrapper asserts on D3DTS_TEXTURE transforms).
+		if (starry) {
+			IDirect3DDevice8 *dv8 = DX8Wrapper::_Get_D3D_Device8();
+			if (dv8) {
+				IDirect3DDevice9 *dv9 = static_cast<IDirect3DDevice9*>(dv8);
+				Matrix4x4 projM;
+				DX8Wrapper::Get_Transform(D3DTS_PROJECTION, projM);
+				dv9->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+				dv9->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT4 | D3DTTFF_PROJECTED);
+				dv9->SetTransform(D3DTS_TEXTURE1, (D3DMATRIX*)&projM);
+				dv9->SetTexture(1, g_segLineStarrySky);
+				dv9->SetTexture(2, g_segLineStarryCore);
+				D3DVIEWPORT9 vp9;
+				dv9->GetViewport(&vp9);
+				float tileC[4] = { vp9.Width / 256.0f, vp9.Height / 256.0f, 1.0f, 1.0f };
+				dv9->SetPixelShaderConstantF(0, tileC, 1);
+				dv9->SetPixelShader(g_segLineStarryPS);
+			}
+		}
+
+		if (sorting) {
 			SortingRendererClass::Insert_Triangles(obj_sphere,0,tidx,0,vnum);
 		} else {
 			DX8Wrapper::Draw_Triangles(0,tidx,0,vnum);
@@ -1199,6 +1241,20 @@ void SegLineRendererClass::Render
 		REF_PTR_RELEASE(mat);
 
 	}	// Chunking loop
+
+	// ④ STARRY LASER: release the override state so nothing leaks to the
+	// next draw (the PS, stage-1 texture + transform, c0).
+	if (starry) {
+		IDirect3DDevice8 *dv8 = DX8Wrapper::_Get_D3D_Device8();
+		if (dv8) {
+			IDirect3DDevice9 *dv9 = static_cast<IDirect3DDevice9*>(dv8);
+			dv9->SetPixelShader(NULL);
+			dv9->SetTexture(1, NULL);
+			dv9->SetTexture(2, NULL);
+			dv9->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 1);
+			dv9->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+		}
+	}
 
 	DX8Wrapper::Set_Transform(D3DTS_VIEW,view);
 
