@@ -409,10 +409,16 @@ ID3DXEffect *W3XEffectManager::GetEffect(const char *fxPath)
 	IDirect3DDevice9 *dev9 = static_cast<IDirect3DDevice9*>(dev8);
 
 	// Create the effect from memory.
-	// NOTE: this D3DX9 build does NOT support the SAS flag (D3DXSHADER_USE_SAS,
-	// 0x40000000) — it fails with X3116 "Flags parameter is invalid". So the
-	// RA3 shaders' VS_H_Array[VSchooserExpr()] dynamic VS selection cannot be
-	// used; the model must use a technique that compiles the VS directly.
+	// SAS CLARIFICATION (2026-09-12 re-verification): SAS ANNOTATIONS
+	// (SasBindAddress / unmanaged) compile fine under stock fxc/D3DX9 and are
+	// readable at runtime via ID3DXBaseEffect::GetAnnotation/GetString — an
+	// annotation-driven binding layer IS implementable here. The earlier "no
+	// SAS" note mistook a self-invented 0x40000000 D3DXCreateEffect flag for a
+	// SAS feature (public D3DX9 has no such flag, hence X3116). What stock
+	// D3DX9 genuinely lacks is SAGE's ARRAY-EXPRESSION technique states
+	// (VS_H_Array[VSchooserExpr()], ExpressionEvaluator) — that is why the
+	// w3x_*.fx wrappers compile their VS directly instead of using the RA3
+	// array selectors.
 	ID3DXEffect *effect = NULL;
 	ID3DXBuffer *errors = NULL;
 	// Custom include handler: resolves the RA3 shaders' mixed include paths
