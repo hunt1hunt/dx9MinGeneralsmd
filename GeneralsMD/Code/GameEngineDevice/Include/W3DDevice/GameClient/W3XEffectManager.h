@@ -50,6 +50,28 @@ struct ID3DXEffect;
 class RenderInfoClass;
 
 // ----------------------------------------------------------------------------
+// Forward point-light registry (feeds the RA3 PointLight[8] loop in PS_H_ARPBR).
+// A .FX_LIGHT marker sub-mesh registers its light each frame it is visited;
+// BindEngineConstants feeds up to 8 lights to every W3X effect, waking the
+// dormant point-light BRDF loop (walls / baseplates / nearby units get lit).
+// ----------------------------------------------------------------------------
+struct W3XForwardPointLight
+{
+	void *owner;			// registering render object (unregister key)
+	int submesh;			// sub-mesh index (identity within the owner)
+	float x, y, z;			// world-space light center
+	float r, g, b;			// linear light color (HDR already applied)
+	float innerRadius;		// core start (Range_Inner_Outer.x)
+	float outerRadius;		// full range (Range_Inner_Outer.y)
+};
+
+void W3XRegisterPointLight(void *owner, int submesh, const float pos[3],
+	const float color[3], float innerRadius, float outerRadius);
+void W3XUnregisterPointLights(void *owner);
+int W3XGetForwardPointLightCount(void);
+const W3XForwardPointLight *W3XGetForwardPointLights(void);
+
+// ----------------------------------------------------------------------------
 // W3XEffectManager: singleton that caches D3DXEffect objects and auto-binds
 // engine global uniforms by parameter name.
 //

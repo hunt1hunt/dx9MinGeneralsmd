@@ -418,7 +418,13 @@ float4 PS_H_ARPBR (PS_H_input i) : COLOR
       float3 PLrelative = PLpos / PLrangeMAX ;
       float  PLdist = length(PLrelative) ;
       if(PLdist > 1) {continue;};
-      float3 PLL = PLpos / PLdist ; //normalized light vector
+      // 2026-09-12 SCALING FIX: RA3's original `PLpos / PLdist` divides the
+      // WORLD-SPACE offset by the NORMALIZED distance - the "unit" light
+      // vector came out with magnitude = rangeMAX (280 here), so PLtilt ran
+      // to +-280 and nuked every surface inside the radius (fence whiteout,
+      // buildings clamped blue-black, shadows washed out). Divide the
+      // NORMALIZED PLrelative instead: a true unit vector, PLtilt in [-1,1].
+      float3 PLL = PLrelative / PLdist ; //normalized light vector
       float  PLtilt = dot(PLL, N) ;
       if(PLtilt < 0) {PLcolor = 0 ;}; //排除背光面
 

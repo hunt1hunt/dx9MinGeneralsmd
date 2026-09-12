@@ -45,6 +45,7 @@
 
 #include "always.h"
 #include "W3DDevice/GameClient/W3XEffectManager.h"
+#include "W3DDevice/GameClient/W3DDeferredRenderer.h"
 #include "Common/GlobalData.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/rinfo.h"
@@ -158,10 +159,75 @@ static const EngineConstantBinding s_bindings[] =
 	{ "OpacityOverride",	17 },
 	// RecolorColor (group 18) - faction color, default white
 	{ "RecolorColor",		18 },
-	// NumPointLights (group 19) - 0 disables point light loop
+	// NumPointLights (group 19) - wakes the PS_H_ARPBR PointLight loop
 	{ "NumPointLights",		19 },
+	// PointLight struct array (group 22) - feeds the registered forward lights
+	{ "PointLight",			22 },
+	// DepthTexture (group 20) - deferred G-Buffer rt2 (NDC z in .r) for the
+	// w3x_pointlight.fx volume-sphere reconstruction
+	{ "DepthTexture",		20 },
+	// InvViewProj (group 21) - inverse view-projection for NDC->world
+	{ "InvViewProj",			21 },
 	{ NULL, 0 }	// terminator
 };
+
+
+//=============================================================================
+// Forward point-light registry.
+// .FX_LIGHT marker sub-meshes (CNPLIGHT on the China buildings) register a
+// light each frame; BindEngineConstants feeds up to 8 into every W3X effect's
+// PS_H_ARPBR point-light loop (PointLight[i] @ c89 + NumPointLights). This is
+// RA3's own forward point-light path - the dormant loop has shipped inside
+// PBR5-10-objects-ARPBR.FX since the RA3 shader port; only the feed was
+// missing (NumPointLights was hardcoded 0).
+//=============================================================================
+#define W3X_PLIGHT_REG_MAX 32
+static W3XForwardPointLight s_plights[W3X_PLIGHT_REG_MAX];
+static int s_plightCount = 0;
+
+void W3XRegisterPointLight(void *owner, int submesh, const float pos[3],
+	const float color[3], float innerRadius, float outerRadius)
+{
+	for (int i = 0; i < s_plightCount; i++) {
+		if (s_plights[i].owner == owner && s_plights[i].submesh == submesh) {
+			s_plights[i].x = pos[0]; s_plights[i].y = pos[1]; s_plights[i].z = pos[2];
+			s_plights[i].r = color[0]; s_plights[i].g = color[1]; s_plights[i].b = color[2];
+			s_plights[i].innerRadius = innerRadius;
+			s_plights[i].outerRadius = outerRadius;
+			return;
+		}
+	}
+	if (s_plightCount >= W3X_PLIGHT_REG_MAX) return;
+	W3XForwardPointLight &L = s_plights[s_plightCount++];
+	L.owner = owner;
+	L.submesh = submesh;
+	L.x = pos[0]; L.y = pos[1]; L.z = pos[2];
+	L.r = color[0]; L.g = color[1]; L.b = color[2];
+	L.innerRadius = innerRadius;
+	L.outerRadius = outerRadius;
+}
+
+void W3XUnregisterPointLights(void *owner)
+{
+	int w = 0;
+	for (int i = 0; i < s_plightCount; i++) {
+		if (s_plights[i].owner != owner) {
+			if (w != i) s_plights[w] = s_plights[i];
+			w++;
+		}
+	}
+	s_plightCount = w;
+}
+
+int W3XGetForwardPointLightCount(void)
+{
+	return s_plightCount;
+}
+
+const W3XForwardPointLight *W3XGetForwardPointLights(void)
+{
+	return s_plights;
+}
 
 
 //=============================================================================
@@ -855,9 +921,64 @@ bool W3XEffectManager::BindParameter(ID3DXEffect *effect,
 					return true;
 				}
 
-				case 19: // NumPointLights (int) - 0 disables point light loop
+				case 19: // NumPointLights (int) - wakes the PS_H_ARPBR PointLight
+					// loop: 0 keeps it compiled out (no registered lights - the
+					// pre-2026-09-12 behavior), >0 runs it over the fed lights.
 				{
-					effect->SetInt(param, 0);
+					effect->SetInt(param, s_plightCount < 8 ? s_plightCount : 8);
+					return true;
+				}
+
+				case 22: // PointLight struct array (head0-COMMON c89) - feed the
+					// registered forward lights element-by-element (old D3DX has
+					// no bulk struct-array setter; GetParameterElement + member
+					// SetVector is the documented route).
+				{
+					int n = s_plightCount < 8 ? s_plightCount : 8;
+					if (n > 0) {
+						D3DXHANDLE hArr = effect->GetParameterByName(NULL, "PointLight");
+						if (hArr) {
+							for (int i = 0; i < n; i++) {
+								D3DXHANDLE hElem = effect->GetParameterElement(hArr, (UINT)i);
+								if (!hElem) break;
+								D3DXHANDLE hPos = effect->GetParameterByName(hElem, "Position");
+								D3DXHANDLE hCol = effect->GetParameterByName(hElem, "Color");
+								D3DXHANDLE hRng = effect->GetParameterByName(hElem, "Range_Inner_Outer");
+								if (!hPos || !hCol || !hRng) break;
+								const W3XForwardPointLight &L = s_plights[i];
+								D3DXVECTOR4 vPos(L.x, L.y, L.z, 1.0f);
+								D3DXVECTOR4 vCol(L.r, L.g, L.b, 1.0f);
+								D3DXVECTOR4 vRng(L.innerRadius, L.outerRadius, 0.0f, 1.0f);
+								effect->SetVector(hPos, &vPos);
+								effect->SetVector(hCol, &vCol);
+								effect->SetVector(hRng, &vRng);
+							}
+						}
+					}
+					return true;
+				}
+				case 20: // DepthTexture - deferred G-Buffer rt2 (.r = NDC depth)
+				{
+					if (g_theW3DDeferredRenderer) {
+						TextureClass *rt2 = g_theW3DDeferredRenderer->getGBufferRT(2);
+						if (rt2 && rt2->Peek_D3D_Texture()) {
+							IDirect3DTexture9 *d3dt = static_cast<IDirect3DTexture9*>(rt2->Peek_D3D_Texture());
+							effect->SetTexture(param, d3dt);
+						}
+					}
+					return true;
+				}
+
+				case 21: // InvViewProj - NDC -> world for deferred reconstruction
+				{
+					Matrix4x4 view, proj;
+					GetCameraViewMatrix(view);
+					GetCameraProjectionMatrix(proj);
+					Matrix4x4 vp = Multiply(view, proj);
+					D3DXMATRIX invVP;
+					float detVP;
+					D3DXMatrixInverse(&invVP, &detVP, (const D3DXMATRIX*)&vp);
+					effect->SetMatrix(param, &invVP);
 					return true;
 				}
 			}
