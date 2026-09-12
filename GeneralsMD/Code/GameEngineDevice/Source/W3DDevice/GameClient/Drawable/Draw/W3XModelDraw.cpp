@@ -931,12 +931,23 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 		// alpha-cutout PBR (w3x_soviet.fx - their AlphaTestEnable=true clips
 		// the lattice gaps).
 		{
-			const char *meshVariant = W3XShaderVariant(sm.origShader.str());
-			if (meshVariant && strcmp(meshVariant, data.fxShaderName.str()) != 0) {
-				// Pass the .w3x <FXShader TechniqueIndex> so w3x_muzzle.fx picks the
-				// authored technique: rotor blades = 1 (Multiply), engine fans =
-				// 0 (Additive). The render object selects the technique by index.
-				robj->SetSubMeshShader((int)i, meshVariant, sm.techniqueIndex, sm.constants);
+			// 2026-09-12 BUILDING LIGHTS: SKIN_LIGHT* lamp quads are authored as
+			// RA3 additive emissive meshes (defaultw3d.fx + ColorEmissive x HDR
+			// multiplier + BlendMode=2) - the generic PBR remap below ignores all
+			// of that and renders them as dark opaque solids. Route them by NAME
+			// to the dedicated additive lamp shader. By name, not by shader:
+			// other defaultw3d.fx users (vehicle lasers/upgrade parts) must stay
+			// on the generic path.
+			if (strstr(sm.name.str(), ".SKIN_LIGHT") != NULL) {
+				robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_lights.fx", 0, sm.constants);
+			} else {
+				const char *meshVariant = W3XShaderVariant(sm.origShader.str());
+				if (meshVariant && strcmp(meshVariant, data.fxShaderName.str()) != 0) {
+					// Pass the .w3x <FXShader TechniqueIndex> so w3x_muzzle.fx picks the
+					// authored technique: rotor blades = 1 (Multiply), engine fans =
+					// 0 (Additive). The render object selects the technique by index.
+					robj->SetSubMeshShader((int)i, meshVariant, sm.techniqueIndex, sm.constants);
+				}
 			}
 		}
 		sm.vertexBuffer = NULL;

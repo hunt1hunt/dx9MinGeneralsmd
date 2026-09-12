@@ -1736,6 +1736,12 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				if (smeshName && strstr(smeshName, ".SKIN_G") != NULL) {
 					isTransparent = true;
 				}
+				// 2026-09-12 BUILDING LIGHTS: SKIN_LIGHT lamp quads are additive
+				// emissive meshes (w3x_lights.fx) - they must not write sun depth
+				// or they stamp black rectangles into the shadow map.
+				if (smeshName && strstr(smeshName, ".SKIN_LIGHT") != NULL) {
+					isTransparent = true;
+				}
 			}
 			// DIAG one-shot (first 12 sub-meshes, any object): dump each sub-mesh's
 			// name + origShader + skip state so we can CONFIRM the SKIN_G* grilles
