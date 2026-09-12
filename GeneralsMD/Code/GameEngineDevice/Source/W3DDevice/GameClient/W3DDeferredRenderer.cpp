@@ -1626,7 +1626,7 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 				// onto the world-anchored texel lattice (the ortho rotation depends
 				// only on sunDir/up, so the lattice is fixed in world space) - the
 				// window then moves in whole-texel steps and shadow edges stay put.
-				Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
+Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
 				float winSize = 800.0f;
 				float mapSpan = 0.0f;
 				if (TheTerrainRenderObject) {
@@ -1698,7 +1698,12 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 	D3DXMATRIX d3dV, d3dP;
 	D3DXMatrixLookAtLH(&d3dV,
 		(const D3DXVECTOR3*)&eye, (const D3DXVECTOR3*)&target, (const D3DXVECTOR3*)&up);
-	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, 1.0f, winSize * 1.2f + 1000.0f);
+	// DEPTH RANGE TIGHTEN (NordLicht opt #5, redo with corner margin): in-window
+	// casters span [0.25W, 1.25W] along the light axis, but corner casters (window
+	// diagonal) reach ~[0.1W, 1.4W]. near=0.15W / far=1.45W keeps them all while
+	// still halving the depth span at the 800 window (1960 -> 1040) = 1.9x depth
+	// precision; the NDC bias shrinks in world terms (less peter-panning).
+	D3DXMatrixOrthoLH(&d3dP, winSize, winSize, spanEff * 0.15f, spanEff * 1.45f);
 	D3DXMATRIX d3dVP = d3dV * d3dP;
 	m_shadowViewProj = *(Matrix4x4*)&d3dVP;
 	m_shadowView = *(Matrix4x4*)&d3dV;
