@@ -1626,8 +1626,59 @@ bool W3DDeferredRenderer::beginShadowMapPass(
 				// onto the world-anchored texel lattice (the ortho rotation depends
 				// only on sunDir/up, so the lattice is fixed in world space) - the
 				// window then moves in whole-texel steps and shadow edges stay put.
-Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
+				Vector3 target(shadowCenter.X, shadowCenter.Y, 0.0f);	// camera look-at, ground plane
+				// FRUSTUM-FIT WINDOW (NordLicht opt #3, redo with caster margin):
+				// size the shadow window to the VISIBLE ground area instead of a
+				// fixed 800. Margin 1.3 + floor 600 keep OFF-SCREEN tall casters
+				// resolvable - at 31-degree sun a just-offscreen building throws a
+				// 1.66x-height shadow INTO view; a tight fit would cut it.
 				float winSize = 800.0f;
+				{
+					D3DXMATRIX invViewF;
+					float detVF;
+					D3DXMatrixInverse(&invViewF, &detVF, (const D3DXMATRIX*)&camView);
+					float camFx = invViewF._41, camFy = invViewF._42, camFz = invViewF._43;
+					Matrix4x4 projF;
+					DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projF);
+					Matrix4x4 vpF = Multiply(camView, projF);
+					D3DXMATRIX invVPF;
+					float detVPF;
+					D3DXMatrixInverse(&invVPF, &detVPF, (const D3DXMATRIX*)&vpF);
+					if (detVPF != 0.0f && camFz > 1.0f) {
+						float loX = 1e9f, loY = 1e9f, hiX = -1e9f, hiY = -1e9f;
+						int hitsF = 0;
+						for (int cfy = -1; cfy <= 1; cfy += 2) {
+							for (int cfx = -1; cfx <= 1; cfx += 2) {
+								D3DXVECTOR4 corner(cfx, cfy, 1.0f, 1.0f);	// far-plane corner, row-vector math
+								D3DXVECTOR4 world;
+								D3DXVec4Transform(&world, &corner, &invVPF);
+								if (world.w == 0.0f) continue;
+								float wx = world.x / world.w, wy = world.y / world.w, wz = world.z / world.w;
+								float dx = wx - camFx, dy = wy - camFy, dz = wz - camFz;
+								if (dz < -1.0f) {
+									float t = -camFz / dz;	// ground z=0 intersection
+									if (t > 0.0f && t < 1.0f) {	// inside the rendered far plane
+										float gx = camFx + dx * t;
+										float gy = camFy + dy * t;
+										if (gx < loX) loX = gx;
+										if (gx > hiX) hiX = gx;
+										if (gy < loY) loY = gy;
+										if (gy > hiY) hiY = gy;
+										hitsF++;
+									}
+								}
+							}
+						}
+						if (hitsF >= 2) {
+							float spanF = hiX - loX;
+							if (hiY - loY > spanF) spanF = hiY - loY;
+							spanF *= 1.3f;	// off-screen caster margin (low sun throws long shadows)
+							if (spanF < 600.0f) spanF = 600.0f;
+							if (spanF > 1600.0f) spanF = 1600.0f;
+							winSize = spanF;
+						}
+					}
+				}
 				float mapSpan = 0.0f;
 				if (TheTerrainRenderObject) {
 					// Small-map fallback: a window fitted to the WHOLE map has both
