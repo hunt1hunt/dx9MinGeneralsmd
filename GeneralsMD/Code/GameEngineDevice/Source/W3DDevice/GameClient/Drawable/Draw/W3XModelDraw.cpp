@@ -21,6 +21,7 @@
 #define DEFINE_WEAPONSLOTTYPE_NAMES
 
 #include "always.h"
+#include <stdarg.h>
 #include "W3DDevice/GameClient/Module/W3XModelDraw.h"
 #include "W3DDevice/GameClient/W3XEffectManager.h"
 #include "W3DDevice/GameClient/W3XRenderObj.h"
@@ -28,6 +29,7 @@
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DShadow.h"
 #include "GameClient/Drawable.h"
+
 #include "GameClient/View.h"	// PICK_TYPE_SELECTABLE for ray-picking collision type
 #include "GameClient/Shadow.h"
 #include "GameClient/FXList.h"		// FXList::doFXPos for weapon fire placement
@@ -938,6 +940,9 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 			// to the dedicated additive lamp shader. By name, not by shader:
 			// other defaultw3d.fx users (vehicle lasers/upgrade parts) must stay
 			// on the generic path.
+			// (.FX_LIGHT meshes need NO shader routing: they never render -
+			// W3XRenderObj::Render registers them as forward point lights and
+			// skips the draw.)
 			if (strstr(sm.name.str(), ".SKIN_LIGHT") != NULL) {
 				robj->SetSubMeshShader((int)i, "Shaders\\RA3\\w3x_lights.fx", 0, sm.constants);
 			} else {

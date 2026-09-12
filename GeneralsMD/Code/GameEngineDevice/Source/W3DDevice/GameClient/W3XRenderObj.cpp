@@ -184,6 +184,8 @@ W3XRenderObjClass::W3XRenderObjClass() :
 
 W3XRenderObjClass::~W3XRenderObjClass()
 {
+	// Drop any forward point-light this object registered (.FX_LIGHT markers).
+	W3XUnregisterPointLights((void*)this);
 	if (m_bones) {
 		delete[] m_bones;
 		m_bones = NULL;
@@ -1683,6 +1685,43 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 		SubMesh &sm = m_meshes[si];
 		if (!sm.vb || !sm.ib) continue;
 
+		// 2026-09-12 FORWARD POINT LIGHTS: .FX_LIGHT marker meshes are NOT
+		// rendered anymore. The deferred volume-sphere shader they carried
+		// (w3x_pointlight.fx) architecturally cannot work on this engine -
+		// terrain is forward-rendered and never writes GBuffer depth, W3X
+		// skips the GBuffer pass entirely, and the deferred composite is
+		// overdrawn by the forward re-render. Instead the marker REGISTERS a
+		// light (position from the object world transform; Range/ColorEmissive/
+		// HDRMultiplier from its mesh constants) that BindEngineConstants feeds
+		// into PS_H_ARPBR's dormant PointLight loop - real BRDF lighting on the
+		// building walls, baseplates and every passing W3X unit. The visible
+		// lamp stays the .SKIN_LIGHT additive quad (w3x_lights.fx).
+		if (!inShadowPass
+			&& sm.name.str() && strstr(sm.name.str(), ".FX_LIGHT") != NULL) {
+			float lightPos[3] = { world[3].X, world[3].Y, world[3].Z };
+			float lightCol[3] = { 1.0f, 0.82f, 0.55f };	// warm default
+			float range = 220.0f, hdr = 2.5f;
+			int colN = 0;
+			for (size_t ci = 0; ci < sm.constants.size(); ci++) {
+				const W3XShaderConstant &c = sm.constants[ci];
+				if (c.name.compare("Range") == 0 && c.type == W3X_CONSTANT_FLOAT) {
+					range = c.floatValue;
+				} else if (c.name.compare("HDRMultiplier") == 0 && c.type == W3X_CONSTANT_FLOAT) {
+					hdr = c.floatValue;
+				} else if (c.name.compare("ColorEmissive") == 0) {
+					if (c.type == W3X_CONSTANT_VECTOR) {
+						for (int k = 0; k < 3 && k < c.vecSize; k++) lightCol[k] = c.vecValue[k];
+						colN = 3;
+					} else if (c.type == W3X_CONSTANT_FLOAT && colN < 3) {
+						lightCol[colN++] = c.floatValue;	// 3 Value rows = RGB
+					}
+				}
+			}
+			float colFinal[3] = { lightCol[0] * hdr, lightCol[1] * hdr, lightCol[2] * hdr };
+			W3XRegisterPointLight((void*)this, (int)si, lightPos, colFinal, range * 0.25f, range);
+			continue;	// never draw the marker volume
+		}
+
 		// Shadow-map (CAST) pass: skip the genuinely-transparent meshes, matching
 		// the volumetric shadow's exclusions (GetSubMeshAlphaTest/IsMuzzleflash):
 		//  - muzzleflash/rotor meshes (large flat quads) would cast a solid square
@@ -1739,6 +1778,10 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 				// 2026-09-12 BUILDING LIGHTS: SKIN_LIGHT lamp quads are additive
 				// emissive meshes (w3x_lights.fx) - they must not write sun depth
 				// or they stamp black rectangles into the shadow map.
+				if (smeshName && strstr(smeshName, ".FX_LIGHT") != NULL) {
+					// 2026-09-12 POINT-LIGHT VOLUMES: light spheres never cast.
+					isTransparent = true;
+				}
 				if (smeshName && strstr(smeshName, ".SKIN_LIGHT") != NULL) {
 					isTransparent = true;
 				}
