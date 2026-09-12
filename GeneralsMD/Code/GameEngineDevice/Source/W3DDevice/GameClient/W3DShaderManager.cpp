@@ -1616,6 +1616,16 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShader;	///<ps_2_0 PBR + lightmap (noise2)
 	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader;	///<ps_2_0 PBR + cloud + lightmap
 	IDirect3DVertexShader9* m_dwTerrainVS;			///<2026-09-09 RA3-faithful vs_3_0 terrain vertex shader (world pos + shadow UV)
+	// 2026-09-12 P1d: ps_3_0 twins of the four terrain variants. The 09-09
+	// rollback bound vs_3_0 against these ps_2_a shaders - an ILLEGAL D3D9
+	// SM3 pairing (vs_3_0 requires ps_3_0), which is the likeliest real
+	// cause of the "VS broke the terrain" symptom (the matrix was later
+	// proven correct in-place). When the terrain VS engages, set() selects
+	// these handles instead.
+	IDirect3DPixelShader9*	m_dwPBRPixelShader30;
+	IDirect3DPixelShader9*	m_dwPBRNoise1PixelShader30;
+	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShader30;
+	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader30;
 	virtual Int set(Int pass);
 	virtual void reset(void);
 	virtual Int init(void);
@@ -2118,7 +2128,7 @@ static const char* TERRAIN_POINTLIGHT_HLSL =
 	"float4 plPosR[8] : register(c13);\n"
 	"float4 plColI[8] : register(c21);\n"
 	"float4 plCount4 : register(c29);\n"
-	"float3 terrainPointLight(float3 wp, float3 N, float3 albedo, float4 posR, float4 colI)\n"
+	"float3 terrainPointLight(float3 wp, float3 N, float3 albedo, float3 V, float3 R, float glossOoa, float f0, float4 posR, float4 colI)\n"
 	"{\n"
 	"    float outer = posR.w;\n"
 	"    float3 L = posR.xyz - wp;\n"
@@ -2127,19 +2137,36 @@ static const char* TERRAIN_POINTLIGHT_HLSL =
 	"    float inR = saturate(1.0 - nd);\n"
 	"    float core = clamp(colI.w / max(outer, 0.001), 0.125, 0.5);\n"
 	"    float fall = saturate(core / max(nd, 0.01) - core * nd);\n"
-	"    float ndl = saturate(dot(N, L / max(dist, 0.001)));\n"
-	"    return albedo * colI.rgb * (ndl * fall * inR);\n"
+	"    float3 Ln = L / max(dist, 0.001);\n"
+	"    float ndl = saturate(dot(N, Ln));\n"
+	// 2026-09-12 P1a (对标 NordLicht Terrain.fx 417-432/808-836): point-light
+	// SPECULAR - specdist lobe ((cosRL*ooa-ooa+1)^4) + half-lambert fresnel.
+	// pow() by multiplication (SM2-cheap).
+	"    float cosRL = saturate(dot(R, Ln));\n"
+	"    float sd = saturate(cosRL * glossOoa - glossOoa + 1.0);\n"
+	"    sd = sd * sd; sd = sd * sd;\n"
+	"    float lw = saturate(dot(Ln, -V) * 0.5 + 0.5);\n"
+	"    lw = lw * lw * lw;\n"
+	"    float fres = lerp(f0, 1.0, lw);\n"
+	"    float3 diff = albedo * ndl;\n"
+	"    float3 spec = (albedo * 0.8 + float3(0.04, 0.04, 0.04)) * sd * fres;\n"
+	"    return colI.rgb * (diff + spec) * (fall * inR);\n"
 	"}\n"
-	"float3 terrainPointLights(float3 wp, float3 N, float3 albedo)\n"
+	"float3 terrainPointLights(float3 wp, float3 N, float3 albedo, float roughness, float3 camPos)\n"
 	"{\n"
-	"    float3 acc = terrainPointLight(wp, N, albedo, plPosR[0], plColI[0]) * step(0.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[1], plColI[1]) * step(1.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[2], plColI[2]) * step(2.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[3], plColI[3]) * step(3.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[4], plColI[4]) * step(4.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[5], plColI[5]) * step(5.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[6], plColI[6]) * step(6.5, plCount4.x);\n"
-	"    acc += terrainPointLight(wp, N, albedo, plPosR[7], plColI[7]) * step(7.5, plCount4.x);\n"
+	"    float3 V = normalize(camPos - wp);\n"
+	"    float3 R = reflect(-V, N);\n"
+	"    float gloss = (1.0 - saturate(roughness)) * 7.0 + 1.0;\n"
+	"    float glossOoa = gloss * gloss;\n"
+	"    float f0 = (1.0 - saturate(dot(albedo, float3(0.333, 0.333, 0.333)))) * 0.5;\n"
+	"    float3 acc = terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[0], plColI[0]) * step(0.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[1], plColI[1]) * step(1.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[2], plColI[2]) * step(2.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[3], plColI[3]) * step(3.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[4], plColI[4]) * step(4.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[5], plColI[5]) * step(5.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[6], plColI[6]) * step(6.5, plCount4.x);\n"
+	"    acc += terrainPointLight(wp, N, albedo, V, R, glossOoa, f0, plPosR[7], plColI[7]) * step(7.5, plCount4.x);\n"
 	"    return acc;\n"
 	"}\n";
 
@@ -2162,6 +2189,10 @@ Int TerrainShaderPBR::init( void )
 	m_dwPBRNoise2PixelShader = NULL;
 	m_dwPBRNoise12PixelShader = NULL;
 	m_dwTerrainVS = NULL;
+	m_dwPBRPixelShader30 = NULL;
+	m_dwPBRNoise1PixelShader30 = NULL;
+	m_dwPBRNoise2PixelShader30 = NULL;
+	m_dwPBRNoise12PixelShader30 = NULL;
 	// 2026-09-09 RA3-FAITHFUL TERRAIN VS (vs_3_0): the terrain has NO vertex
 	// shader today (FVF fixed-function), which is why every coordinate feed we
 	// tried (TSS stage6/7) was at the mercy of the driver's fixed-function black
@@ -2235,9 +2266,9 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
-			"    f += saturate((sd - tex2D(s4, suv).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
@@ -2292,15 +2323,17 @@ Int TerrainShaderPBR::init( void )
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
 			"    float3 result = terrainColor * (0.4 + 0.6 * NdotL);\n"
-			"    result += sunColor * specular * 0.25;\n"
+			"    result += sunColor * specular * 0.6;\n"
 			"    result *= terrainShadow(shadowUVZ);\n"
-			"    result += terrainPointLights(worldPos, N, terrainColor);\n"
+			"    result += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
 			"    return float4(result, base0.a);\n"
 			"}\n";
 		// 2026-09-08: ps_3_0 REQUIRED for the shadow-map sample (the s7/ps_2_a
 		// combination read 0 - viz mode 22 proved all-black terrain).
 		if (FAILED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader, "terrain_pbr_nm")))
 			return terrainShaderPixelShader.init();
+		// P1d: ps_3_0 twin (legal vs_3_0 pairing for the terrain VS route)
+		compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader30, "terrain_pbr_nm_30", "ps_3_0");
 	}
 
 	// 2026-09-10 W3D-MESH CAST DEPTH PS: dx8renderer.cpp's shadow-pass branch
@@ -2407,9 +2440,9 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
-			"    f += saturate((sd - tex2D(s4, suv).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
@@ -2465,13 +2498,14 @@ Int TerrainShaderPBR::init( void )
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
-			"    lit += sunColor * specular * 0.25;\n"
+			"    lit += sunColor * specular * 0.6;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
-			"    lit += terrainPointLights(worldPos, N, terrainColor);\n"
+			"    lit += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
+			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader30, "terrain_pbr_nm_noise1_30", "ps_3_0");
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
 		}
@@ -2504,9 +2538,9 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
-			"    f += saturate((sd - tex2D(s4, suv).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
@@ -2562,13 +2596,14 @@ Int TerrainShaderPBR::init( void )
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
-			"    lit += sunColor * specular * 0.25;\n"
+			"    lit += sunColor * specular * 0.6;\n"
 			"    lit *= lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
-			"    lit += terrainPointLights(worldPos, N, terrainColor);\n"
+			"    lit += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
+			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader30, "terrain_pbr_nm_noise2_30", "ps_3_0");
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
 		}
@@ -2602,9 +2637,9 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
-			"    f += saturate((sd - tex2D(s4, suv).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
@@ -2661,13 +2696,14 @@ Int TerrainShaderPBR::init( void )
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
 			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
-			"    lit += sunColor * specular * 0.25;\n"
+			"    lit += sunColor * specular * 0.6;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
-			"    lit += terrainPointLights(worldPos, N, terrainColor);\n"
+			"    lit += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
+			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader30, "terrain_pbr_nm_noise12_30", "ps_3_0");
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
 		}
@@ -2689,9 +2725,14 @@ Int TerrainShaderPBR::init( void )
 	return TRUE;
 }
 
+// P1d: true while the vs_3_0 terrain VS is bound for the current pass - the
+// PS-select switch then picks the ps_3_0 twins (D3D9 SM3 pairing).
+static bool s_terrainVsActive = false;
+
 Int TerrainShaderPBR::set(Int pass)
 {
 	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
+	s_terrainVsActive = false;	// re-asserted where the VS actually binds
 
 	// Fall back to non-PBR pixel shader for unrecognized shader types
 	if (curShader < W3DShaderManager::ST_TERRAIN_PBR || curShader > W3DShaderManager::ST_TERRAIN_PBR_NOISE12) {
@@ -2941,6 +2982,7 @@ Int TerrainShaderPBR::set(Int pass)
 					// as one block. No D3DX transposes anywhere.
 					static const bool s_terrainVsEnabled = false;  // 2026-09-09 ROLLBACK: VS route broke the terrain - restore stable fixed-pipeline vertices
 					if (s_terrainVsEnabled && m_dwTerrainVS) {
+						s_terrainVsActive = true;	// PS switch selects the ps_3_0 twins
 						// 2026-09-09 PROVEN-BY-MATH: the fixed pipeline renders terrain correctly
 						// with the DEVICE VIEW/PROJ memory as row-vector math. HLSL mul(v,M).x
 						// = dot(v,c0); uploading the device memory verbatim puts the math rows
@@ -3033,25 +3075,36 @@ Int TerrainShaderPBR::set(Int pass)
 		}
 
 
-	// Select the correct pixel shader for this variant
+	// Select the correct pixel shader for this variant.
+	// P1d: when the vs_3_0 terrain VS is bound this pass, select the ps_3_0
+	// twins (D3D9 SM3 pairing). s_terrainVsActive is set where the VS binds.
 	switch (curShader) {
 		case W3DShaderManager::ST_TERRAIN_PBR:
-			DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
+			if (s_terrainVsActive && m_dwPBRPixelShader30)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader30);
+			else
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE1:
-			if (m_dwPBRNoise1PixelShader)
+			if (s_terrainVsActive && m_dwPBRNoise1PixelShader30)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShader30);
+			else if (m_dwPBRNoise1PixelShader)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShader);
 			else
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE2:
-			if (m_dwPBRNoise2PixelShader)
+			if (s_terrainVsActive && m_dwPBRNoise2PixelShader30)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShader30);
+			else if (m_dwPBRNoise2PixelShader)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShader);
 			else
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE12:
-			if (m_dwPBRNoise12PixelShader)
+			if (s_terrainVsActive && m_dwPBRNoise12PixelShader30)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShader30);
+			else if (m_dwPBRNoise12PixelShader)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShader);
 			else
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
@@ -3115,6 +3168,22 @@ Int TerrainShaderPBR::shutdown(void)
 	if (m_dwPBRNoise12PixelShader) {
 		m_dwPBRNoise12PixelShader->Release();
 		m_dwPBRNoise12PixelShader = NULL;
+	}
+	if (m_dwPBRPixelShader30) {
+		m_dwPBRPixelShader30->Release();
+		m_dwPBRPixelShader30 = NULL;
+	}
+	if (m_dwPBRNoise1PixelShader30) {
+		m_dwPBRNoise1PixelShader30->Release();
+		m_dwPBRNoise1PixelShader30 = NULL;
+	}
+	if (m_dwPBRNoise2PixelShader30) {
+		m_dwPBRNoise2PixelShader30->Release();
+		m_dwPBRNoise2PixelShader30 = NULL;
+	}
+	if (m_dwPBRNoise12PixelShader30) {
+		m_dwPBRNoise12PixelShader30->Release();
+		m_dwPBRNoise12PixelShader30 = NULL;
 	}
 	return terrainShaderPixelShader.shutdown();
 }
@@ -5059,7 +5128,7 @@ Int RoadShaderPBR::init( void )
 			// road and terrain shadows have IDENTICAL edges and softening.
 			"    float2 ts = float2(c7.x, c7.y) * 2.0 / (2048.0 * c7.x);\n"
 			"    float f = 0.0;\n"
-			"    f += saturate((sd - tex2D(s4, suv).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
 			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
