@@ -202,6 +202,13 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_aoRawRT(NULL),
 	m_aoBlurredRT(NULL),
 	m_ssaoAvailable(false),
+	m_bloomSrcRT(NULL),
+	m_bloomRTA(NULL),
+	m_bloomRTB(NULL),
+	m_bloomBrightPS(NULL),
+	m_bloomBlurPS(NULL),
+	m_bloomCompositePS(NULL),
+	m_bloomAvailable(false),
 	m_ssaoPS(NULL),
 	m_ssaoBlurPS(NULL),
 	m_iblDiffuseCube(NULL),
@@ -386,6 +393,12 @@ void W3DDeferredRenderer::init()
 	}
 	if (!compileAOPassShaders()) {
 		DIAG_LOG(("W3DDeferredRenderer: AO shader compile failed.\n"));
+	}
+	if (!createBloomResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: Bloom RT creation failed.\n"));
+	}
+	if (!compileBloomShaders()) {
+		DIAG_LOG(("W3DDeferredRenderer: Bloom shader compile failed.\n"));
 	}
 
 	//
@@ -1215,6 +1228,7 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseShadowResources();
 	releaseAOResources();
 	releaseAOPassShaders();
+	releaseBloomResources();
 	releaseIBLResources();
 	releaseStencilSphere();
 	releaseCompositeShaders();
@@ -1273,6 +1287,12 @@ void W3DDeferredRenderer::ReAcquireResources()
 	}
 	if (!compileAOPassShaders()) {
 		DIAG_LOG(("W3DDeferredRenderer: failed AO shader compile.\n"));
+	}
+	if (!createBloomResources()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed Bloom RT create.\n"));
+	}
+	if (!compileBloomShaders()) {
+		DIAG_LOG(("W3DDeferredRenderer: failed Bloom shader compile.\n"));
 	}
 	createIBLResources();
 	createStencilSphere();
@@ -3001,6 +3021,210 @@ void W3DDeferredRenderer::aoCompositePass()
 	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZw);
 	dev->SetTexture(0, NULL);
 	dev->SetPixelShader(NULL);
+}
+
+// ============================================================================
+// P3 Bloom: backbuffer -> 1/2-res copy -> soft-knee bright-pass at 1/4 res
+// -> 2x separable 9-tap gaussian (ping-pong) -> additive composite.
+// Runs AFTER the AO/IBL composites on the final LDR backbuffer (v1 domain).
+// ============================================================================
+
+bool W3DDeferredRenderer::createBloomResources()
+{
+	int w = m_gbufferWidth / 2, h = m_gbufferHeight / 2;
+	if (w < 4 || h < 4) return false;
+	int qw = w / 2, qh = h / 2;
+	m_bloomSrcRT = DX8Wrapper::Create_Render_Target(w, h, WW3D_FORMAT_A8R8G8B8, true);
+	m_bloomRTA = DX8Wrapper::Create_Render_Target(qw, qh, WW3D_FORMAT_A8R8G8B8, true);
+	m_bloomRTB = DX8Wrapper::Create_Render_Target(qw, qh, WW3D_FORMAT_A8R8G8B8, true);
+	if (!m_bloomSrcRT || !m_bloomRTA || !m_bloomRTB) {
+		releaseBloomResources();
+		return false;
+	}
+	m_bloomAvailable = true;
+	DIAG_LOG(("W3DDeferredRenderer: Bloom RTs created (src %dx%d, chain %dx%d).\n", w, h, qw, qh));
+	return true;
+}
+
+void W3DDeferredRenderer::releaseBloomResources()
+{
+	REF_PTR_RELEASE(m_bloomSrcRT);
+	REF_PTR_RELEASE(m_bloomRTA);
+	REF_PTR_RELEASE(m_bloomRTB);
+	if (m_bloomBrightPS) { m_bloomBrightPS->Release(); m_bloomBrightPS = NULL; }
+	if (m_bloomBlurPS) { m_bloomBlurPS->Release(); m_bloomBlurPS = NULL; }
+	if (m_bloomCompositePS) { m_bloomCompositePS->Release(); m_bloomCompositePS = NULL; }
+	m_bloomAvailable = false;
+}
+
+bool W3DDeferredRenderer::compileBloomShaders()
+{
+	ID3DXBuffer *compiled = NULL;
+	ID3DXBuffer *errors = NULL;
+
+	// soft-knee bright pass: keep only what exceeds the threshold
+	const char bright_ps[] =
+		"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+		"sampler s0 : register(s0);\n"
+		"float4 c0 : register(c0);\n"	// x = threshold
+		"float4 main(PS_IN i):COLOR {\n"
+		"  float3 c = tex2D(s0, i.tex0).rgb;\n"
+		"  float l = max(max(c.r, c.g), c.b);\n"
+		"  float knee = c0.x * 0.5;\n"
+		"  float w = saturate((l - c0.x + knee) / (knee * 2.0));\n"
+		"  float contrib = w * w;\n"
+		"  return float4(c * contrib, 1.0);\n"
+		"};\n";
+	HRESULT hr = D3DXCompileShader(bright_ps, (UINT)strlen(bright_ps),
+		NULL, NULL, "main", "ps_3_0", 0, &compiled, &errors, NULL);
+	if (errors) { DIAG_LOG(("W3DDeferredRenderer: bloom bright PS err: %s\n", (const char*)errors->GetBufferPointer())); errors->Release(); errors = NULL; }
+	if (SUCCEEDED(hr) && compiled) {
+		DX8Wrapper::_Get_D3D_Device8()->CreatePixelShader((const DWORD*)compiled->GetBufferPointer(), &m_bloomBrightPS);
+		compiled->Release(); compiled = NULL;
+	}
+
+	// separable 9-tap gaussian; c0.xy = texel step * direction, c0.z = total weight renorm
+	const char blur_ps[] =
+		"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+		"sampler s0 : register(s0);\n"
+		"float4 c0 : register(c0);\n"
+		"float4 main(PS_IN i):COLOR {\n"
+		"  float w[5] = {0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216};\n"
+		"  float3 acc = tex2D(s0, i.tex0).rgb * w[0];\n"
+		"  for (int k = 1; k < 5; k++) {\n"
+		"    float2 o = c0.xy * k;\n"
+		"    acc += tex2D(s0, i.tex0 + o).rgb * w[k];\n"
+		"    acc += tex2D(s0, i.tex0 - o).rgb * w[k];\n"
+		"  }\n"
+		"  return float4(acc, 1.0);\n"
+		"};\n";
+	hr = D3DXCompileShader(blur_ps, (UINT)strlen(blur_ps),
+		NULL, NULL, "main", "ps_3_0", 0, &compiled, &errors, NULL);
+	if (errors) { DIAG_LOG(("W3DDeferredRenderer: bloom blur PS err: %s\n", (const char*)errors->GetBufferPointer())); errors->Release(); errors = NULL; }
+	if (SUCCEEDED(hr) && compiled) {
+		DX8Wrapper::_Get_D3D_Device8()->CreatePixelShader((const DWORD*)compiled->GetBufferPointer(), &m_bloomBlurPS);
+		compiled->Release(); compiled = NULL;
+	}
+
+	// additive composite; c0.x = intensity
+	const char comp_ps[] =
+		"struct PS_IN { float4 pos:POSITION; float2 tex0:TEXCOORD0; };\n"
+		"sampler s0 : register(s0);\n"
+		"float4 c0 : register(c0);\n"
+		"float4 main(PS_IN i):COLOR {\n"
+		"  return float4(tex2D(s0, i.tex0).rgb * c0.x, 1.0);\n"
+		"};\n";
+	hr = D3DXCompileShader(comp_ps, (UINT)strlen(comp_ps),
+		NULL, NULL, "main", "ps_3_0", 0, &compiled, &errors, NULL);
+	if (errors) { DIAG_LOG(("W3DDeferredRenderer: bloom comp PS err: %s\n", (const char*)errors->GetBufferPointer())); errors->Release(); }
+	if (SUCCEEDED(hr) && compiled) {
+		DX8Wrapper::_Get_D3D_Device8()->CreatePixelShader((const DWORD*)compiled->GetBufferPointer(), &m_bloomCompositePS);
+		compiled->Release();
+	}
+
+	bool ok = m_bloomBrightPS && m_bloomBlurPS && m_bloomCompositePS;
+	DIAG_LOG(("W3DDeferredRenderer: Bloom shaders %s.\n", ok ? "compiled" : "FAILED"));
+	return ok;
+}
+
+void W3DDeferredRenderer::bloomPass()
+{
+	if (!TheGlobalData || !TheGlobalData->m_useBloom) return;
+	if (!m_bloomAvailable || !m_bloomBrightPS || !m_bloomBlurPS || !m_bloomCompositePS) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+
+	// 0) resolve the backbuffer into the 1/2-res source RT (StretchRect is the
+	// dgVoodoo-proven resolve route; sampling the backbuffer directly is illegal)
+	IDirect3DSurface9 *backSurf = NULL;
+	if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, (IDirect3DSurface9**)&backSurf)) || !backSurf) return;
+	IDirect3DSurface9 *srcSurf = m_bloomSrcRT->Get_D3D_Surface_Level();
+	HRESULT sr = dev->StretchRect(backSurf, NULL, srcSurf, NULL, D3DTEXF_LINEAR);
+	srcSurf->Release();
+	backSurf->Release();
+	if (FAILED(sr)) { DIAG_LOG(("W3DDeferredRenderer: bloom StretchRect failed hr=0x%08X.\n", (int)sr)); return; }
+
+	// save the state we override
+	D3DVIEWPORT9 vpMain;
+	dev->GetViewport(&vpMain);
+	DWORD oldZen, oldZw, oldAlpha, oldSrc, oldDst;
+	dev->GetRenderState(D3DRS_ZENABLE, &oldZen);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &oldZw);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
+	dev->GetRenderState(D3DRS_SRCBLEND, &oldSrc);
+	dev->GetRenderState(D3DRS_DESTBLEND, &oldDst);
+	IDirect3DSurface9 *oldRT = NULL;
+	dev->GetRenderTarget(0, &oldRT);
+
+	int qw = m_gbufferWidth / 4, qh = m_gbufferHeight / 4;
+	D3DVIEWPORT9 vpQ = { 0, 0, (DWORD)qw, (DWORD)qh, 0.0f, 1.0f };
+
+	dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+	dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+	dev->SetIndices(m_quadIB);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+
+	// 1) bright-pass into RTA
+	IDirect3DSurface9 *surfA = m_bloomRTA->Get_D3D_Surface_Level();
+	dev->SetRenderTarget(0, surfA);
+	dev->SetViewport(&vpQ);
+	dev->SetTexture(0, m_bloomSrcRT->Peek_D3D_Base_Texture());
+	{
+		float c0[4] = { TheGlobalData->m_bloomThreshold, 0, 0, 0 };
+		dev->SetPixelShaderConstantF(0, c0, 1);
+	}
+	dev->SetPixelShader(m_bloomBrightPS);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+
+	// 2) two blur iterations (H then V), ping-pong A<->B
+	IDirect3DSurface9 *surfB = m_bloomRTB->Get_D3D_Surface_Level();
+	for (int iter = 0; iter < 2; iter++) {
+		// horizontal A->B
+		dev->SetRenderTarget(0, surfB);
+		dev->SetTexture(0, m_bloomRTA->Peek_D3D_Base_Texture());
+		{
+			float c0[4] = { 1.0f / qw, 0, 0, 0 };
+			dev->SetPixelShaderConstantF(0, c0, 1);
+		}
+		dev->SetPixelShader(m_bloomBlurPS);
+		dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+		// vertical B->A
+		dev->SetRenderTarget(0, surfA);
+		dev->SetTexture(0, m_bloomRTB->Peek_D3D_Base_Texture());
+		{
+			float c0[4] = { 0, 1.0f / qh, 0, 0 };
+			dev->SetPixelShaderConstantF(0, c0, 1);
+		}
+		dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+	}
+
+	// 3) additive composite onto the backbuffer
+	dev->SetRenderTarget(0, oldRT);
+	dev->SetViewport(&vpMain);
+	dev->SetTexture(0, m_bloomRTA->Peek_D3D_Base_Texture());
+	{
+		float c0[4] = { TheGlobalData->m_bloomIntensity, 0, 0, 0 };
+		dev->SetPixelShaderConstantF(0, c0, 1);
+	}
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+	dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+	dev->SetPixelShader(m_bloomCompositePS);
+	dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+
+	// restore
+	dev->SetRenderState(D3DRS_SRCBLEND, oldSrc);
+	dev->SetRenderState(D3DRS_DESTBLEND, oldDst);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
+	dev->SetRenderState(D3DRS_ZENABLE, oldZen);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZw);
+	dev->SetTexture(0, NULL);
+	dev->SetPixelShader(NULL);
+	surfA->Release();
+	surfB->Release();
+	if (oldRT) oldRT->Release();
 }
 
 // ============================================================================

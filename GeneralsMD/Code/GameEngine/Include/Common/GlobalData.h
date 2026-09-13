@@ -129,6 +129,9 @@ public:
 	Real m_hdrExposure;		///< P2: pre-tonemap linear exposure multiplier (default 1.0)
 	Real m_hdrWhitePoint;	///< P2: Reinhard white point - brightness mapping to 1.0 (default 4.0)
 	Int m_toneMapMode;		///< P2: 0 = extended Reinhard, 1 = ACES filmic shoulder (default 0)
+	Bool m_useBloom;		///< P3: post-composite bloom on final backbuffer (default FALSE)
+	Real m_bloomThreshold;	///< P3: soft-knee bright-pass threshold (default 0.75)
+	Real m_bloomIntensity;	///< P3: additive composite intensity (default 0.5)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
 	Bool m_clientRetaliationModeEnabled;

@@ -133,6 +133,23 @@ public:
 	// ---- Forward+ compositing passes (screen-space overlays) ----
 	void aoCompositePass();
 	void iblCompositePass();
+
+	// ---- P3 Bloom (post-composite, final backbuffer LDR domain) ----
+	// backbuffer ->(StretchRect) 1/2-res src ->(bright-pass) 1/4-res A
+	// ->(H/V 9-tap gaussian, 2 iterations) A<->B ->(additive x intensity)
+	// back onto the backbuffer. Gated by GameData.ini UseBloom.
+	void bloomPass();
+	bool createBloomResources();
+	void releaseBloomResources();
+	bool compileBloomShaders();
+	TextureClass *m_bloomSrcRT;			///< 1/2-res copy of the backbuffer
+	TextureClass *m_bloomRTA;				///< 1/4-res ping
+	TextureClass *m_bloomRTB;				///< 1/4-res pong
+	IDirect3DPixelShader9 *m_bloomBrightPS;
+	IDirect3DPixelShader9 *m_bloomBlurPS;
+	IDirect3DPixelShader9 *m_bloomCompositePS;
+	bool m_bloomAvailable;
+
 	bool createCompositeShaders();
 	void releaseCompositeShaders();
 	IDirect3DPixelShader9 *m_aoCompositePS;
