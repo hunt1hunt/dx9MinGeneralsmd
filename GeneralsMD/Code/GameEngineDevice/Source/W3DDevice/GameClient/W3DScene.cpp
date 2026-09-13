@@ -1062,6 +1062,12 @@ void RTS3DScene::updatePlayerColorPasses(void)
 void RTS3DScene::Render(RenderInfoClass & rinfo)
 {
 	//USE_PERF_TIMER(NonTerrainRender)
+	// P4 ROLLBACK 2026-09-13: the FF vertex-fog experiment made authored-
+	// FOG_WHITE mod materials (trees/rocks/bridges from bigs) render as WHITE
+	// silhouettes, and the shader.cpp override provably never executes on
+	// their draw path (they bypass ShaderClass fog emission). FF fog stays
+	// OFF; material fog (terrain/W3X/pbr_unit) covers the visible majority.
+	// Tree/rock fog = OPEN ITEM: needs a draw-path probe (next session).
 	DX8Wrapper::Set_Fog(FogEnabled, FogColor, FogStart, FogEnd);
 
 	//Override the behind building selection if it's not available on current hardware (needs stencil).

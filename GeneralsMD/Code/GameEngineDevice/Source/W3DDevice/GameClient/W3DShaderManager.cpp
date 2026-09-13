@@ -2128,6 +2128,10 @@ static const char* TERRAIN_POINTLIGHT_HLSL =
 	"float4 plPosR[8] : register(c13);\n"
 	"float4 plColI[8] : register(c21);\n"
 	"float4 plCount4 : register(c29);\n"
+	// P4 distance fog: c30 = (start, 1/(end-start), 0, 0), c31 = fog rgb.
+	// Disabled state feeds start=1e6/invRange=0 -> lerp no-op.
+	"float4 fogParams : register(c30);\n"
+	"float4 fogColor : register(c31);\n"
 	"float3 terrainPointLight(float3 wp, float3 N, float3 albedo, float3 V, float3 R, float glossOoa, float f0, float4 posR, float4 colI)\n"
 	"{\n"
 	"    float outer = posR.w;\n"
@@ -2326,6 +2330,9 @@ Int TerrainShaderPBR::init( void )
 			"    result += sunColor * specular * 0.6;\n"
 			"    result *= terrainShadow(shadowUVZ);\n"
 			"    result += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
+			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
+			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
+			"    result = lerp(result, fogColor.rgb, fogA);\n"
 			"    return float4(result, base0.a);\n"
 			"}\n";
 		// 2026-09-08: ps_3_0 REQUIRED for the shadow-map sample (the s7/ps_2_a
@@ -2502,6 +2509,9 @@ Int TerrainShaderPBR::init( void )
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
 			"    lit += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
+			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
+			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
+			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
@@ -2600,6 +2610,9 @@ Int TerrainShaderPBR::init( void )
 			"    lit *= lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
 			"    lit += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
+			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
+			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
+			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
@@ -2700,6 +2713,9 @@ Int TerrainShaderPBR::init( void )
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
 			"    lit += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
+			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
+			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
+			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
 			"    return float4(lit, base0.a);\n"
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
@@ -3104,6 +3120,26 @@ Int TerrainShaderPBR::set(Int pass)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(13, (const float*)plPosR, 8);
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(21, (const float*)plColI, 8);
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(29, plCnt, 1);
+				// P4 distance fog (c30/c31). Disabled feeds start=1e6, invRange=0
+				// - the shader lerp degenerates to a no-op.
+				{
+					float fs = 1e6f, fir = 0.0f, fih = 0.0f;
+					float fr = 0.65f, fg = 0.72f, fb = 0.80f;
+					if (TheGlobalData && TheGlobalData->m_useDistanceFog) {
+						fs = TheGlobalData->m_fogStart;
+						float fe = TheGlobalData->m_fogEnd;
+						if (fe > fs) fir = 1.0f / (fe - fs);
+						float fh = TheGlobalData->m_fogHeight;
+						if (fh > 1.0f) fih = 1.0f / fh;	// else 0: no height falloff
+						fr = TheGlobalData->m_fogColorR;
+						fg = TheGlobalData->m_fogColorG;
+						fb = TheGlobalData->m_fogColorB;
+					}
+					float c30[4] = { fs, fir, fih, 0.0f };
+					float c31[4] = { fr, fg, fb, 1.0f };
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(30, c30, 1);
+					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(31, c31, 1);
+				}
 			}
 		}
 
@@ -3277,6 +3313,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -3314,6 +3352,9 @@ Int W3DPBRShader::init( void )
 			"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0; float D = a2 / (3.14159 * d * d);\n"
 			"    result += (diffuseColor + D * F0) * c9.xyz * NdotL; }\n"
 			"    result += diffuseColor * c10.xyz * ao;\n"
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 		if (FAILED(compilePBRShader(src, &m_dwPBRPixelShader, "pbr_unit")))
@@ -3343,6 +3384,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -3378,6 +3421,9 @@ Int W3DPBRShader::init( void )
 			"    float d = (NdotH * a2 - NdotH) * NdotH + 1.0; float D = a2 / (3.14159 * d * d);\n"
 			"    result += (diffuseColor + D * F0) * c9.xyz * NdotL; }\n"
 			"    result += diffuseColor * c10.xyz * ao;\n"
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 		if (FAILED(compilePBRShader(srcNT, &m_dwPBRPixelShaderNT, "pbr_unit_nt")))
@@ -3408,6 +3454,8 @@ Int W3DPBRShader::init( void )
 		"float3 c8 : register(c8);\n"
 		"float3 c9 : register(c9);\n"
 		"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 		"float4 main(float2 tex0 : TEXCOORD0,\n"
 		"    float3 worldPos : TEXCOORD1,\n"
 		"    float3 worldNormal : TEXCOORD4,\n"
@@ -3454,7 +3502,10 @@ Int W3DPBRShader::init( void )
 	//	"    result += diffuseColor * 5.0;\n"
 		//调整环境光倍率叠加10.0倍
 	//	"    result += diffuseColor * 10.0;\n"
-		"    return float4(result, albedo.a);\n"
+		"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
+			"    return float4(result, albedo.a);\n"
 		"}\n";
 		if (FAILED(compilePBRShader(srcNT30, &m_dwPBRPixelShaderNT_30, "pbr_unit_nt_ps30", "ps_3_0")))
 			DEBUG_LOG(("PBR: NT ps_3_0 opaque shader compile FAILED\n"));
@@ -3485,6 +3536,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
 			"    float3 worldNormal : TEXCOORD4,\n"
@@ -3529,6 +3582,9 @@ Int W3DPBRShader::init( void )
 			"        result += (diffuseColor * (1.0 - F) * invPI * lightCol[i] * NdotL + specular * lightCol[i] / max(4.0 * NdotV, 0.001));\n"
 			"    }\n"
 			"    result += diffuseColor * c10.xyz * ao;\n"
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 			if (FAILED(compilePBRShader(src30, &m_dwPBRPixelShader_30, "pbr_unit_ps30", "ps_3_0")))
@@ -3578,6 +3634,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
@@ -3632,6 +3690,9 @@ Int W3DPBRShader::init( void )
 			"    if (dbg > 2.5 && dbg < 3.5) return float4(ao.xxx, albedo.a);\n"
 			"    if (dbg > 3.5 && dbg < 4.5) return float4(N * 0.5 + 0.5, albedo.a);\n"
 			"    result += envDiffuse;\n"
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 			if (FAILED(compilePBRShader(src30IBL, &m_dwPBRPixelShader_30_IBL, "pbr_unit_ps30_ibl", "ps_3_0")))
@@ -3686,6 +3747,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
@@ -3750,6 +3813,9 @@ Int W3DPBRShader::init( void )
 			"    if (dbg > 5.5 && dbg < 6.5) return float4(envSpecular, albedo.a);\n"
 			"    if (dbg > 6.5) return float4(result, albedo.a);\n"
 			"    result += envDiffuse + envSpecular;\n"
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 			if (FAILED(compilePBRShader(src30SpecIBL, &m_dwPBRPixelShader_30_IBLSpec, "pbr_unit_ps30_specibl", "ps_3_0")))
@@ -3783,6 +3849,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
@@ -3822,6 +3890,9 @@ Int W3DPBRShader::init( void )
 			"    float3 irradiance = texCUBE(s3, N).rgb;\n"
 			"    result += diffuseColor * irradiance * ao * (1.0 - metalness);\n"
 
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 			if (FAILED(compilePBRShader(srcNT_IBL, &m_dwPBRPixelShaderNT_IBL, "pbr_unit_nt_ibl")))
@@ -3853,6 +3924,8 @@ Int W3DPBRShader::init( void )
 				"float3 c8 : register(c8);\n"
 				"float3 c9 : register(c9);\n"
 				"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 				"float4 main(float2 tex0 : TEXCOORD0,\n"
 				"    float3 worldPos : TEXCOORD1,\n"
 				"    float3 worldNormal : TEXCOORD4,\n"
@@ -3902,7 +3975,10 @@ Int W3DPBRShader::init( void )
 			//	"    result += diffuseColor * 5.0;\n"
 				//调整环境光叠加倍率10倍
 			//	"    result += diffuseColor * 10.0;\n"
-				"    return float4(result, albedo.a);\n"
+				"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
+			"    return float4(result, albedo.a);\n"
 				"}\n";
 				if (FAILED(compilePBRShader(srcNT_30_IBL, &m_dwPBRPixelShaderNT_30_IBL, "pbr_unit_nt_ps30_ibl", "ps_3_0")))
 					DEBUG_LOG(("PBR IBL: NT ps_3_0 diffuse IBL opaque shader compile FAILED\n"));
@@ -3934,6 +4010,8 @@ Int W3DPBRShader::init( void )
 			"float3 c8 : register(c8);\n"
 			"float3 c9 : register(c9);\n"
 			"float3 c10 : register(c10);\n"
+			"float4 fogC0 : register(c30);\n"
+			"float4 fogC1 : register(c31);\n"
 			"float4 c11 : register(c11);\n"
 			"float4 main(float2 tex0 : TEXCOORD0,\n"
 			"    float3 worldPos : TEXCOORD1,\n"
@@ -4002,6 +4080,9 @@ Int W3DPBRShader::init( void )
 		//	"    result += diffuseColor * 5.0;\n"
 			//调整环境光倍率叠再加10倍
 		//	"    result += diffuseColor * 10.0;\n"
+			"    float fogAP = saturate((distance(worldPos, c2.xyz) - fogC0.x) * fogC0.y);\n"
+			"    fogAP *= 1.0 - saturate(worldPos.z * fogC0.z);\n"
+			"    result = lerp(result, fogC1.rgb, fogAP);\n"
 			"    return float4(result, albedo.a);\n"
 			"}\n";
 			if (FAILED(compilePBRShader(srcNT_30_IBLSpec, &m_dwPBRPixelShaderNT_30_IBLSpec, "pbr_unit_nt_ps30_specibl", "ps_3_0")))
@@ -4416,7 +4497,26 @@ Int W3DPBRShader::set(Int pass)
 	float dbg[4] = { (float)TheGlobalData->m_pbrDebugMode, 0.0f, 0.0f, 0.0f };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(11, dbg, 1);
 	}
-	// Guard: if no shader was successfully compiled (e.g. after device reset failure),
+
+	// P4 distance+height fog (c30/c31) - same values the terrain shaders get.
+	{
+		float fs = 1e6f, fir = 0.0f, fih = 0.0f;
+		float fr = 0.65f, fg = 0.72f, fb = 0.80f;
+		if (TheGlobalData && TheGlobalData->m_useDistanceFog) {
+			fs = TheGlobalData->m_fogStart;
+			float fe = TheGlobalData->m_fogEnd;
+			if (fe > fs) fir = 1.0f / (fe - fs);
+			float fh = TheGlobalData->m_fogHeight;
+			if (fh > 1.0f) fih = 1.0f / fh;
+			fr = TheGlobalData->m_fogColorR;
+			fg = TheGlobalData->m_fogColorG;
+			fb = TheGlobalData->m_fogColorB;
+		}
+		float c30[4] = { fs, fir, fih, 0.0f };
+		float c31[4] = { fr, fg, fb, 1.0f };
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(30, c30, 1);
+		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(31, c31, 1);
+	}	// Guard: if no shader was successfully compiled (e.g. after device reset failure),
 	// return FALSE so the renderer skips this draw call instead of passing NULL to SetPixelShader.
 	if (pShader == NULL) {
 		DEBUG_LOG(("PBR: set() called but no shader available (device reset recovery pending)\n"));

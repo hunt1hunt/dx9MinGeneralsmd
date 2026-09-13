@@ -79,13 +79,23 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "ShadowMapSize",			INI::parseInt,			NULL,			offsetof( GlobalData, m_shadowMapSize ) },
 	{ "UseSSAO",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useSSAO ) },
 	{ "SSAOLevel",						INI::parseInt,				NULL,			offsetof( GlobalData, m_ssaoLevel ) },
+	{ "SSAORadius",			INI::parseReal,				NULL,			offsetof( GlobalData, m_ssaoRadius ) },
 	{ "UseHDR",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useHDR ) },
 	{ "HDRExposure",				INI::parseReal,				NULL,			offsetof( GlobalData, m_hdrExposure ) },
 	{ "HDRWhitePoint",			INI::parseReal,				NULL,			offsetof( GlobalData, m_hdrWhitePoint ) },
 	{ "ToneMapMode",				INI::parseInt,				NULL,			offsetof( GlobalData, m_toneMapMode ) },
+	{ "HDRLimiter",				INI::parseReal,				NULL,			offsetof( GlobalData, m_hdrLimiter ) },
+	{ "PointLightMode",			INI::parseInt,				NULL,			offsetof( GlobalData, m_pointLightMode ) },
 	{ "UseBloom",					INI::parseBool,				NULL,			offsetof( GlobalData, m_useBloom ) },
 	{ "BloomThreshold",			INI::parseReal,				NULL,			offsetof( GlobalData, m_bloomThreshold ) },
 	{ "BloomIntensity",			INI::parseReal,				NULL,			offsetof( GlobalData, m_bloomIntensity ) },
+	{ "UseDistanceFog",			INI::parseBool,				NULL,			offsetof( GlobalData, m_useDistanceFog ) },
+	{ "FogStart",						INI::parseReal,				NULL,			offsetof( GlobalData, m_fogStart ) },
+	{ "FogEnd",							INI::parseReal,				NULL,			offsetof( GlobalData, m_fogEnd ) },
+	{ "FogHeight",				INI::parseReal,				NULL,			offsetof( GlobalData, m_fogHeight ) },
+	{ "FogColorR",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorR ) },
+	{ "FogColorG",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorG ) },
+	{ "FogColorB",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorB ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
 	{ "ChipsetType",							INI::parseInt,				NULL,			offsetof( GlobalData, m_chipSetType ) },
@@ -727,13 +737,21 @@ GlobalData::GlobalData()
 	m_shadowMapSize = 2048;
 	m_useSSAO = FALSE;
 	m_ssaoLevel = 2;
+	m_ssaoRadius = 0.01f;		// P5 default (legacy hardcode)
 	m_useHDR = TRUE;
 	m_hdrExposure = 1.0f;		// P2: neutral
 	m_hdrWhitePoint = 4.0f;	// P2: gentle highlight rolloff above 4x
-	m_toneMapMode = 0;			// P2: 0=extended Reinhard, 1=ACES shoulder
+	m_toneMapMode = 1;			// P2/P6: ACES shoulder default (user-verified)
+	m_hdrLimiter = 6.0f;		// P6: soft pre-curve clamp
+	m_pointLightMode = 2;		// P6: auto - building lights on night maps only
 	m_useBloom = FALSE;		// P3: off until INI-enabled
 	m_bloomThreshold = 0.75f;	// P3: soft-knee threshold
 	m_bloomIntensity = 0.5f;	// P3: additive strength
+	m_useDistanceFog = FALSE;	// P4: off until INI-enabled
+	m_fogStart = 200.0f;			// P4 (user-tuned)
+	m_fogEnd = 900.0f;				// P4 (user-tuned)
+	m_fogHeight = 350.0f;		// P4 height ceiling (<=1 disables)
+	m_fogColorR = 0.65f; m_fogColorG = 0.72f; m_fogColorB = 0.80f;	// P4 light blue-gray
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
 	m_useCloudPlane = FALSE;

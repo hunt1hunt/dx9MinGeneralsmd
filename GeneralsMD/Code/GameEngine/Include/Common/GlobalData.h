@@ -125,13 +125,23 @@ public:
 	Int m_shadowMapSize;		///< Shadow map resolution (INI ShadowMapSize, default 1024; 2048=old default, 512=low VRAM)
 	Bool m_useSSAO;			///< Enable SSAO in deferred rendering (default: false)
 	Int m_ssaoLevel;		///< SSAO quality level: 1=low, 2=medium, 3=high (default: 2)
+	Real m_ssaoRadius;		///< P5: SSAO sample radius (screen-depth scaled; default 0.01)
 	Bool m_useHDR;			///< Enable HDR tone mapping in deferred rendering (default: true)
 	Real m_hdrExposure;		///< P2: pre-tonemap linear exposure multiplier (default 1.0)
 	Real m_hdrWhitePoint;	///< P2: Reinhard white point - brightness mapping to 1.0 (default 4.0)
 	Int m_toneMapMode;		///< P2: 0 = extended Reinhard, 1 = ACES filmic shoulder (default 0)
+	Real m_hdrLimiter;		///< P6: soft pre-tonemap clamp (default 6)
+	Int m_pointLightMode;		///< P6: 0=off, 1=always on, 2=auto (night maps only, default)
 	Bool m_useBloom;		///< P3: post-composite bloom on final backbuffer (default FALSE)
 	Real m_bloomThreshold;	///< P3: soft-knee bright-pass threshold (default 0.75)
 	Real m_bloomIntensity;	///< P3: additive composite intensity (default 0.5)
+	Bool m_useDistanceFog;	///< P4: RA3-style material distance fog (default FALSE)
+	Real m_fogStart;				///< P4: fog start distance (default 500)
+	Real m_fogEnd;					///< P4: fog end distance = full fog (default 2400)
+	Real m_fogHeight;			///< P4: height ceiling - fog fades to zero at this z (default 350; <=1 disables)
+	Real m_fogColorR;			///< P4: fog color red 0-1 (default 0.65)
+	Real m_fogColorG;			///< P4: fog color green 0-1 (default 0.72)
+	Real m_fogColorB;			///< P4: fog color blue 0-1 (default 0.80)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
 	Bool m_clientRetaliationModeEnabled;

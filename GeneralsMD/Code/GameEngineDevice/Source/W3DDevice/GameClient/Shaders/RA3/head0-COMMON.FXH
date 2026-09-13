@@ -116,6 +116,12 @@ PointLight[8]
 : register(c89)
 <    bool unmanaged = true;>;
 
+// P4 材质内距离雾(引擎按名喂数; 未绑定时默认=关): x=起始距离, y=1/(结束-起始), 颜色另传
+float4 FogParamsStart
+<    string UIWidget = "None";> = float4(1000000, 0, 0, 0);
+float4 FogParamsColor
+<    string UIWidget = "None";> = float4(0.65, 0.72, 0.80, 1);
+
 //世界空间到阴影空间的矩阵  C113-116
 shared float4x4 ShadowMapWorldToShadow 
 : register(c113)
