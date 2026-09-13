@@ -1353,8 +1353,11 @@ bool W3DDeferredRenderer::compileToneMapShader()
 	"};\n"
 	"sampler hdrSampler : register(s0);\n"
 	"float4 tmParams : register(c0);\n"
+	"// c0.w = P6 soft HDR limiter: values above it are compressed 75% pre-curve\n"
 	"float4 main(PS_IN input) : COLOR {\n"
 	"  float3 hdrColor = tex2D(hdrSampler, input.tex0).rgb * tmParams.x;\n"
+	"  float3 over6 = max(hdrColor - tmParams.w, 0);\n"
+	"  hdrColor -= over6 * 0.75;\n"
 	"  float wp2 = tmParams.y * tmParams.y;\n"
 	"  float3 rein = hdrColor * (1.0 + hdrColor / wp2) / (1.0 + hdrColor);\n"
 	"  float3 aces = saturate((hdrColor * (2.51 * hdrColor + 0.03)) / (hdrColor * (2.43 * hdrColor + 0.59) + 0.14));\n"
@@ -1442,11 +1445,12 @@ void W3DDeferredRenderer::toneMapPass()
 	// HDRWhitePoint / ToneMapMode). Read every frame - INI live-tunable
 	// across a game restart, no rebuild.
 	{
-		float tm[4] = { 1.0f, 4.0f, 0.0f, 1.0f };
+		float tm[4] = { 1.0f, 4.0f, 0.0f, 6.0f };
 		if (TheGlobalData) {
 			tm[0] = TheGlobalData->m_hdrExposure;
 			tm[1] = TheGlobalData->m_hdrWhitePoint;
 			tm[2] = (float)TheGlobalData->m_toneMapMode;
+			tm[3] = TheGlobalData->m_hdrLimiter;	// P6: soft pre-curve clamp
 		}
 		dev->SetPixelShaderConstantF(0, tm, 1);
 	}
@@ -2647,7 +2651,7 @@ void W3DDeferredRenderer::computeAO()
 				case 3: strength = 8.0f; break;
 			}
 		}
-		float p[4]={0.01f, strength, 0, 0};
+		float p[4]={ (TheGlobalData && TheGlobalData->m_ssaoRadius > 0.0f) ? TheGlobalData->m_ssaoRadius : 0.01f, strength, 0, 0};	// P5: SSAORadius INI
 		dev->SetPixelShaderConstantF(4,p,1);
 	}
 	dev->SetFVF(D3DFVF_XYZRHW|D3DFVF_TEX1);

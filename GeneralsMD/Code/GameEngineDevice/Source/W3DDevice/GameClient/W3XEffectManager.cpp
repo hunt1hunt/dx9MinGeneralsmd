@@ -163,6 +163,9 @@ static const EngineConstantBinding s_bindings[] =
 	{ "NumPointLights",		19 },
 	// PointLight struct array (group 22) - feeds the registered forward lights
 	{ "PointLight",			22 },
+	// P4 distance fog (groups 23/24) - material fog for W3X PBR shaders
+	{ "FogParamsStart",	23 },
+	{ "FogParamsColor",	24 },
 	// DepthTexture (group 20) - deferred G-Buffer rt2 (NDC z in .r) for the
 	// w3x_pointlight.fx volume-sphere reconstruction
 	{ "DepthTexture",		20 },
@@ -224,6 +227,19 @@ int W3XGetForwardPointLightCount(void)
 	return s_plightCount;
 }
 
+// P6: effective light count after the GameData.ini PointLightMode gate
+// (0=off, 1=always, 2=auto: night maps only - matches the authored intent of
+// lamp-lit buildings reading best after dark).
+static int PLightFeedCount(void)
+{
+	if (TheGlobalData) {
+		Int mode = TheGlobalData->m_pointLightMode;
+		if (mode == 0) return 0;
+		if (mode == 2 && TheGlobalData->m_timeOfDay != TIME_OF_DAY_NIGHT) return 0;
+	}
+	return s_plightCount;
+}
+
 const W3XForwardPointLight *W3XGetForwardPointLights(void)
 {
 	return s_plights;
@@ -232,7 +248,7 @@ const W3XForwardPointLight *W3XGetForwardPointLights(void)
 int W3XSelectPointLights(const float camPos[3], W3XForwardPointLight out[8])
 {
 	// Selection sort by squared distance (registry is tiny - 32 max).
-	int n = s_plightCount;
+	int n = PLightFeedCount();
 	if (n > 8) {
 		// build an index list sorted nearest-first, take the first 8
 		int idx[W3X_PLIGHT_REG_MAX];
@@ -955,7 +971,7 @@ bool W3XEffectManager::BindParameter(ID3DXEffect *effect,
 					// loop: 0 keeps it compiled out (no registered lights - the
 					// pre-2026-09-12 behavior), >0 runs it over the fed lights.
 				{
-					effect->SetInt(param, s_plightCount < 8 ? s_plightCount : 8);
+					{ int pn = PLightFeedCount(); effect->SetInt(param, pn < 8 ? pn : 8); }
 					return true;
 				}
 
@@ -989,6 +1005,33 @@ bool W3XEffectManager::BindParameter(ID3DXEffect *effect,
 							}
 						}
 					}
+					return true;
+				}
+				case 23: // FogParamsStart (P4): (start, 1/(end-start), 1/FogHeight, 0); disabled = 1e6
+				{
+					float fs = 1e6f, fir = 0.0f, fih = 0.0f;
+					if (TheGlobalData && TheGlobalData->m_useDistanceFog) {
+						fs = TheGlobalData->m_fogStart;
+						float fe = TheGlobalData->m_fogEnd;
+						if (fe > fs) fir = 1.0f / (fe - fs);
+					float fh = TheGlobalData->m_fogHeight;
+					if (fh > 1.0f) fih = 1.0f / fh;
+					}
+					D3DXVECTOR4 v(fs, fir, fih, 0.0f);
+					effect->SetVector(param, &v);
+					return true;
+				}
+
+				case 24: // FogParamsColor (P4)
+				{
+					float r = 0.65f, g = 0.72f, b = 0.80f;
+					if (TheGlobalData) {
+						r = TheGlobalData->m_fogColorR;
+						g = TheGlobalData->m_fogColorG;
+						b = TheGlobalData->m_fogColorB;
+					}
+					D3DXVECTOR4 v(r, g, b, 1.0f);
+					effect->SetVector(param, &v);
 					return true;
 				}
 				case 20: // DepthTexture - deferred G-Buffer rt2 (.r = NDC depth)

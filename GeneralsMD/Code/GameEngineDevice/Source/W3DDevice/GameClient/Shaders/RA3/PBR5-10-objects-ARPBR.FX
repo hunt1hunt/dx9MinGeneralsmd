@@ -450,6 +450,13 @@ float4 PS_H_ARPBR (PS_H_input i) : COLOR
     OUTCOLOR.xyz *= extra_cavity ; //
     OUTCOLOR.xyz += extra_glow * glow_mult; //all glow
 
+  // P4 材质内距离雾(引擎喂 FogParamsStart/Color; 默认=1e6起=无雾)
+  #ifndef _3DSMAX_
+    float fogA2 = saturate((distance(i.WorldP, EyePosition) - FogParamsStart.x) * FogParamsStart.y);
+    fogA2 *= 1.0 - saturate(i.WorldP.z * FogParamsStart.z); // height ceiling
+    OUTCOLOR.xyz = lerp(OUTCOLOR.xyz, FogParamsColor.rgb, fogA2);
+  #endif
+
   #ifndef _3DSMAX_ //预览没有迷雾
     OUTCOLOR.xyz *= tex2D(ShroudTextureSampler, i.FogCloudUV.xy).rgb ;
   #endif

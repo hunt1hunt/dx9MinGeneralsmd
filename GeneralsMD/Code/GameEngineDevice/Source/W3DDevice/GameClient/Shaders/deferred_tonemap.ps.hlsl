@@ -13,6 +13,9 @@ sampler hdrSampler : register(s0);
 float4 tmParams : register(c0);
 float4 main(PS_IN input) : COLOR {
 	float3 hdrColor = tex2D(hdrSampler, input.tex0).rgb * tmParams.x;
+	// c0.w = P6 soft HDR limiter: values above it compressed 75% pre-curve
+	float3 over6 = max(hdrColor - tmParams.w, 0);
+	hdrColor -= over6 * 0.75;
 	float wp2 = tmParams.y * tmParams.y;
 	float3 rein = hdrColor * (1.0 + hdrColor / wp2) / (1.0 + hdrColor);
 	float3 aces = saturate((hdrColor * (2.51 * hdrColor + 0.03)) / (hdrColor * (2.43 * hdrColor + 0.59) + 0.14));
