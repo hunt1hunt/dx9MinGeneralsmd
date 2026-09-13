@@ -126,6 +126,9 @@ public:
 	Bool m_useSSAO;			///< Enable SSAO in deferred rendering (default: false)
 	Int m_ssaoLevel;		///< SSAO quality level: 1=low, 2=medium, 3=high (default: 2)
 	Bool m_useHDR;			///< Enable HDR tone mapping in deferred rendering (default: true)
+	Real m_hdrExposure;		///< P2: pre-tonemap linear exposure multiplier (default 1.0)
+	Real m_hdrWhitePoint;	///< P2: Reinhard white point - brightness mapping to 1.0 (default 4.0)
+	Int m_toneMapMode;		///< P2: 0 = extended Reinhard, 1 = ACES filmic shoulder (default 0)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
 	Bool m_clientRetaliationModeEnabled;

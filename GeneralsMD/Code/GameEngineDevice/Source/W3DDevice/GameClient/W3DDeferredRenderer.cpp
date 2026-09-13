@@ -1321,15 +1321,24 @@ void W3DDeferredRenderer::releaseHDRResources()
 // ============================================================================
 bool W3DDeferredRenderer::compileToneMapShader()
 {
+	// 2026-09-13 P2: exposure + Reinhard white point + ACES filmic shoulder.
+	// c0 = (exposure, whitePoint, modeBlend, 1): exposure scales HDR before
+	// the curve; white point W makes brightness W map to 1.0 (extended
+	// Reinhard); modeBlend lerps Reinhard->ACES (Narkowicz fit) so INI
+	// ToneMapMode = 0/1 selects the curve without shader permutations.
 	const char ps_source[] =
 	"struct PS_IN {\n"
 	"float4 pos : POSITION;\n"
 	"float2 tex0 : TEXCOORD0;\n"
 	"};\n"
 	"sampler hdrSampler : register(s0);\n"
+	"float4 tmParams : register(c0);\n"
 	"float4 main(PS_IN input) : COLOR {\n"
-	"  float3 hdrColor = tex2D(hdrSampler, input.tex0).rgb;\n"
-	"  float3 ldr = hdrColor / (hdrColor + 1.0);\n"
+	"  float3 hdrColor = tex2D(hdrSampler, input.tex0).rgb * tmParams.x;\n"
+	"  float wp2 = tmParams.y * tmParams.y;\n"
+	"  float3 rein = hdrColor * (1.0 + hdrColor / wp2) / (1.0 + hdrColor);\n"
+	"  float3 aces = saturate((hdrColor * (2.51 * hdrColor + 0.03)) / (hdrColor * (2.43 * hdrColor + 0.59) + 0.14));\n"
+	"  float3 ldr = lerp(rein, aces, saturate(tmParams.z));\n"
 	"  ldr = sqrt(abs(ldr));\n"
 	"  return float4(ldr, 1.0);\n"
 	"};\n"
@@ -1409,6 +1418,18 @@ void W3DDeferredRenderer::toneMapPass()
 	DX8CALL(SetViewport(&vp));
 	IDirect3DBaseTexture8 *tex = m_hdrRT->Peek_D3D_Base_Texture();
 	dev->SetTexture(0, tex);
+	// P2: per-frame tone map params from GameData.ini (HDRExposure /
+	// HDRWhitePoint / ToneMapMode). Read every frame - INI live-tunable
+	// across a game restart, no rebuild.
+	{
+		float tm[4] = { 1.0f, 4.0f, 0.0f, 1.0f };
+		if (TheGlobalData) {
+			tm[0] = TheGlobalData->m_hdrExposure;
+			tm[1] = TheGlobalData->m_hdrWhitePoint;
+			tm[2] = (float)TheGlobalData->m_toneMapMode;
+		}
+		dev->SetPixelShaderConstantF(0, tm, 1);
+	}
 	dev->SetPixelShader(m_toneMapPS);
 	DWORD oldZEnable, oldZWrite;
 	dev->GetRenderState(D3DRS_ZENABLE, &oldZEnable);

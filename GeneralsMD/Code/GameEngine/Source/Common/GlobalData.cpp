@@ -80,6 +80,9 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseSSAO",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useSSAO ) },
 	{ "SSAOLevel",						INI::parseInt,				NULL,			offsetof( GlobalData, m_ssaoLevel ) },
 	{ "UseHDR",						INI::parseBool,				NULL,			offsetof( GlobalData, m_useHDR ) },
+	{ "HDRExposure",				INI::parseReal,				NULL,			offsetof( GlobalData, m_hdrExposure ) },
+	{ "HDRWhitePoint",			INI::parseReal,				NULL,			offsetof( GlobalData, m_hdrWhitePoint ) },
+	{ "ToneMapMode",				INI::parseInt,				NULL,			offsetof( GlobalData, m_toneMapMode ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
 	{ "ChipsetType",							INI::parseInt,				NULL,			offsetof( GlobalData, m_chipSetType ) },
@@ -722,6 +725,9 @@ GlobalData::GlobalData()
 	m_useSSAO = FALSE;
 	m_ssaoLevel = 2;
 	m_useHDR = TRUE;
+	m_hdrExposure = 1.0f;		// P2: neutral
+	m_hdrWhitePoint = 4.0f;	// P2: gentle highlight rolloff above 4x
+	m_toneMapMode = 0;			// P2: 0=extended Reinhard, 1=ACES shoulder
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
 	m_useCloudPlane = FALSE;
