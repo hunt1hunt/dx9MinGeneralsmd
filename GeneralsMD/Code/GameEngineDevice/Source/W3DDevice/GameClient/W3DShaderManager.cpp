@@ -2980,15 +2980,21 @@ Int TerrainShaderPBR::set(Int pass)
 					// pre-Transpose + SetMatrix's internal transpose cancel out). We reproduce
 					// that net effect directly: engine Multiply on raw engine memory, uploaded
 					// as one block. No D3DX transposes anywhere.
-					static const bool s_terrainVsEnabled = false;  // 2026-09-09 ROLLBACK: VS route broke the terrain - restore stable fixed-pipeline vertices
-					if (s_terrainVsEnabled && m_dwTerrainVS) {
+					// 2026-09-13 P1d FINAL VERDICT: experiment 4 (transpose) FIXED
+					// the black terrain - the matrix convention WAS the black-out
+					// cause (column-major engine memory needs transposing for raw
+					// HLSL constant uploads; the old PROVEN-BY-MATH note missed the
+					// SetMatrix internal-transpose asymmetry). What REMAINS is a
+					// translucent fan artifact tied to the VS route. Per the roads
+					// precedent (roads = FF vertices + TSS feeds + engine PS =
+					// flawless all along), terrain returns to that SAME road-style
+					// mode: VS OFF, fixed-pipeline vertices, TSS stage 6/7 feeds,
+					// ps_2_a shaders - all P1 features (point-light spec / soft
+					// shadows / sun spec / RA3 textures) unaffected.
+					static const bool s_terrainVsEnabled = false;
+					if (s_terrainVsEnabled && m_dwTerrainVS && !g_gbufferActive
+						&& !ShaderClass::Is_Backface_Culling_Inverted()) {
 						s_terrainVsActive = true;	// PS switch selects the ps_3_0 twins
-						// 2026-09-09 PROVEN-BY-MATH: the fixed pipeline renders terrain correctly
-						// with the DEVICE VIEW/PROJ memory as row-vector math. HLSL mul(v,M).x
-						// = dot(v,c0); uploading the device memory verbatim puts the math rows
-						// in the registers - strictly correct with ZERO transposes. The earlier
-						// water-cover bug was the FVF-missing NORMAL (undefined behavior),
-						// NOT this matrix. Device memory, engine Multiply, no transpose.
 						Matrix4x4 projM;
 						DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projM);
 						Matrix4x4 vp = Multiply(curView, projM);
@@ -3001,9 +3007,36 @@ Int TerrainShaderPBR::set(Int pass)
 						biasM[2] = Vector4(0.0f, 0.0f, 1.0f, 0.0f);
 						biasM[3] = Vector4(0.5f, 0.5f, 0.0f, 1.0f);
 						Matrix4x4 shadowUVZm = Multiply(svp, biasM);  // VERBATIM W3XRenderObj.cpp:1268 (receive matrix)
-						DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vp, 4);
-						DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shadowUVZm, 4);
-						DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(m_dwTerrainVS);
+						// 2026-09-13 EXPERIMENT 4: TRANSPOSE both uploads. The engine
+						// Matrix4x4 memory is column-major; HLSL mul(v,M) wants the
+						// transform ROWS in registers, i.e. the transpose of what
+						// verbatim engine memory provides. D3DX effect SetMatrix does
+						// this transposition internally - raw constant uploads must
+						// do it by hand. Experiment 3 proved verbatim-upload wrong:
+						// terrain went all-black (roads/objects on their own paths
+						// stayed correct) - the classic misprojection signature.
+						{
+							D3DXMATRIX vpT, shT;
+							D3DXMatrixTranspose(&vpT, (D3DXMATRIX*)&vp);
+							D3DXMatrixTranspose(&shT, (D3DXMATRIX*)&shadowUVZm);
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vpT, 4);
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shT, 4);
+						}
+						DX8Wrapper::Set_Vertex_Shader(m_dwTerrainVS);
+						{	// one-shot engagement proof -> pbr_compile.log
+							static bool s_vsEngaged = false;
+							if (!s_vsEngaged) {
+								s_vsEngaged = true;
+								IDirect3DVertexShader9 *curVS = NULL;
+								DX8Wrapper::_Get_D3D_Device8()->GetVertexShader(&curVS);
+								{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+									fprintf(vf, "[%u] TERRAIN_VS bind: handle=%p deviceHas=%p %s\n",
+										(unsigned)timeGetTime(), (void*)m_dwTerrainVS, (void*)curVS,
+										(curVS == m_dwTerrainVS) ? "ENGAGED" : "MISMATCH!");
+									fclose(vf); } }
+								if (curVS) curVS->Release();
+							}
+						}
 					}
 
 					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
@@ -3130,8 +3163,10 @@ void TerrainShaderPBR::reset(void)
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(5, NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(6, NULL);
 	DX8Wrapper::Set_Texture(4, NULL);
-	// 2026-09-09: unbind the terrain VS so other passes get fixed-function vertices
-	DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(NULL);
+	// 2026-09-09: unbind the terrain VS so other passes get fixed-function
+	// vertices. EXPERIMENT 2: go WRAPPER-VISIBLE so the wrapper's own state
+	// tracking (incl. its G-Buffer VS substitution) stays coherent.
+	DX8Wrapper::Set_Vertex_Shader((IDirect3DVertexShader9*)NULL);
 	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 7);
 	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);	// 2026-09-08: shadow receive stage (s4 - DEVENTRY proved s1 swapped by material replay)
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
