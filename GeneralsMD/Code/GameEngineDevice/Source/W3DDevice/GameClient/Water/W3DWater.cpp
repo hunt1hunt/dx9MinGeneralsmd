@@ -2243,8 +2243,16 @@ void WaterRenderObjClass::load(void)
 	WorldHeightMap *WHMap = TheTerrainRenderObject->getMap();
 	if (WHMap)
 	   {
-		 m_dx = (WHMap->getXExtent() + WHMap->getBorderSizeInline() * 2 + s_SkyPlaneExtX) * MAP_XY_FACTOR;
-		 m_dy = (WHMap->getYExtent() + WHMap->getBorderSizeInline() * 2 + s_SkyPlaneExtY) * MAP_XY_FACTOR;
+		 // 2026-09-13: GameData.ini WaterExtentX/Y is AUTHORITATIVE when set
+		 // > 1.0 (single-value form); otherwise keep the map-derived platform
+		 // (full map + border + optional per-map SkyPlaneExt from map.ini).
+		 // Previously the INI value was unconditionally overwritten here,
+		 // making WaterExtentX/Y dead settings - the 2号水平台 could not be
+		 // shrunk without editing code.
+		 m_dx = (TheGlobalData && TheGlobalData->m_waterExtentX > 1.0f) ? TheGlobalData->m_waterExtentX
+		      : (WHMap->getXExtent() + WHMap->getBorderSizeInline() * 2 + s_SkyPlaneExtX) * MAP_XY_FACTOR;
+		 m_dy = (TheGlobalData && TheGlobalData->m_waterExtentY > 1.0f) ? TheGlobalData->m_waterExtentY
+		      : (WHMap->getYExtent() + WHMap->getBorderSizeInline() * 2 + s_SkyPlaneExtY) * MAP_XY_FACTOR;
 
 	     s_MapVSX = (WHMap->getXExtent() - WHMap->getBorderSizeInline() * 2) * MAP_XY_FACTOR;
 	     s_MapVSY = (WHMap->getYExtent() - WHMap->getBorderSizeInline() * 2) * MAP_XY_FACTOR;
@@ -2351,7 +2359,6 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 	loadSetting( &m_settings[ TIME_OF_DAY_NIGHT ], TIME_OF_DAY_NIGHT );
 
 	Set_Sort_Level(2);	//force water to be drawn after all other non translucent objects in scene.
-	//Set_Sort_Level(0);
 	Set_Force_Visible(TRUE);	//water is always visible since it's a composite object made of multiple planes all over the map.
 
 	ReAcquireResources();
@@ -3468,6 +3475,22 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 	if (ShaderClass::Is_Backface_Culling_Inverted())
 		return;	//the water object will not reflect in itself, so don't do anything if rendering a mirror.
 
+	// 2026-09-13 P1d TRIAGE PROBE (one-shot): what vertex processing is on the
+	// device when WATER draws in the main view? NULL=FF is the healthy state.
+	{
+		static bool s_waterVSProbe = false;
+		if (!s_waterVSProbe) {
+			s_waterVSProbe = true;
+			IDirect3DVertexShader9 *curVS = NULL;
+			DX8Wrapper::_Get_D3D_Device8()->GetVertexShader(&curVS);
+			{ FILE* wf = fopen("E:\\pbr_compile.log", "a"); if (wf) {
+				fprintf(wf, "[%u] WATER_DRAW probe: deviceVS=%p (NULL=FF ok; terrainVS=LEAK!)\n",
+					(unsigned)timeGetTime(), (void*)curVS);
+				fclose(wf); } }
+			if (curVS) curVS->Release();
+		}
+	}
+
 	//this water type needs to rendered after the rest of scene, so buffer it up for later
 
 	// If static sort lists are enabled and this mesh has a sort level, put it on the list instead
@@ -3503,7 +3526,7 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 		case WATER_TYPE_2_PVSHADER:
 			//双层水：半透明基底(renderWater) + PV倒影(drawSea)。20号水行为并入2号 (ported from download 20260530)
 			drawSea(rinfo);	//draw water surface (reflection patches)
-			renderWater();	//draw translucent base (0号水基底)
+			//renderWater();	//draw translucent base (0号水基底)
 			if (!m_drawingRiver || m_disableRiver) {
 				renderWaterMesh();	//Draw water surface as 3D deforming mesh if it's enabled on this map.
 			}
