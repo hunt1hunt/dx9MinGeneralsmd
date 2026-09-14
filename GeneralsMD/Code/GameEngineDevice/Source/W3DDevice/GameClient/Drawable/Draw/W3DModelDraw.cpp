@@ -2375,7 +2375,7 @@ void W3DModelDraw::doHideShowSubObjs(const std::vector<ModelConditionInfo::HideS
 			}
 			else
 			{
-				DEBUG_CRASH(("*** ASSET ERROR: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str()));
+				DEBUG_LOG(("*** ASSET WARNING: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str())); // 2026-09-14 downgraded: damaged W3X variants lack subobjects, hide/show miss is a no-op
 			}
 		}
 	}
@@ -4011,7 +4011,7 @@ void W3DModelDraw::updateSubObjects()
 			}
 			else
 			{
-				DEBUG_CRASH(("*** ASSET ERROR: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str()));
+				DEBUG_LOG(("*** ASSET WARNING: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str())); // 2026-09-14 downgraded: damaged W3X variants lack subobjects, hide/show miss is a no-op
 			}
 		}
 	}
