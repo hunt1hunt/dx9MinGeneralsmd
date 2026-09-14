@@ -40,6 +40,10 @@ void StackDump(void (*callback)(const char*));
 // If callback is NULL then will write using OuputDebugString
 void StackDumpFromContext(DWORD eip,DWORD esp,DWORD ebp, void (*callback)(const char*));
 
+// 2026-09-14: dump the stack of the last SEH fault captured by the vectored
+// exception handler (see StackDump.cpp). No-op if no fault was captured.
+void DumpFaultContextStack(void (*callback)(const char*));
+
 // Gets count* addresses from the current stack
 void FillStackAddresses(void**addresses, unsigned int count, unsigned int skip = 0);
 

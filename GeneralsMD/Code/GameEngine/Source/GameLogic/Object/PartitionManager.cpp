@@ -1902,7 +1902,15 @@ void PartitionData::doSmallFill(
 			PartitionCell *cell = ThePartitionManager->getCellAt(x, y);
 			if (cell)
 			{
-				m_coiArray[m_coiInUseCount++].addCoverage(cell, this);
+				// 2026-09-14: hard bound guard. Oversized objects (W3X
+				// replacement buildings) reach this "small" path; without the
+				// guard the unbounded m_coiInUseCount++ overruns the COI
+				// array and corrupts memory -> silent GameEngine::update
+				// crashes minutes into a skirmish.
+				if (m_coiInUseCount < m_coiArrayCount)
+				{
+					m_coiArray[m_coiInUseCount++].addCoverage(cell, this);
+				}
 			}
 		}
 	}
