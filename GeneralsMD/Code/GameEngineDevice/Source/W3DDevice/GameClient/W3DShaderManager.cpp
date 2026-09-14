@@ -3601,9 +3601,27 @@ Int W3DPBRShader::init( void )
 		// ps_3_0 diffuse IBL shader: texCUBE irradiance + c11 debug (Stage 5.3+5.5)
 		{
 			// Try loading irradiance CubeMap for diffuse IBL
+			// 2026-09-14 FIX: CubeTextureClass's from-file loader parses the
+			// header as TGA, so a .dds cube map yields Height=0 -> "Invalid
+			// texture size, scaling required" + width==height assert at
+			// startup (dx8wrapper.cpp _Create_DX8_Cube_Texture). Load via
+			// D3DXCreateCubeTextureFromFile (correct DDS parsing, same route
+			// as W3DDeferredRenderer::initIBL) and wrap the D3D texture.
 			try {
-				m_envIrradianceMap = NEW_REF(CubeTextureClass, ("env_irradiance.dds", NULL, MIP_LEVELS_ALL, WW3D_FORMAT_UNKNOWN, false, false));
-				DEBUG_LOG(("PBR IBL: env_irradiance.dds loaded OK\n"));
+				IDirect3DCubeTexture8* cubeTex = NULL;
+				HRESULT hr = D3DXCreateCubeTextureFromFile(
+					DX8Wrapper::_Get_D3D_Device8(), "ART\\Textures\\env_irradiance.dds", &cubeTex);
+				if (SUCCEEDED(hr) && cubeTex) {
+					// the (IDirect3DBaseTexture8*) wrap ctor is inside #if 0;
+					// use a 1x1 procedural cube + Apply_New_Surface instead.
+					m_envIrradianceMap = NEW_REF(CubeTextureClass,
+						(1, 1, WW3D_FORMAT_A8R8G8B8, MIP_LEVELS_1, TextureBaseClass::POOL_MANAGED, false, false));
+					m_envIrradianceMap->Apply_New_Surface((IDirect3DBaseTexture8*)cubeTex, true, true);
+					cubeTex->Release();	// Apply_New_Surface took its own reference
+					DEBUG_LOG(("PBR IBL: env_irradiance.dds loaded OK (D3DX route)\n"));
+				} else {
+					DEBUG_LOG(("PBR IBL: D3DXCreateCubeTextureFromFile failed hr=0x%08X\n", (unsigned)hr));
+				}
 			} catch (...) {
 				DEBUG_LOG(("PBR IBL: env_irradiance.dds not found\n"));
 			}
@@ -3712,17 +3730,39 @@ Int W3DPBRShader::init( void )
 		// ps_3_0 specular IBL shader: Split-Sum + c11 debug (Stage 5.4+5.5)
 		{
 			// Try loading pre-filtered environment CubeMap
+			// 2026-09-14 FIX: same D3DX route as env_irradiance above (the
+			// CubeTextureClass from-file loader mis-parses .dds cube headers).
 			try {
-				m_envPrefilteredMap = NEW_REF(CubeTextureClass, ("env_prefiltered.dds", NULL, MIP_LEVELS_ALL, WW3D_FORMAT_UNKNOWN, false, false));
-				DEBUG_LOG(("PBR IBL: env_prefiltered.dds loaded OK\n"));
+				IDirect3DCubeTexture8* cubeTex = NULL;
+				HRESULT hr = D3DXCreateCubeTextureFromFile(
+					DX8Wrapper::_Get_D3D_Device8(), "ART\\Textures\\env_prefiltered.dds", &cubeTex);
+				if (SUCCEEDED(hr) && cubeTex) {
+					m_envPrefilteredMap = NEW_REF(CubeTextureClass,
+						(1, 1, WW3D_FORMAT_A8R8G8B8, MIP_LEVELS_1, TextureBaseClass::POOL_MANAGED, false, false));
+					m_envPrefilteredMap->Apply_New_Surface((IDirect3DBaseTexture8*)cubeTex, true, true);
+					cubeTex->Release();	// Apply_New_Surface took its own reference
+					DEBUG_LOG(("PBR IBL: env_prefiltered.dds loaded OK (D3DX route)\n"));
+				} else {
+					DEBUG_LOG(("PBR IBL: D3DXCreateCubeTextureFromFile(prefiltered) failed hr=0x%08X\n", (unsigned)hr));
+				}
 			} catch (...) {
 				DEBUG_LOG(("PBR IBL: env_prefiltered.dds not found\n"));
 			}
 
 			// Try loading BRDF LUT texture
+			// 2026-09-14 FIX: same D3DX route as the env cube maps above (the
+			// from-file loader mis-parses .dds headers as TGA -> Height=0).
 			try {
-				m_brdfLUT = NEW_REF(TextureClass, ("env_brdf_lut.dds", NULL, MIP_LEVELS_1, WW3D_FORMAT_UNKNOWN, false, false));
-				DEBUG_LOG(("PBR IBL: env_brdf_lut.dds loaded OK\n"));
+				IDirect3DTexture8* lutTex = NULL;
+				HRESULT hr = D3DXCreateTextureFromFile(
+					DX8Wrapper::_Get_D3D_Device8(), "ART\\Textures\\env_brdf_lut.dds", &lutTex);
+				if (SUCCEEDED(hr) && lutTex) {
+					m_brdfLUT = NEW_REF(TextureClass, ((IDirect3DBaseTexture8*)lutTex));
+					lutTex->Release();	// wrap ctor took its own reference
+					DEBUG_LOG(("PBR IBL: env_brdf_lut.dds loaded OK (D3DX route)\n"));
+				} else {
+					DEBUG_LOG(("PBR IBL: D3DXCreateTextureFromFile(brdf_lut) failed hr=0x%08X\n", (unsigned)hr));
+				}
 			} catch (...) {
 				DEBUG_LOG(("PBR IBL: env_brdf_lut.dds not found\n"));
 			}
