@@ -94,6 +94,52 @@ MYEIP1:
 }
 
 
+// ---------------------------------------------------------------------------
+// 2026-09-14: fault-context capture via vectored exception handler.
+// The original FillStackAddresses walk breaks under FPO-optimized builds
+// (ebp chain unreliable -> ReleaseCrashInfo.txt always had an EMPTY stack).
+// A VEH grabs the real faulting EIP/ESP/EBP at first chance; ReleaseCrash
+// then uses StackDumpFromContext to symbolize the actual crash site.
+static DWORD g_FaultEIP = 0, g_FaultESP = 0, g_FaultEBP = 0;
+
+static LONG WINAPI FaultVectoredHandler(EXCEPTION_POINTERS *ep)
+{
+	if (g_FaultEIP == 0 && ep != NULL && ep->ContextRecord != NULL)
+	{
+		g_FaultEIP = ep->ContextRecord->Eip;
+		g_FaultESP = ep->ContextRecord->Esp;
+		g_FaultEBP = ep->ContextRecord->Ebp;
+	}
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// VC6-era SDK lacks AddVectoredExceptionHandler declarations - load it
+// dynamically from kernel32 (available since XP SP2).
+typedef LONG (WINAPI *VECTORED_HANDLER_FN)(EXCEPTION_POINTERS *);
+typedef PVOID (WINAPI *ADD_VEH_FN)(ULONG, VECTORED_HANDLER_FN);
+
+static int InstallFaultContextCapture()
+{
+	HMODULE k32 = ::GetModuleHandle("kernel32.dll");
+	if (k32 == NULL)
+		return -1;
+	ADD_VEH_FN addVeh = (ADD_VEH_FN)::GetProcAddress(k32, "AddVectoredExceptionHandler");
+	if (addVeh == NULL)
+		return -1;
+	return (addVeh(1, (VECTORED_HANDLER_FN)FaultVectoredHandler) != NULL) ? 0 : -1;
+}
+// static initializer: install before main() runs
+static int s_FaultCaptureInstalled = InstallFaultContextCapture();
+
+void DumpFaultContextStack(void (*callback)(const char*))
+{
+	if (g_FaultEIP == 0)
+		return;	// no captured fault (crash was a C++ exception, not SEH)
+	if (callback == NULL)
+		callback = StackDumpDefaultHandler;
+	StackDumpFromContext(g_FaultEIP, g_FaultESP, g_FaultEBP, callback);
+}
+
 //*****************************************************************************
 //*****************************************************************************
 void StackDumpFromContext(DWORD eip,DWORD esp,DWORD ebp, void (*callback)(const char*))
