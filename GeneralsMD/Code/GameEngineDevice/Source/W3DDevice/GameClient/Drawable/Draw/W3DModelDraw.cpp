@@ -852,7 +852,10 @@ void ModelConditionInfo::validateWeaponBarrelInfo() const
 				}
 			}	// if empty
 
-			DEBUG_ASSERTCRASH(!(m_modelName.isNotEmpty() && m_weaponBarrelInfoVec[wslot].empty()), ("*** ASSET ERROR: No fx bone named '%s' found in model %s!\n",fxBoneName.str(),m_modelName.str()));
+			// 2026-09-14: downgraded crash->warning (see public-bone note above);
+			// damaged W3X variants legitimately lack muzzle-fx bones, the empty
+			// barrel vec is already handled downstream (earlier W3X_FIRE logs).
+			DEBUG_LOG(("*** ASSET WARNING: No fx bone named '%s' found in model %s!\n",fxBoneName.str(),m_modelName.str()));
 		}
 	}
 	m_validStuff |= BARRELS_VALID;
