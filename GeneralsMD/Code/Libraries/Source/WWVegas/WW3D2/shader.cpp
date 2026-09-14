@@ -284,7 +284,11 @@ void ShaderClass::Enable_Fog (const char *source)
 
 		case ShaderClass::SRCBLEND_ZERO:
 			if (Get_Dst_Blend_Func() == ShaderClass::DSTBLEND_SRC_COLOR) {
-				Set_Fog_Func (ShaderClass::FOG_WHITE);
+				// 2026-09-13 VF-0a: was FOG_WHITE - multiply-blended mod meshes
+				// (trees/rocks/bridges from bigs) then fogged to WHITE silhouettes
+				// whenever the scene fog was active. FOG_DISABLE lets the shader.cpp
+				// P4 GLOBAL OVERRIDE assign them OUR fog color like everything else.
+				Set_Fog_Func (ShaderClass::FOG_DISABLE);
 			} else {
 				Report_Unable_To_Fog (source);
 			}	
@@ -503,16 +507,28 @@ void ShaderClass::Apply()
 				fm = TRUE;
 				break;
 			case ShaderClass::FOG_SCALE_FRAGMENT:
-				fogColor = 0;	
+				fogColor = DX8Wrapper::Get_Fog_Color();	// VF-0b: our color
 				fm = TRUE;
 				break;
 			case ShaderClass::FOG_WHITE:
-				fogColor = 0xffffff;
+				fogColor = DX8Wrapper::Get_Fog_Color();	// VF-0b: our color
 				fm = TRUE;
 				break;
 			case ShaderClass::FOG_DISABLE:
 				fm = FALSE;
 				break;
+			}
+
+			// 2026-09-13 P4 GLOBAL OVERRIDE v2: with the scene fog active (fed
+			// from GameData.ini in W3DScene::Render), EVERY legacy material is
+			// forced ON with OUR fog color. v1 only fixed authored-FOG_DISABLE
+			// and missed authored FOG_WHITE (mod trees/rocks) - those fogged
+			// to WHITE silhouettes. Unconditional color = consistent fog band.
+			// Programmable-PS paths are unaffected: D3D9 bypasses the FF fog
+			// blend whenever a pixel shader is bound, so nothing double-fogs.
+			if (DX8Wrapper::Get_Fog_Enable()) {
+				fm = TRUE;
+				fogColor = DX8Wrapper::Get_Fog_Color();
 			}
 
 			DX8Wrapper::Set_DX8_Render_State(D3DRS_FOGENABLE,fm);
