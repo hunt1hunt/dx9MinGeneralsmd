@@ -690,8 +690,11 @@ void ModelConditionInfo::validateCachedBones(RenderObjClass* robj, Real scale) c
 	{
 		if (!doSingleBoneName(robj, *it, m_pristineBones))
 		{
-			// DO crash here, since we specifically requested this bone for this model
-			DEBUG_CRASH(("*** ASSET ERROR: public bone '%s' (and variations thereof) not found in model %s!\n",it->str(),m_modelName.str()));
+			// 2026-09-14: W3X replacement INIs are auto-generated across hundreds
+			// of models; damaged-state variants (e.g. avlasertnk_d1) legitimately
+			// lack the Turret bone. The bone simply won't aim - not worth a
+			// blocking crash dialog. Downgraded to a warning.
+			DEBUG_LOG(("*** ASSET WARNING: public bone '%s' (and variations thereof) not found in model %s!\n", it->str(), m_modelName.str()));
 		}
 		//else
 		//{
