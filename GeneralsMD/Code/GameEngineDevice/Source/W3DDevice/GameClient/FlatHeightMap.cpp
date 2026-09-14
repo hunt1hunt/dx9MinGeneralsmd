@@ -466,6 +466,7 @@ void FlatHeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	Int devicePasses;
 	W3DShaderManager::ShaderTypes st;
 	Bool doCloud = TheGlobalData->m_useCloudMap;
+	if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 8)) doCloud = FALSE;	// VF-1a probe: bit3 forces cloud map off
 
 	Matrix3D tm(Transform);
 	// If there are trees, tell them to draw at the transparent time to draw.

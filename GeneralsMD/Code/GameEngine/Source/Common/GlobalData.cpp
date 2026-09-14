@@ -96,6 +96,9 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "FogColorR",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorR ) },
 	{ "FogColorG",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorG ) },
 	{ "FogColorB",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorB ) },
+	{ "WaterProbeMode",			INI::parseInt,				NULL,			offsetof( GlobalData, m_waterProbeMode ) },
+	{ "TerrainVSRoute",			INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainVSRoute ) },
+	{ "TerrainProbeMode",		INI::parseInt,				NULL,			offsetof( GlobalData, m_terrainProbeMode ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
 	{ "ChipsetType",							INI::parseInt,				NULL,			offsetof( GlobalData, m_chipSetType ) },
@@ -752,6 +755,9 @@ GlobalData::GlobalData()
 	m_fogEnd = 900.0f;				// P4 (user-tuned)
 	m_fogHeight = 350.0f;		// P4 height ceiling (<=1 disables)
 	m_fogColorR = 0.65f; m_fogColorG = 0.72f; m_fogColorB = 0.80f;	// P4 light blue-gray
+	m_waterProbeMode = 0;	// VF-1a: probe off - both water channels drawn normally
+	m_terrainVSRoute = FALSE;	// VF-1b: road-style FF/TSS terrain (VS route is INI opt-in)
+	m_terrainProbeMode = 0;	// VF-1a: probe off - all terrain passes drawn normally
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
 	m_useCloudPlane = FALSE;

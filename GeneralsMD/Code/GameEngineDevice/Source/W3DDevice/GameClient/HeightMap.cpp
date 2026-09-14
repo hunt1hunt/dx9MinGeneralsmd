@@ -62,6 +62,7 @@
 #include <rinfo.h>
 #include <camera.h>
 #include "d3d8compat.h"
+#include <d3dx9tex.h>
 #include "Common/GlobalData.h"
 #include "Common/PerfTimer.h"
 
@@ -1922,6 +1923,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	Int i,j,devicePasses;
 	W3DShaderManager::ShaderTypes st;
 	Bool doCloud = TheGlobalData->m_useCloudMap;
+	if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 8)) doCloud = FALSE;	// VF-1a probe: bit3 forces cloud map off (LOD can override the INI flag)
 
 	Matrix3D tm(Transform);
 #if 0 // There is some weirdness sometimes with the dx8 static buffers.
@@ -2225,10 +2227,16 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  			W3DShaderManager::resetShader(st);
 
 		//Draw feathered shorelines
-		renderShoreLines(&rinfo.Camera);
+		// VF-1a terrain probe: bit12(4096) skips shoreline feather strips
+		if (!(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 4096)))
+			renderShoreLines(&rinfo.Camera);
 
 		//Do additional pass over any tiles that have 3 textures blended together.
-		if (TheGlobalData->m_use3WayTerrainBlends)
+		// VF-1a terrain probe: bit11(2048) skips the extra-blend tile pass (3-way
+		// texture blend quads, dynamic XYZNDUV2 VB, own draw path) - TOP suspect:
+		// the fan is a grass-textured wedge = terrain blend geometry misprojected.
+		if (TheGlobalData->m_use3WayTerrainBlends
+			&& !(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 2048)))
 			renderExtraBlendTiles();
 
 		Int yCoordMin = m_map->getDrawOrgY();
@@ -2259,7 +2267,8 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 			}
 		}
 	#endif
-	if (m_propBuffer) {
+	// VF-1a terrain probe: bit13(8192) skips terrain props (trees/rocks buffer)
+	if (m_propBuffer && !(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 8192))) {
 		m_propBuffer->drawProps(rinfo);
 	}
 	#ifdef DO_SCORCH
@@ -2278,23 +2287,76 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 		ShaderClass::Invalidate();
 		DX8Wrapper::Apply_Render_State_Changes();
 
-		m_bridgeBuffer->drawBridges(&rinfo.Camera, m_disableTextures, doCloud?m_stageTwoTexture:NULL);
+		// VF-1a terrain probe: bit2(4) skips bridge draws (fan-mystery suspect)
+		if (!(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 4)))
+			m_bridgeBuffer->drawBridges(&rinfo.Camera, m_disableTextures, doCloud?m_stageTwoTexture:NULL);
 
+		// VF-1a terrain probe: bit1(2) skips track decals
+		if (!(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 2)))
 		if (TheTerrainTracksRenderObjClassSystem)
 			TheTerrainTracksRenderObjClassSystem->flush();
 
-		if (m_shroud && rinfo.Additional_Pass_Count())
+		// VF-1a terrain probe: bit0(1) skips the shroud additional terrain pass
+		// (the full-map shroud cover grid re-draw - fan-mystery suspect)
+		if (m_shroud && rinfo.Additional_Pass_Count()
+			&& !(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 1)))
 		{
 			rinfo.Peek_Additional_Pass(0)->Install_Materials();
 			renderTerrainPass(&rinfo.Camera);
 			rinfo.Peek_Additional_Pass(0)->UnInstall_Materials();
 		}
 
+		// VF-1a LEAK HAMMER 2026-09-14: force-unbind the terrain VS at the END
+		// of the whole terrain draw flow. The P1d-era "water-cover" fan = a
+		// translucent mirror plane (BloomBox 0qsnwateryy1 family) drawn in the
+		// transparent phase with m_dwTerrainVS still bound: the VS ignores the
+		// object's WORLD matrix and transforms its object-space verts by the
+		// stale terrain ViewProj -> a giant misprojected translucent plane.
+		// Any leak path that skipped TerrainShaderPBR::reset's unbind dies here.
+		{
+			static bool s_postTerrainVSProbe = false;
+			if (!s_postTerrainVSProbe) {
+				s_postTerrainVSProbe = true;
+				IDirect3DVertexShader9 *curVS = NULL;
+				DX8Wrapper::_Get_D3D_Device8()->GetVertexShader(&curVS);
+				{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+					fprintf(vf, "[%u] POST-TERRAIN probe: deviceVS=%p (NULL=clean; terrainVS=LEAK CONFIRMED)\n",
+						(unsigned)timeGetTime(), (void*)curVS);
+					fclose(vf); } }
+				if (curVS) curVS->Release();
+			}
+		}
+		DX8Wrapper::Set_Vertex_Shader((IDirect3DVertexShader9*)NULL);
+
+		// VF-1a EYES 2026-09-14: auto-dump the backbuffer twice (terrain frames
+		// 600 & 1200) so the fan artifact can be inspected directly instead of
+		// blind-probed. World is drawn here, UI not yet - clean view of the fan.
+		{
+			static Int s_eyeFrame = 0;
+			s_eyeFrame++;
+			if ((s_eyeFrame == 600 || s_eyeFrame == 1200)
+				&& TheGlobalData && (TheGlobalData->m_terrainProbeMode & 262144)) {	// VF-1a bit18: opt-in screenshot dumper (frames 600/1200 -> E:\fan_dump_N.png)
+				IDirect3DDevice9 *eyeDev = DX8Wrapper::_Get_D3D_Device8();
+				IDirect3DSurface9 *eyeBack = NULL;
+				if (eyeDev && SUCCEEDED(eyeDev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &eyeBack))) {
+					char eyePath[64];
+					sprintf(eyePath, "E:\\fan_dump_%d.png", (int)s_eyeFrame);
+					HRESULT eyeHr = D3DXSaveSurfaceToFileA(eyePath, D3DXIFF_PNG, eyeBack, NULL, NULL);
+					{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+						fprintf(vf, "[%u] EYE DUMP %s hr=0x%08x\n", (unsigned)timeGetTime(), eyePath, (unsigned)eyeHr);
+						fclose(vf); } }
+					eyeBack->Release();
+				}
+			}
+		}
+
 		ShaderClass::Invalidate();
 		DX8Wrapper::Apply_Render_State_Changes();
 	}
-	else
-			m_bridgeBuffer->drawBridges(&rinfo.Camera, m_disableTextures, m_stageTwoTexture);
+		else
+			// VF-1a terrain probe: bit2(4) skips bridge draws (low-LOD branch)
+			if (!(TheGlobalData && (TheGlobalData->m_terrainProbeMode & 4)))
+				m_bridgeBuffer->drawBridges(&rinfo.Camera, m_disableTextures, m_stageTwoTexture);
 
   if ( m_waypointBuffer ) 
 	  m_waypointBuffer->drawWaypoints(rinfo);
@@ -2544,6 +2606,7 @@ void HeightMapRenderObjClass::renderExtraBlendTiles(void)
 			W3DShaderManager::ShaderTypes st = W3DShaderManager::ST_ROAD_BASE;
 
 			Bool doCloud = TheGlobalData->m_useCloudMap;
+	if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 8)) doCloud = FALSE;	// VF-1a probe: bit3 forces cloud map off (LOD can override the INI flag)
 			if (TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT) {
 				doCloud = false;
 			}
