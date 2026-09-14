@@ -231,7 +231,19 @@ void Energy::removePowerBonus( Object *obj )
 // ------------------------------------------------------------------------------------------------
 void Energy::addProduction(Int amt)
 {
-	m_energyProduction += amt; 
+	m_energyProduction += amt;
+
+	// 2026-09-14 defensive clamp: a double objectLeavingInfluence (object
+	// sold AND destroyed in the same tick) drives production negative, which
+	// trips the "Negative Energy numbers" DEBUG_ASSERTCRASH and kills the
+	// game mid-skirmish. Clamp at zero and log the delta so the offending
+	// bookkeeping path can still be identified from DebugLogFileI.txt.
+	if (m_energyProduction < 0)
+	{
+		DEBUG_LOG(("Energy: clamped negative production %d -> 0 (delta=%d, double objectLeavingInfluence?)\n",
+			m_energyProduction, amt));
+		m_energyProduction = 0;
+	}
 
 	if( m_owner == NULL )
 		return;
@@ -244,7 +256,16 @@ void Energy::addProduction(Int amt)
 // ------------------------------------------------------------------------------------------------
 void Energy::addConsumption(Int amt)
 {
-	m_energyConsumption += amt; 
+	m_energyConsumption += amt;
+
+	// 2026-09-14 defensive clamp: see addProduction - same double-leave
+	// protection for the consumption side.
+	if (m_energyConsumption < 0)
+	{
+		DEBUG_LOG(("Energy: clamped negative consumption %d -> 0 (delta=%d, double objectLeavingInfluence?)\n",
+			m_energyConsumption, amt));
+		m_energyConsumption = 0;
+	}
 
 	if( m_owner == NULL )
 		return;
