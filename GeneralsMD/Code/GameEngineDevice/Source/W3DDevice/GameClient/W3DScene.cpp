@@ -1062,13 +1062,37 @@ void RTS3DScene::updatePlayerColorPasses(void)
 void RTS3DScene::Render(RenderInfoClass & rinfo)
 {
 	//USE_PERF_TIMER(NonTerrainRender)
-	// P4 ROLLBACK 2026-09-13: the FF vertex-fog experiment made authored-
-	// FOG_WHITE mod materials (trees/rocks/bridges from bigs) render as WHITE
-	// silhouettes, and the shader.cpp override provably never executes on
-	// their draw path (they bypass ShaderClass fog emission). FF fog stays
-	// OFF; material fog (terrain/W3X/pbr_unit) covers the visible majority.
-	// Tree/rock fog = OPEN ITEM: needs a draw-path probe (next session).
-	DX8Wrapper::Set_Fog(FogEnabled, FogColor, FogStart, FogEnd);
+	// VF-0a 2026-09-13: FF vertex fog re-enabled for legacy fixed-function
+	// geometry (trees/rocks/bridges/FF meshes). The white-silhouette cause is
+	// now fixed at the source: Enable_Fog()'s multiply-blend auto-mapping no
+	// longer assigns FOG_WHITE, so the shader.cpp P4 GLOBAL OVERRIDE gives
+	// every legacy material OUR GameData.ini fog color. Programmable-PS paths
+	// (terrain/W3X/pbr_unit) are unaffected: D3D9 bypasses the FF fog blend
+	// when a pixel shader is bound - no double fogging.
+	if (TheGlobalData && TheGlobalData->m_useDistanceFog) {
+		Vector3 vfc(TheGlobalData->m_fogColorR, TheGlobalData->m_fogColorG, TheGlobalData->m_fogColorB);
+		DX8Wrapper::Set_Fog(true, vfc, TheGlobalData->m_fogStart, TheGlobalData->m_fogEnd);
+		// VF-0b DEVICE FLOOR: force the fog render states directly every frame
+		// so no cached ShaderClass path can leave a stale/default (white/black)
+		// FOGCOLOR behind on any fixed-function draw.
+		{
+			IDirect3DDevice8 *vdev = DX8Wrapper::_Get_D3D_Device8();
+			if (vdev) {
+				IDirect3DDevice9 *v9 = static_cast<IDirect3DDevice9*>(vdev);
+				float fs = TheGlobalData->m_fogStart, fe = TheGlobalData->m_fogEnd;
+				DWORD fcol = 0;
+				fcol = ((DWORD)(TheGlobalData->m_fogColorR * 255.0f)) | (((DWORD)(TheGlobalData->m_fogColorG * 255.0f)) << 8) | (((DWORD)(TheGlobalData->m_fogColorB * 255.0f)) << 16);
+				v9->SetRenderState(D3DRS_FOGENABLE, TRUE);
+				v9->SetRenderState(D3DRS_FOGCOLOR, fcol);
+				v9->SetRenderState(D3DRS_FOGVERTEXMODE, D3DFOG_LINEAR);
+				v9->SetRenderState(D3DRS_FOGTABLEMODE, D3DFOG_NONE);
+				v9->SetRenderState(D3DRS_FOGSTART, *(DWORD*)&fs);
+				v9->SetRenderState(D3DRS_FOGEND, *(DWORD*)&fe);
+			}
+		}
+	} else {
+		DX8Wrapper::Set_Fog(FogEnabled, FogColor, FogStart, FogEnd);
+	}
 
 	//Override the behind building selection if it's not available on current hardware (needs stencil).
 	TheWritableGlobalData->m_enableBehindBuildingMarkers = TheWritableGlobalData->m_enableBehindBuildingMarkers && DX8Wrapper::Has_Stencil();
