@@ -624,6 +624,10 @@ SOURCE=.\Source\Common\PerfTimer.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\Source\Common\System\FrameProbe.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\Source\Common\RandomValue.cpp
 # End Source File
 # Begin Source File
@@ -3007,6 +3011,10 @@ SOURCE=.\Include\Common\PerfMetrics.h
 # Begin Source File
 
 SOURCE=.\Include\Common\PerfTimer.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\Common\System\FrameProbe.h
 # End Source File
 # Begin Source File
 
