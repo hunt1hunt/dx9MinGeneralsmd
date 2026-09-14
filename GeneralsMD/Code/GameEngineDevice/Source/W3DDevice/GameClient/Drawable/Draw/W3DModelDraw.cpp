@@ -350,7 +350,8 @@ HAnimClass* W3DAnimationInfo::getAnimHandle() const
 	{
 		// Get_HAnim addrefs it, so we'll have to release it in our dtor.
 		m_handle = W3DDisplay::m_assetManager->Get_HAnim(m_name.str());
-		DEBUG_ASSERTCRASH(m_handle, ("*** ASSET ERROR: animation %s not found\n",m_name.str()));
+		if (m_handle == NULL)
+			DEBUG_LOG(("*** ASSET WARNING: animation %s not found\n",m_name.str())); // 2026-09-14 downgraded: NULL handle is handled by callers
 		if (m_handle)
 		{
 			m_naturalDurationInMsec = m_handle->Get_Num_Frames() * 1000.0f / m_handle->Get_Frame_Rate();
@@ -362,7 +363,8 @@ HAnimClass* W3DAnimationInfo::getAnimHandle() const
 	return m_handle;
 #else
 	HAnimClass* handle = W3DDisplay::m_assetManager->Get_HAnim(m_name.str());
-	DEBUG_ASSERTCRASH(handle, ("*** ASSET ERROR: animation %s not found\n",m_name.str()));
+	if (handle == NULL)
+		DEBUG_LOG(("*** ASSET WARNING: animation %s not found\n",m_name.str())); // 2026-09-14 downgraded (see above)
 	if (handle != NULL && m_naturalDurationInMsec < 0)
 	{
 		m_naturalDurationInMsec = handle->Get_Num_Frames() * 1000.0f / handle->Get_Frame_Rate();
