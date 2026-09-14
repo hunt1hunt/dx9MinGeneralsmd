@@ -1627,6 +1627,17 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRNoise1PixelShader30;
 	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShader30;
 	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader30;
+	// VF-1c: MRT twins - same lighting math, but main() returns 3 targets so the
+	// G-Buffer pass also receives terrain geometry: RT1 = oct(geoN)+roughness,
+	// RT2 = NDC z (clip.z/clip.w, .g = z^2 - the exact g_gbufferPS domain).
+	// Built at init() by BuildTerrainMRTSrc() string surgery on the variant
+	// sources; the four plain twins above stay byte-identical. ps_3_0 only
+	// (D3D9 MRT writes need SM3), so they pair with m_dwTerrainVS and bind
+	// exclusively while g_gbufferActive.
+	IDirect3DPixelShader9*	m_dwPBRPixelShaderMRTD;
+	IDirect3DPixelShader9*	m_dwPBRNoise1PixelShaderMRTD;
+	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShaderMRTD;
+	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShaderMRTD;
 	virtual Int set(Int pass);
 	virtual void reset(void);
 	virtual Int init(void);
@@ -2118,6 +2129,57 @@ static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppSh
 	return hr;
 }
 
+// VF-1c 2026-09-14: build an MRT (G-Buffer) twin from one terrain variant
+// source. String surgery on the three anchors every variant shares (see the
+// class comment on the m_dw*PixelShaderMRTD members for the output layout):
+//   1) "float4 main(" -> inject camVP (PS c32-c35) + octahedral encoder +
+//      MRT_OUT struct and switch the return type;
+//   2) ") : COLOR\n" -> ")\n" (drop main's single-target return semantic -
+//      the MRT_OUT members carry COLOR0/1/2; a struct return may not add one);
+//   3) final "return float4(<color>, 1.0);" -> 3-target return using the
+//      variant's own lit color, geoN, roughness and worldPos.
+// Every anchor must exist EXACTLY once - a miss returns false and the caller
+// skips the MRT twin (the plain twins are untouched either way).
+static bool BuildTerrainMRTSrc(const char* variantSrc, const char* colorVar,
+	std::string& mrtOut)
+{
+	const char* prolog =
+		"float4x4 camVP : register(c32);\n"
+		"float2 octEncode(float3 n) {\n"
+		"    n /= abs(n.x) + abs(n.y) + abs(n.z);\n"
+		"    float2 p = n.xy;\n"
+		"    p = (n.z >= 0) ? p : (1 - abs(p.yx)) * (2 * step(0, p) - 1);\n"
+		"    return p * 0.5 + 0.5;\n"
+		"}\n"
+		"struct MRT_OUT { float4 c0 : COLOR0; float4 c1 : COLOR1; float4 c2 : COLOR2; };\n"
+		"MRT_OUT main(";
+	char tail[512];
+	sprintf(tail,
+		"    MRT_OUT o;\n"
+		"    float4 clipP = mul(float4(worldPos, 1.0), camVP);\n"
+		"    float ndcZ = clipP.z / clipP.w;\n"
+		"    o.c0 = float4(%s, 1.0);\n"
+		"    o.c1 = float4(octEncode(geoN), c2.y, 0.0);\n"
+		"    o.c2 = float4(ndcZ, ndcZ * ndcZ, 0.0, 0.0);\n"
+		"    return o;\n",
+		colorVar);
+	std::string s(variantSrc);
+	size_t p1 = s.find("float4 main(");
+	if (p1 == std::string::npos) return false;
+	s.replace(p1, 12, prolog);
+	size_t p2 = s.find(") : COLOR\n");
+	if (p2 == std::string::npos) return false;
+	// struct-returning entry must NOT carry a return semantic (the members own
+	// the COLOR0/1/2 semantics); just drop main's ": COLOR".
+	s.replace(p2, 10, ")\n");
+	std::string tailFind = std::string("    return float4(") + colorVar + ", 1.0);\n";
+	size_t p3 = s.find(tailFind);
+	if (p3 == std::string::npos) return false;
+	s.replace(p3, tailFind.size(), tail);
+	mrtOut = s;
+	return true;
+}
+
 // 2026-09-12 ②B: terrain forward point lights. Prepended to every terrain
 // PBR PS variant; fed from the same W3X registry the object PBR shaders use
 // (TerrainShaderPBR::set uploads c13-c29). World position arrives per-pixel
@@ -2199,6 +2261,10 @@ Int TerrainShaderPBR::init( void )
 	m_dwPBRNoise1PixelShader30 = NULL;
 	m_dwPBRNoise2PixelShader30 = NULL;
 	m_dwPBRNoise12PixelShader30 = NULL;
+	m_dwPBRPixelShaderMRTD = NULL;
+	m_dwPBRNoise1PixelShaderMRTD = NULL;
+	m_dwPBRNoise2PixelShaderMRTD = NULL;
+	m_dwPBRNoise12PixelShaderMRTD = NULL;
 	// 2026-09-09 RA3-FAITHFUL TERRAIN VS (vs_3_0): the terrain has NO vertex
 	// shader today (FVF fixed-function), which is why every coordinate feed we
 	// tried (TSS stage6/7) was at the mercy of the driver's fixed-function black
@@ -2321,7 +2387,7 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float3 dp1 = ddx(worldPos);\n"
 			"    float3 dp2 = ddy(worldPos);\n"
@@ -2363,6 +2429,13 @@ Int TerrainShaderPBR::init( void )
 			return terrainShaderPixelShader.init();
 		// P1d: ps_3_0 twin (legal vs_3_0 pairing for the terrain VS route)
 		compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader30, "terrain_pbr_nm_30", "ps_3_0");
+		// VF-1c: MRT G-Buffer twin (RT1 oct-normal, RT2 NDC z) - see BuildTerrainMRTSrc
+		{
+			std::string mrtSrc;
+			if (BuildTerrainMRTSrc(src, "result", mrtSrc)) {
+				compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRPixelShaderMRTD, "terrain_pbr_nm_mrt", "ps_3_0");
+			}
+		}
 	}
 
 	// 2026-09-10 W3D-MESH CAST DEPTH PS: dx8renderer.cpp's shadow-pass branch
@@ -2498,7 +2571,7 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float3 dp1 = ddx(worldPos);\n"
@@ -2538,6 +2611,13 @@ Int TerrainShaderPBR::init( void )
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
 			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader30, "terrain_pbr_nm_noise1_30", "ps_3_0");
+			// VF-1c: MRT G-Buffer twin
+			{
+				std::string mrtSrc;
+				if (BuildTerrainMRTSrc(src, "lit", mrtSrc)) {
+					compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRNoise1PixelShaderMRTD, "terrain_pbr_nm_noise1_mrt", "ps_3_0");
+				}
+			}
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
 		}
@@ -2599,7 +2679,7 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 lightmapTex = tex2D(s2, tex2);\n"
 			"    float3 dp1 = ddx(worldPos);\n"
@@ -2639,6 +2719,13 @@ Int TerrainShaderPBR::init( void )
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
 			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader30, "terrain_pbr_nm_noise2_30", "ps_3_0");
+			// VF-1c: MRT G-Buffer twin
+			{
+				std::string mrtSrc;
+				if (BuildTerrainMRTSrc(src, "lit", mrtSrc)) {
+					compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRNoise2PixelShaderMRTD, "terrain_pbr_nm_noise2_mrt", "ps_3_0");
+				}
+			}
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
 		}
@@ -2701,7 +2788,7 @@ Int TerrainShaderPBR::init( void )
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"
+			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float4 lightmapTex = tex2D(s3, tex3);\n"
@@ -2742,6 +2829,13 @@ Int TerrainShaderPBR::init( void )
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
 			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader30, "terrain_pbr_nm_noise12_30", "ps_3_0");
+			// VF-1c: MRT G-Buffer twin
+			{
+				std::string mrtSrc;
+				if (BuildTerrainMRTSrc(src, "lit", mrtSrc)) {
+					compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRNoise12PixelShaderMRTD, "terrain_pbr_nm_noise12_mrt", "ps_3_0");
+				}
+			}
 			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
 			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
 		}
@@ -2884,6 +2978,11 @@ Int TerrainShaderPBR::set(Int pass)
 	}
 
 		// Stage 4: PBR detail texture (procedural noise, micro-detail for terrain).
+		// VF-1c BISECT REVERT 2026-09-14: restored the original stage-4 bind
+		// (the s4->s6 move is A/B'd against the black-terrain+fan regression;
+		// see the twin-source revert note). The s4 sampler collision with the
+		// shadow-map receive stays as a known, pre-existing image-quality
+		// defect until the regression is understood.
 		if (W3DShaderManager::getShaderTexture(4)) {
 			DX8Wrapper::_Get_D3D_Device8()->SetTexture(4,
 				W3DShaderManager::getShaderTexture(4)->Peek_D3D_Texture());
@@ -3043,7 +3142,16 @@ Int TerrainShaderPBR::set(Int pass)
 					if (TheGlobalData && TheGlobalData->m_terrainVSRoute) {
 						vsBind = ((TheGlobalData->m_terrainProbeMode & 131072) && m_dwTerrainVS20) ? m_dwTerrainVS20 : m_dwTerrainVS;
 					}
-					if (vsBind && !g_gbufferActive
+					// VF-1c 2026-09-14: also engage the terrain VS inside the
+					// G-Buffer pass when MRT depth is on (GameData
+					// TerrainMRTDepth) - the MRT twins are ps_3_0 and cannot
+					// pair with fixed-function vertices, so the vs_3_0 route
+					// must run in that pass too. Probe bit131072's vs_2_0档
+					// stays excluded (SM2 cannot write MRT).
+					bool mrtDepthPass = g_gbufferActive && TheGlobalData && TheGlobalData->m_terrainMRTDepth
+						&& (m_dwPBRPixelShaderMRTD != NULL)
+						&& !(TheGlobalData->m_terrainProbeMode & 131072);
+					if (vsBind && (!g_gbufferActive || mrtDepthPass)
 						&& !ShaderClass::Is_Backface_Culling_Inverted()) {
 						s_terrainVsActive = (vsBind == m_dwTerrainVS);	// PS switch selects the ps_3_0 twins (bit131072 keeps ps_2_a)
 						Matrix4x4 projM;
@@ -3070,6 +3178,12 @@ Int TerrainShaderPBR::set(Int pass)
 							D3DXMATRIX vpT;
 							D3DXMatrixTranspose(&vpT, (D3DXMATRIX*)&vp);
 							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vpT, 4);
+							// VF-1c: the same transposed VP to PS c32-c35 - the MRT
+							// twins rebuild NDC z from worldPos via
+							// mul(float4(wp,1), camVP); identical convention to the
+							// VS c0 upload above. The plain twins never read c32+, so
+							// uploading on the forward pass too is harmless.
+							DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(32, (const float*)&vpT, 4);
 							// VF-1a probe bit5(32): upload ShadowUVZ VERBATIM (the W3X
 							// receive-matrix convention, W3XRenderObj.cpp:1268) instead
 							// of transposed. The exp.4 transpose fixed the POSITION
@@ -3101,7 +3215,19 @@ Int TerrainShaderPBR::set(Int pass)
 							D3DXMatrixTranspose(&cloudT, &cloudM);
 							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(8, (const float*)&cloudT, 4);
 						}
-						DX8Wrapper::Set_Vertex_Shader(vsBind);
+						// VF-1c: RAW device bind during the G-Buffer pass - the
+						// WRAPPER's Set_Vertex_Shader would substitute g_gbufferVS
+						// there (dx8wrapper.h G-Buffer override), but the terrain
+						// needs its own vs_3_0 to feed the MRT twins. The wrapper's
+						// cached Vertex_Shader goes stale until the next wrapper
+						// call re-asserts it (Set_Vertex_Shader has no early-out),
+						// which is the correct state for the W3X mesh draws that
+						// follow in this pass anyway.
+						if (g_gbufferActive) {
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(vsBind);
+						} else {
+							DX8Wrapper::Set_Vertex_Shader(vsBind);
+						}
 						{	// one-shot engagement proof -> pbr_compile.log
 							static bool s_vsEngaged = false;
 							if (!s_vsEngaged) {
@@ -3225,11 +3351,10 @@ Int TerrainShaderPBR::set(Int pass)
 			//   64: c1=0 sunColor feeds ONLY the GGX spec add - kills sun spec
 			//   128: c29.x=0 point-light count - kills forward point lights
 			//   512: c2.xzw=0 (keep y=roughness) - kills normal-map detail, N=geoN
-			//   1024: unbind s4 + c7=0 - kills BOTH the shadow sample AND the
-			//        detail term (sampler collision: the twin samples s4 for
-			//        "detail" at tex0*8.0 while s4 holds the SHADOW MAP - the
-			//        shadow image tiled 8x over terrain = radial-fold fan look;
-			//        bit16 killed only the shadow multiply, NOT this sample)
+				//   1024: unbind s4 + c7=0 - kills BOTH the shadow sample AND the
+				//        detail term (sampler collision: the twin samples s4 for
+				//        "detail" at tex0*8.0 while s4 holds the SHADOW MAP; the
+				//        collision is a known defect - see the stage-4 revert note)
 			if (TheGlobalData && TheGlobalData->m_terrainProbeMode) {
 				IDirect3DDevice9 *pkDev = DX8Wrapper::_Get_D3D_Device8();
 				float kz[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -3252,15 +3377,23 @@ Int TerrainShaderPBR::set(Int pass)
 		// Select the correct pixel shader for this variant.
 	// P1d: when the vs_3_0 terrain VS is bound this pass, select the ps_3_0
 	// twins (D3D9 SM3 pairing). s_terrainVsActive is set where the VS binds.
+	// VF-1c: during the G-Buffer pass prefer the MRT twins (RT1 oct-normal +
+	// RT2 NDC z) - they only exist on the vs_3_0 route, and the RAW bind here
+	// is what keeps the terrain's own PS under the wrapper's g_gbufferPS
+	// override (that override intercepts wrapper calls only).
 	switch (curShader) {
 		case W3DShaderManager::ST_TERRAIN_PBR:
-			if (s_terrainVsActive && m_dwPBRPixelShader30)
+			if (s_terrainVsActive && g_gbufferActive && m_dwPBRPixelShaderMRTD)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShaderMRTD);
+			else if (s_terrainVsActive && m_dwPBRPixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader30);
 			else
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE1:
-			if (s_terrainVsActive && m_dwPBRNoise1PixelShader30)
+			if (s_terrainVsActive && g_gbufferActive && m_dwPBRNoise1PixelShaderMRTD)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShaderMRTD);
+			else if (s_terrainVsActive && m_dwPBRNoise1PixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShader30);
 			else if (m_dwPBRNoise1PixelShader)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShader);
@@ -3268,7 +3401,9 @@ Int TerrainShaderPBR::set(Int pass)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE2:
-			if (s_terrainVsActive && m_dwPBRNoise2PixelShader30)
+			if (s_terrainVsActive && g_gbufferActive && m_dwPBRNoise2PixelShaderMRTD)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShaderMRTD);
+			else if (s_terrainVsActive && m_dwPBRNoise2PixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShader30);
 			else if (m_dwPBRNoise2PixelShader)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShader);
@@ -3276,7 +3411,9 @@ Int TerrainShaderPBR::set(Int pass)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE12:
-			if (s_terrainVsActive && m_dwPBRNoise12PixelShader30)
+			if (s_terrainVsActive && g_gbufferActive && m_dwPBRNoise12PixelShaderMRTD)
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShaderMRTD);
+			else if (s_terrainVsActive && m_dwPBRNoise12PixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShader30);
 			else if (m_dwPBRNoise12PixelShader)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShader);
@@ -3375,6 +3512,22 @@ Int TerrainShaderPBR::shutdown(void)
 	if (m_dwPBRNoise12PixelShader30) {
 		m_dwPBRNoise12PixelShader30->Release();
 		m_dwPBRNoise12PixelShader30 = NULL;
+	}
+	if (m_dwPBRPixelShaderMRTD) {
+		m_dwPBRPixelShaderMRTD->Release();
+		m_dwPBRPixelShaderMRTD = NULL;
+	}
+	if (m_dwPBRNoise1PixelShaderMRTD) {
+		m_dwPBRNoise1PixelShaderMRTD->Release();
+		m_dwPBRNoise1PixelShaderMRTD = NULL;
+	}
+	if (m_dwPBRNoise2PixelShaderMRTD) {
+		m_dwPBRNoise2PixelShaderMRTD->Release();
+		m_dwPBRNoise2PixelShaderMRTD = NULL;
+	}
+	if (m_dwPBRNoise12PixelShaderMRTD) {
+		m_dwPBRNoise12PixelShaderMRTD->Release();
+		m_dwPBRNoise12PixelShaderMRTD = NULL;
 	}
 	return terrainShaderPixelShader.shutdown();
 }

@@ -98,6 +98,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "FogColorB",					INI::parseReal,				NULL,			offsetof( GlobalData, m_fogColorB ) },
 	{ "WaterProbeMode",			INI::parseInt,				NULL,			offsetof( GlobalData, m_waterProbeMode ) },
 	{ "TerrainVSRoute",			INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainVSRoute ) },
+	{ "TerrainMRTDepth",		INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainMRTDepth ) },
 	{ "TerrainProbeMode",		INI::parseInt,				NULL,			offsetof( GlobalData, m_terrainProbeMode ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
@@ -757,6 +758,7 @@ GlobalData::GlobalData()
 	m_fogColorR = 0.65f; m_fogColorG = 0.72f; m_fogColorB = 0.80f;	// P4 light blue-gray
 	m_waterProbeMode = 0;	// VF-1a: probe off - both water channels drawn normally
 	m_terrainVSRoute = FALSE;	// VF-1b: road-style FF/TSS terrain (VS route is INI opt-in)
+	m_terrainMRTDepth = FALSE;	// VF-1c: quarantined OFF. The MRT twins ride the vs_3_0 terrain route, and that route is quarantined by fan-case-2.0 (2026-09-14 night A/B: TerrainVSRoute=Yes alone reproduces black terrain + fan on a build behaviorally identical to 57540f3f; =No is clean). Re-enable only after the VS route is exonerated.
 	m_terrainProbeMode = 0;	// VF-1a: probe off - all terrain passes drawn normally
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;

@@ -144,6 +144,7 @@ public:
 	Real m_fogColorB;			///< P4: fog color blue 0-1 (default 0.80)
 	Int m_waterProbeMode;		///< VF-1a: water dual-channel probe - 1=skip shroud pass, 2=skip main pass, 3=skip both (default 0 = normal)
 	Bool m_terrainVSRoute;	///< VF-1b: terrain vertex-shader route (vs_3_0 + ps_3_0 twins; transpose fix in; default FALSE = road-style FF/TSS mode)
+	Bool m_terrainMRTDepth;	///< VF-1c: terrain MRT G-Buffer depth (RT1 oct-normal + RT2 NDC z during the G-Buffer pass). Default FALSE - rides the vs_3_0 route which fan-case-2.0 quarantined (2026-09-14).
 	Int m_terrainProbeMode;		///< VF-1a: terrain pass probe - 1=skip shroud pass, 2=skip tracks, 4=skip bridges, 8=force cloud map off (default 0 = normal)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
