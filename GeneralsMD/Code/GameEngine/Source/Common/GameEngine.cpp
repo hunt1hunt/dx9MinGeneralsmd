@@ -48,6 +48,7 @@
 #include "Common/LocalFileSystem.h"
 #include "Common/CDManager.h"
 #include "Common/GlobalData.h"
+#include "Common/System/FrameProbe.h"	// SagePerfDiag (Tools/PERF_DIAG_DESIGN.md)
 #include "Common/PerfTimer.h"
 // C-linkage: PBR per-model override store (exported from W3DShaderManager)
 extern "C" void PBR_SetLegacyParam(const char *name, float roughness, float metalness);
@@ -194,6 +195,7 @@ GameEngine::GameEngine( void )
 //-------------------------------------------------------------------------------------------------
 GameEngine::~GameEngine()
 {
+	FrameProbeShutdown();	// SagePerfDiag: flush pending ring to CSV before exit
 	//extern std::vector<std::string>	preloadTextureNamesGlobalHack;
 	//preloadTextureNamesGlobalHack.clear();
 
@@ -587,6 +589,9 @@ void GameEngine::init( int argc, char *argv[] )
 
 		setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
 
+		// SagePerfDiag: init frame probe after INI load (no-op unless FRAME_PROBE compiled + EnableFrameProbe=yes)
+		FrameProbeInit(TheGlobalData->m_enableFrameProbe ? 1 : 0, TheGlobalData->m_frameProbeIntervalSec);
+
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_musicOn, AudioAffect_Music);
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_soundsOn, AudioAffect_Sound);
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_sounds3DOn, AudioAffect_Sound3D);
@@ -765,39 +770,56 @@ void GameEngine::update( void )
 { 
 	USE_PERF_TIMER(GameEngine_update)
 	{
+		// SagePerfDiag P0/T3: seven-stage frame timing (no-ops unless FRAME_PROBE compiled).
+		// The old per-frame fopen diagLogI breadcrumbs are retired here - they
+		// polluted the very frame times we need to measure (see commit 809f3845).
+		FP_BEGIN(FRAME_TOTAL);
 
 		{
-			
-			// VERIFY CRC needs to be in this code block.  Please to not pull TheGameLogic->update() inside this block.
-			VERIFY_CRC
-			diagLogI("UPDATE_FRAME_START", g_diagFrame);
+				// VERIFY CRC needs to be in this code block.  Please to not pull TheGameLogic->update() inside this block.
+				VERIFY_CRC
 
-			TheRadar->UPDATE();
+				FP_BEGIN(RADAR);
+				TheRadar->UPDATE();
+				FP_END(RADAR);
 
-			/// @todo Move audio init, update, etc, into GameClient update
-			
-			TheAudio->UPDATE();
-			TheGameClient->UPDATE();
-			diagLogI("UPDATE_CLIENT_DONE", g_diagFrame);
-			TheMessageStream->propagateMessages();
+				/// @todo Move audio init, update, etc, into GameClient update
 
-			if (TheNetwork != NULL)
-			{
-				TheNetwork->UPDATE();
+				FP_BEGIN(AUDIO);
+				TheAudio->UPDATE();
+				FP_END(AUDIO);
+
+				FP_BEGIN(CLIENT);
+				TheGameClient->UPDATE();
+				FP_END(CLIENT);
+
+				FP_BEGIN(MSG);
+				TheMessageStream->propagateMessages();
+				FP_END(MSG);
+
+				if (TheNetwork != NULL)
+				{
+					FP_BEGIN(NET);
+					TheNetwork->UPDATE();
+					FP_END(NET);
+				}
+
+				TheCDManager->UPDATE();
 			}
-			 
-			TheCDManager->UPDATE();
-		}
 
 
-		if ((TheNetwork == NULL && !TheGameLogic->isGamePaused()) || (TheNetwork && TheNetwork->isFrameDataReady()))
-		{
-			TheGameLogic->UPDATE();
-			diagLogI("UPDATE_LOGIC_DONE", g_diagFrame);
-		}
+			if ((TheNetwork == NULL && !TheGameLogic->isGamePaused()) || (TheNetwork && TheNetwork->isFrameDataReady()))
+			{
+				FP_BEGIN(LOGIC);
+				TheGameLogic->UPDATE();
+				FP_END(LOGIC);
+			}
 
-		g_diagFrame++;
-	}	// end perfGather
+			FP_END(FRAME_TOTAL);
+			FP_COUNT(OBJECTS, TheGameLogic ? TheGameLogic->getObjectCount() : 0);
+			FrameProbeEndFrame();
+			g_diagFrame++;
+		}	// end perfGather
 
 }
 
@@ -911,13 +933,15 @@ void GameEngine::execute( void )
 		  if ( ! TheGlobalData->m_TiVOFastMode )
           {
             // limit the framerate
-					  DWORD now = timeGetTime();
-					  DWORD limit = (m_maxFPS > 0) ? (DWORD)(1000.0f/m_maxFPS)-1 : 0;
-					  while (TheGlobalData->m_useFpsLimit && (now - prevTime) < limit) 
-					  {
-						  ::Sleep(0);
-						  now = timeGetTime();
-					  }
+				  DWORD now = timeGetTime();
+				  DWORD limit = (m_maxFPS > 0) ? (DWORD)(1000.0f/m_maxFPS)-1 : 0;
+				  FP_BEGIN(FPS_LIMIT_SPIN);	// SagePerfDiag: the spin itself is a frame-time consumer
+				  while (TheGlobalData->m_useFpsLimit && (now - prevTime) < limit)
+				  {
+					  ::Sleep(0);
+					  now = timeGetTime();
+				  }
+				  FP_END(FPS_LIMIT_SPIN);
 					  //Int slept = now - prevTime;
 					  //DEBUG_LOG(("delayed %d\n",slept));
 
