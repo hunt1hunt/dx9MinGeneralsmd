@@ -4,14 +4,16 @@
 > ②桌面 `SagePerfDiag协作` 文件夹（本机快照）。以 GitHub 为准，桌面版每次会话结束刷新。
 > 协作者开工前先 `git pull` 并读此看板，认领任务后改状态并提交。
 
-## 当前状态：P0 施工中（2026-09-14 开工，已获项目所有者批准）
+## 当前状态：P0 核心贯通 ✅（2026-09-14 实测验证），P0 验收余项进行中
 
 | 阶段 | 任务 | 负责人 | 状态 | 验收 | 备注 |
 |---|---|---|---|---|---|
-| P0 活基线 | T1 FrameProbe 核心框架 | zcode | 🔄 进行中 | 探针开销<1% | 新建 FrameProbe.cpp/.h |
-| P0 | T2 INI 开关（GlobalData） | zcode | ⬜ 待办 | 编译过 | |
-| P0 | T3 主循环七段插桩 | zcode | ⬜ 待办 | 掉帧可指认 | GameEngine.cpp:764/:905 |
-| P0 | T8 spd_analyzer.py 最小版 | 可并行认领 | ⬜ 待办 | 读 .spd 出瀑布 | Python，无需碰 C++ |
+| P0 活基线 | T1 FrameProbe 核心框架 | zcode | ✅ | 探针开销<1%待测 | commit 13b90009 |
+| P0 | T2 INI 开关（GlobalData） | zcode | ✅ | 编译过 | EnableFrameProbe/FrameProbeIntervalSec |
+| P0 | T3 主循环七段插桩 | zcode | ✅ | 落盘验证通过 | 30秒间隔自动产出.spd |
+| P0 | T8 spd_analyzer.py 最小版 | zcode | ✅ | 真实数据瀑布报告 | 合成+实测双验证 |
+| P0余项 | 探针开/关开销对比<1% | zcode | ⬜ | 硬验收 | 需游戏内同场景跑两遍 |
+| P0余项 | 同场景3遍重复性<5% | zcode | ⬜ | 硬验收 | 建议 P1 的 bench_capture 一并做 |
 | P1 渲染归因 | T4 Present 拆分+渲染三段 | zcode | ⬜ | | W3DDisplay.cpp:1680 |
 | P1 | T6 wrapper 状态计数 | 可并行认领 | ⬜ | | DX8Wrapper |
 | P1 | T10 bench_capture.ps1 采集脚本 | 可并行认领 | ⬜ | | 录像回放+定时退出 |
@@ -41,3 +43,16 @@
 ## 变更日志
 
 - 2026-09-14 zcode：看板建立，P0 T1 开工。
+- 2026-09-14 zcode：P0 T1/T2/T3/T8 完成并实测贯通（commit 13b90009）。游戏 30 秒间隔自动落盘 .spd，
+  spd_analyzer 真实数据瀑布报告 OK。构建踩坑两则见下。
+
+## 本机踩坑记录（新增，其他机器协作也适用）
+
+1. **VC6 增量构建的 mtime 陷阱**：git rebase/autostash 后源文件 mtime 变旧，增量编译用过期的旧编译结果
+   （症状：明明存在的类成员报 C2039 "not a member"，新旧字段一起报）。解决：④全量重编，或 touch 报错的 cpp。
+2. **改头文件后宏未生效**：FrameProbe.h 的 FRAME_PROBE 自动定义加入后，未变更的 GameEngine.cpp 不重编，
+   FP 宏仍是空操作（症状：Init 日志有、落盘没有）。解决：touch 该 cpp 强制重编。
+3. **工具包 bat 勿在 git-bash 直接调**：`find` 会被 GNU find 抢占、误报 error 计数。用
+   `PATH="/c/Windows/System32:$PATH" cmd //c "③增量构建Internal.bat"` 方式调用；其实际构建结果以
+   desk_rts.log 的 "N error(s)" 行为准。
+4. **INI 接线生效凭证**：DebugLogFileI.txt 出现 "FrameProbe: init enable=1"，游戏目录出现 frameprobe_*.spd。
