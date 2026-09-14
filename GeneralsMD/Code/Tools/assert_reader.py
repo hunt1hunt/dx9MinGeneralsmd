@@ -129,9 +129,11 @@ def screenshot(path):
         print("截图失败:", e)
 
 def click_ignore(hwnd):
-    """点击弹窗按钮: 断言弹窗点两次 忽略/Ignore, 崩溃弹窗(Technical Difficulties)
-    点一次 确定/OK。断言被忽略后常跟随一个 Uncaught Exception 确认框, 由
-    下一轮扫描处理。返回是否点击了任何按钮。"""
+    """点击弹窗按钮, 覆盖断言弹窗的完整三段流程:
+      1) 点两次 忽略/Ignore (内部状态机需要第二下确认)
+      2) 弹出'继续将导致不可预测的行为'确认框 -> 点 是(&Y)
+      3) 崩溃弹窗(Technical Difficulties) -> 点 确定/OK
+    每轮扫描都会重试, 上一轮未生效的按钮下一轮补点。"""
     BM_CLICK = 0xF5
     clicked = False
     child = user32.GetWindow(hwnd, GW_CHILD)
@@ -139,9 +141,11 @@ def click_ignore(hwnd):
     while child:
         t = get_wtext(child)
         if t and ("忽略" in t or "Ignore" in t):
-            # 经验: 一次忽略要点两下才算完成(弹窗内部状态机需要第二下确认)
             _send_msg_timeout(child, BM_CLICK, 0, 0)
             time.sleep(0.2)
+            _send_msg_timeout(child, BM_CLICK, 0, 0)
+            clicked = True
+        elif t and ("是" in t or "Yes" in t):
             _send_msg_timeout(child, BM_CLICK, 0, 0)
             clicked = True
         elif t and ("确定" in t or t.strip() == "OK"):
