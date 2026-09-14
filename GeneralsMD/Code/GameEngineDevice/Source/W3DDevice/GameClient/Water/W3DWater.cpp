@@ -3491,6 +3491,14 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 		}
 	}
 
+	// VF-1a probe v2: mode 3 (both bits) kills the ENTIRE water object - all
+	// water types and subpaths (drawSea/DrawReflectionOnSeaBox channels, the
+	// deforming renderWaterMesh, river + feather edges). v1 only gated the two
+	// drawSea channels, leaving renderWaterMesh alive - the "not water" verdict
+	// was not yet sound.
+	if (TheGlobalData && (TheGlobalData->m_waterProbeMode & 3) == 3)
+		return;
+
 	//this water type needs to rendered after the rest of scene, so buffer it up for later
 
 	// If static sort lists are enabled and this mesh has a sort level, put it on the list instead
@@ -3954,6 +3962,11 @@ void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
 	Int TotalRRInf = m_ReflectRenderVec.size();
 	for (Int i=0; i<TotalRRInf; ++i)
 	{
+		// VF-1a probe: mode 2/3 skips the MAIN water channel (binary search
+		// for the fan artifact - VS-era FF state window suspicion)
+		if (TheGlobalData && (TheGlobalData->m_waterProbeMode & 2))
+		{ continue; }
+
 		ST_ReflectRenderInfo &RRInf = m_ReflectRenderVec[i];
 		if (RRInf.NeedToDraw == false)
 		{ continue; }
@@ -4043,6 +4056,10 @@ void WaterRenderObjClass::DrawReflectionOnSeaBox(RenderInfoClass &rinfo)
 	DX8Wrapper::Invalidate_Cached_Render_States();
 
 	if (TheTerrainRenderObject->getShroud() == NULL)
+	{ return; }
+
+	// VF-1a probe: mode 1/3 skips the SHROUD (war-fog) second channel
+	if (TheGlobalData && (TheGlobalData->m_waterProbeMode & 1))
 	{ return; }
 
 	/*注：VC6把for循环初始化变量视为函数级作用域，此处改用ri避免与上面主循环的i重定义 */
@@ -4334,6 +4351,9 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 			if (!pTrig->isWaterArea()) continue;
 			if (pTrig->getNumPoints() < 3) continue;
 
+			// VF-1a probe: mode 2/3 skips the MAIN water channel (fallback path)
+			if (TheGlobalData && (TheGlobalData->m_waterProbeMode & 2)) continue;
+
 			WaterDiagF("CP5_DRAWSEA: polygon found, height", (float)pTrig->getPoint(0)->z);
 		polyHeight = (Real)pTrig->getPoint(0)->z;
 			reflTex = findReflectionTextureForHeight(polyHeight);
@@ -4525,7 +4545,8 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	DX8Wrapper::Invalidate_Cached_Render_States();
 
 	// ====================== Shroud fog second pass (same height branch pattern) ======================
-	if (TheTerrainRenderObject->getShroud())
+	// VF-1a probe: mode 1/3 skips the SHROUD (war-fog) second channel (fallback path)
+	if (TheTerrainRenderObject->getShroud() && !(TheGlobalData && (TheGlobalData->m_waterProbeMode & 1)))
 	{
 		W3DShaderManager::setTexture(0,TheTerrainRenderObject->getShroud()->getShroudTexture());
 		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 0);

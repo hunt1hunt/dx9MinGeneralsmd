@@ -1616,6 +1616,7 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRNoise2PixelShader;	///<ps_2_0 PBR + lightmap (noise2)
 	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader;	///<ps_2_0 PBR + cloud + lightmap
 	IDirect3DVertexShader9* m_dwTerrainVS;			///<2026-09-09 RA3-faithful vs_3_0 terrain vertex shader (world pos + shadow UV)
+	IDirect3DVertexShader9* m_dwTerrainVS20;		///<VF-1a bisection: same VS math compiled vs_2_0 (pairs with ps_2_a twins - splits "VS math" vs "SM3 pairing")
 	// 2026-09-12 P1d: ps_3_0 twins of the four terrain variants. The 09-09
 	// rollback bound vs_3_0 against these ps_2_a shaders - an ILLEGAL D3D9
 	// SM3 pairing (vs_3_0 requires ps_3_0), which is the likeliest real
@@ -2193,6 +2194,7 @@ Int TerrainShaderPBR::init( void )
 	m_dwPBRNoise2PixelShader = NULL;
 	m_dwPBRNoise12PixelShader = NULL;
 	m_dwTerrainVS = NULL;
+	m_dwTerrainVS20 = NULL;
 	m_dwPBRPixelShader30 = NULL;
 	m_dwPBRNoise1PixelShader30 = NULL;
 	m_dwPBRNoise2PixelShader30 = NULL;
@@ -2209,11 +2211,13 @@ Int TerrainShaderPBR::init( void )
 		const char* vsSrc =
 		"float4x4 ViewProj  : register(c0);\n"
 		"float4x4 ShadowUVZ : register(c4);\n"
+		"float4x4 CloudUV   : register(c8);\n"	// VF-1a FIX: world->cloud/lightmap UV (replicates FF TSS stage2)
 		"struct VSOut {\n"
 		"    float4 Position  : POSITION;\n"
 		"    float4 Diffuse   : COLOR0;\n"
 		"    float2 UV0       : TEXCOORD0;\n"
 		"    float2 UV1       : TEXCOORD1;\n"
+		"    float2 CloudUV   : TEXCOORD2;\n"	// VF-1a FIX: Noise twins sample s2 here - was UNWRITTEN (fan!)
 		"    float3 WorldPos  : TEXCOORD6;\n"
 		"    float4 ShadowUVZ : TEXCOORD7;\n"
 		"};\n"
@@ -2225,6 +2229,7 @@ Int TerrainShaderPBR::init( void )
 		"    o.Diffuse   = diffuse;\n"
 		"    o.UV0       = uv0;\n"
 		"    o.UV1       = uv1;\n"
+		"    o.CloudUV   = mul(float4(pos, 1.0), CloudUV).xy;\n"
 		"    o.WorldPos  = pos;\n"
 		"    o.ShadowUVZ = mul(float4(pos, 1.0), ShadowUVZ);\n"
 		"    return o;\n"
@@ -2241,6 +2246,23 @@ Int TerrainShaderPBR::init( void )
 			vsCompiled->Release();
 		}
 		if (vsErrors) vsErrors->Release();
+		// VF-1a bisection bit131072: the SAME source compiled to vs_2_0. vs_2_0
+		// legally pairs with the ps_2_a twins and outputs the same interpolators
+		// (TEXCOORD2/6/7 included), so terrain renders through a vertex SHADER
+		// on the SM2 path - splitting "VS math/declaration" from "SM3 pairing".
+		{
+			ID3DXBuffer* vs2Compiled = NULL; ID3DXBuffer* vs2Errors = NULL;
+			HRESULT vs2Hr = D3DXCompileShader(vsSrc, (UINT)strlen(vsSrc), NULL, NULL, "main", "vs_2_0", 0, &vs2Compiled, &vs2Errors, NULL);
+			{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+				fprintf(vf, "[%d] terrainVS20 (vs_2_0) compile hr=0x%08x\n", (int)timeGetTime(), (unsigned)vs2Hr);
+				if (vs2Errors) fprintf(vf, "    ERR: %s\n", (const char*)vs2Errors->GetBufferPointer());
+				fclose(vf); } }
+			if (SUCCEEDED(vs2Hr) && vs2Compiled) {
+				DX8Wrapper::_Get_D3D_Device8()->CreateVertexShader((const DWORD*)vs2Compiled->GetBufferPointer(), &m_dwTerrainVS20);
+				vs2Compiled->Release();
+			}
+			if (vs2Errors) vs2Errors->Release();
+		}
 	}
 
 
@@ -2333,7 +2355,7 @@ Int TerrainShaderPBR::init( void )
 			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
 			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
 			"    result = lerp(result, fogColor.rgb, fogA);\n"
-			"    return float4(result, base0.a);\n"
+			"    return float4(result, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha. Passing base0.a made terrain translucent wherever the base texture's alpha < 1, revealing background geometry (border skirt walls with perspective-stretched grass) as the giant radial FAN artifact. Proven by the PBRDebugMode=20 A/B (full pipeline + forced alpha=1 = fan gone).
 			"}\n";
 		// 2026-09-08: ps_3_0 REQUIRED for the shadow-map sample (the s7/ps_2_a
 		// combination read 0 - viz mode 22 proved all-black terrain).
@@ -2512,7 +2534,7 @@ Int TerrainShaderPBR::init( void )
 			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
 			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
 			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
-			"    return float4(lit, base0.a);\n"
+			"    return float4(lit, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha - base0.a translucency was the FAN (see base variant note)
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
 			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader30, "terrain_pbr_nm_noise1_30", "ps_3_0");
@@ -2613,7 +2635,7 @@ Int TerrainShaderPBR::init( void )
 			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
 			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
 			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
-			"    return float4(lit, base0.a);\n"
+			"    return float4(lit, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha - base0.a translucency was the FAN (see base variant note)
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
 			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader30, "terrain_pbr_nm_noise2_30", "ps_3_0");
@@ -2716,7 +2738,7 @@ Int TerrainShaderPBR::init( void )
 			"    float fogA = saturate((distance(worldPos, PSInvView[3].xyz) - fogParams.x) * fogParams.y);\n"
 			"    fogA *= 1.0 - saturate(worldPos.z * fogParams.z);\n"
 			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
-			"    return float4(lit, base0.a);\n"
+			"    return float4(lit, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha - base0.a translucency was the FAN (see base variant note)
 			"}\n";
 		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
 			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader30, "terrain_pbr_nm_noise12_30", "ps_3_0");
@@ -3007,10 +3029,23 @@ Int TerrainShaderPBR::set(Int pass)
 					// mode: VS OFF, fixed-pipeline vertices, TSS stage 6/7 feeds,
 					// ps_2_a shaders - all P1 features (point-light spec / soft
 					// shadows / sun spec / RA3 textures) unaffected.
-					static const bool s_terrainVsEnabled = false;
-					if (s_terrainVsEnabled && m_dwTerrainVS && !g_gbufferActive
+					// VF-1b 2026-09-13: the compile-time const becomes an INI
+					// switch (TerrainVSRoute, default No) so the VS route can be
+					// restarted per GameData.ini without a rebuild. The P1d exp.4
+					// transpose fix stays in. If the dormant translucent-fan
+					// artifact returns with this route on, WaterProbeMode
+					// binary-searches the drawSea dual channels (W3DWater.cpp).
+					// VF-1a bisection bit131072: bind the vs_2_0 build instead of
+					// vs_3_0 and keep the ps_2_a twins - same math, same
+					// interpolators, SM2 pairing. Fan gone => SM3-pairing issue;
+					// fan stays => VS math/vertex-declaration issue.
+					IDirect3DVertexShader9 *vsBind = NULL;
+					if (TheGlobalData && TheGlobalData->m_terrainVSRoute) {
+						vsBind = ((TheGlobalData->m_terrainProbeMode & 131072) && m_dwTerrainVS20) ? m_dwTerrainVS20 : m_dwTerrainVS;
+					}
+					if (vsBind && !g_gbufferActive
 						&& !ShaderClass::Is_Backface_Culling_Inverted()) {
-						s_terrainVsActive = true;	// PS switch selects the ps_3_0 twins
+						s_terrainVsActive = (vsBind == m_dwTerrainVS);	// PS switch selects the ps_3_0 twins (bit131072 keeps ps_2_a)
 						Matrix4x4 projM;
 						DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projM);
 						Matrix4x4 vp = Multiply(curView, projM);
@@ -3032,13 +3067,41 @@ Int TerrainShaderPBR::set(Int pass)
 						// terrain went all-black (roads/objects on their own paths
 						// stayed correct) - the classic misprojection signature.
 						{
-							D3DXMATRIX vpT, shT;
+							D3DXMATRIX vpT;
 							D3DXMatrixTranspose(&vpT, (D3DXMATRIX*)&vp);
-							D3DXMatrixTranspose(&shT, (D3DXMATRIX*)&shadowUVZm);
 							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vpT, 4);
-							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shT, 4);
+							// VF-1a probe bit5(32): upload ShadowUVZ VERBATIM (the W3X
+							// receive-matrix convention, W3XRenderObj.cpp:1268) instead
+							// of transposed. The exp.4 transpose fixed the POSITION
+							// (black terrain) but BOTH matrices share the same
+							// mul(float4(pos,1), M) VS convention - if the fan still
+							// shows with 16 but vanishes with 32, the shadow-side
+							// layout is the fan source. Candidate FIX, not just probe.
+							if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 32)) {
+								DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shadowUVZm, 4);
+							} else {
+								D3DXMATRIX shT;
+								D3DXMatrixTranspose(&shT, (D3DXMATRIX*)&shadowUVZm);
+								DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shT, 4);
+							}
 						}
-						DX8Wrapper::Set_Vertex_Shader(m_dwTerrainVS);
+						// VF-1a FIX 2026-09-14: the Noise twins sample the cloud/
+						// lightmap texture at TEXCOORD2, which this VS never wrote
+						// (FF generated it via TSS stage2: cameraPos x [view x inv
+						// x scale x scroll]). An undefined interpolator = cloud
+						// texture sampled at garbage UVs = THE translucent radial
+						// fan. Upload the composite world->cloudUV matrix (view x
+						// the current D3DTS_TEXTURE2, set above by the NOISE
+						// branches) as VS c8-c11, transposed for mul(v,M).
+						{
+							D3DXMATRIX noiseM, viewOrig, cloudM, cloudT;
+							DX8Wrapper::_Get_D3D_Device8()->GetTransform(D3DTS_TEXTURE2, &noiseM);
+							DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, *(Matrix4x4*)&viewOrig);
+							D3DXMatrixMultiply(&cloudM, &viewOrig, &noiseM);
+							D3DXMatrixTranspose(&cloudT, &cloudM);
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(8, (const float*)&cloudT, 4);
+						}
+						DX8Wrapper::Set_Vertex_Shader(vsBind);
 						{	// one-shot engagement proof -> pbr_compile.log
 							static bool s_vsEngaged = false;
 							if (!s_vsEngaged) {
@@ -3047,17 +3110,23 @@ Int TerrainShaderPBR::set(Int pass)
 								DX8Wrapper::_Get_D3D_Device8()->GetVertexShader(&curVS);
 								{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
 									fprintf(vf, "[%u] TERRAIN_VS bind: handle=%p deviceHas=%p %s\n",
-										(unsigned)timeGetTime(), (void*)m_dwTerrainVS, (void*)curVS,
-										(curVS == m_dwTerrainVS) ? "ENGAGED" : "MISMATCH!");
+										(unsigned)timeGetTime(), (void*)vsBind, (void*)curVS,
+										(curVS == vsBind) ? "ENGAGED" : "MISMATCH!");
 									fclose(vf); } }
 								if (curVS) curVS->Release();
 							}
 						}
 					}
 
-					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
-					DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
-					DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE7, &mShadowUVZ);
+					// VF-1a bisection bit65536: with a terrain VS bound the TSS
+					// stage7 coordinate generation "should" be bypassed by the
+					// driver - verify by skipping the stage7 states entirely
+					// whenever a terrain VS is engaged this pass.
+					if (!(vsBind && TheGlobalData && (TheGlobalData->m_terrainProbeMode & 65536))) {
+						DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+						DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT3);
+						DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE7, &mShadowUVZ);
+					}
 				}
 
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(4, sc4, 1);
@@ -3086,6 +3155,15 @@ Int TerrainShaderPBR::set(Int pass)
 			} else {
 				float sc7[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7, 1);
+			}
+			// VF-1a probe bit4(16): kill the PS shadow receive ONLY (c7.w=0 lerps
+			// receive to 1.0 in the PS) while the terrain VS route stays engaged.
+			// Isolates "fan = PS shadow sampling" from "fan = VS geometry path":
+			// UseShadowMap=No disables the whole VS route (it nests inside
+			// shadowReceive) and only re-proves VS-route causation.
+			if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 16)) {
+				float sc7z[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(7, sc7z, 1);
 			}
 			// c8.x = PBRDebugMode - uploaded UNCONDITIONALLY. A stale c8 left by
 			// other shader systems' constant uploads activated the viz masks with
@@ -3141,10 +3219,37 @@ Int TerrainShaderPBR::set(Int pass)
 					DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(31, c31, 1);
 				}
 			}
+
+			// VF-1a component-kill probes (constant overrides, no shader
+			// variants). Isolate which ps_3_0-twin term paints the fan:
+			//   64: c1=0 sunColor feeds ONLY the GGX spec add - kills sun spec
+			//   128: c29.x=0 point-light count - kills forward point lights
+			//   512: c2.xzw=0 (keep y=roughness) - kills normal-map detail, N=geoN
+			//   1024: unbind s4 + c7=0 - kills BOTH the shadow sample AND the
+			//        detail term (sampler collision: the twin samples s4 for
+			//        "detail" at tex0*8.0 while s4 holds the SHADOW MAP - the
+			//        shadow image tiled 8x over terrain = radial-fold fan look;
+			//        bit16 killed only the shadow multiply, NOT this sample)
+			if (TheGlobalData && TheGlobalData->m_terrainProbeMode) {
+				IDirect3DDevice9 *pkDev = DX8Wrapper::_Get_D3D_Device8();
+				float kz[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				if (TheGlobalData->m_terrainProbeMode & 64)
+					pkDev->SetPixelShaderConstantF(1, kz, 1);
+				if (TheGlobalData->m_terrainProbeMode & 128)
+					pkDev->SetPixelShaderConstantF(29, kz, 1);
+				if (TheGlobalData->m_terrainProbeMode & 512) {
+					float nmK[4] = { 0.0f, s_terrainRoughness, 0.0f, 0.0f };
+					pkDev->SetPixelShaderConstantF(2, nmK, 1);
+				}
+				if (TheGlobalData->m_terrainProbeMode & 1024) {
+					pkDev->SetTexture(4, NULL);
+					pkDev->SetPixelShaderConstantF(7, kz, 1);
+				}
+			}
 		}
 
 
-	// Select the correct pixel shader for this variant.
+		// Select the correct pixel shader for this variant.
 	// P1d: when the vs_3_0 terrain VS is bound this pass, select the ps_3_0
 	// twins (D3D9 SM3 pairing). s_terrainVsActive is set where the VS binds.
 	switch (curShader) {
@@ -3186,6 +3291,21 @@ void TerrainShaderPBR::reset(void)
 {
 	W3DShaderManager::ShaderTypes curShader = W3DShaderManager::getCurrentShader();
 	if (curShader < W3DShaderManager::ST_TERRAIN_PBR || curShader > W3DShaderManager::ST_TERRAIN_PBR_NOISE12) {
+		// VF-1a v2 2026-09-14: this early-out path never unbound the terrain
+		// VS, so an interrupted terrain pass leaked m_dwTerrainVS into later
+		// fixed-function draws - their geometry then transformed by stale
+		// terrain constants (the translucent giant-fan signature when
+		// TerrainVSRoute is on). Unbind ONLY if our own VS is still bound;
+		// another shader system's VS is left untouched.
+		IDirect3DDevice9 *leakDev = DX8Wrapper::_Get_D3D_Device8();
+		if (leakDev && (m_dwTerrainVS || m_dwTerrainVS20)) {
+			IDirect3DVertexShader9 *curVS = NULL;
+			leakDev->GetVertexShader(&curVS);
+			if (curVS == m_dwTerrainVS || curVS == m_dwTerrainVS20) {
+				DX8Wrapper::Set_Vertex_Shader((IDirect3DVertexShader9*)NULL);
+			}
+			if (curVS) curVS->Release();
+		}
 		terrainShaderPixelShader.reset();
 		return;
 	}
