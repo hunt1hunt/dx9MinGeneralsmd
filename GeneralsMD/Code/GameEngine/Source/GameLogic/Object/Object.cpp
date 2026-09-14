@@ -5538,7 +5538,10 @@ void Object::doCommandButton( const CommandButton *commandButton, CommandSourceT
 			default:
 				break;
 		}
-		DEBUG_CRASH( ("WARNING: Script doCommandButton for button %s not implemented. Doing nothing.", commandButton->getName().str()) );
+		// 2026-09-14 downgraded crash->log: message itself says "Doing nothing";
+		// unhandled script buttons (e.g. Command_UpgradeGLACamoNetting) are
+		// benign no-ops and must not block gameplay with a dialog.
+		DEBUG_LOG( ("WARNING: Script doCommandButton for button %s not implemented. Doing nothing.", commandButton->getName().str()) );
 	}
 }
 
@@ -5653,7 +5656,7 @@ void Object::doCommandButtonAtObject( const CommandButton *commandButton, Object
 			default:
 				break;
 		}
-		DEBUG_CRASH( ("WARNING: Script doCommandButtonAtObject for button %s not implemented. Doing nothing.", commandButton->getName().str()) );
+		DEBUG_LOG( ("WARNING: Script doCommandButtonAtObject for button %s not implemented. Doing nothing.", commandButton->getName().str()) ); // 2026-09-14 downgraded (see doCommandButton note)
 	}
 }
 
