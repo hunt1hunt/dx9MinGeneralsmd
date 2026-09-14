@@ -623,7 +623,7 @@ void ModelConditionInfo::validateCachedBones(RenderObjClass* robj, Real scale) c
 		}
 
 		robj = W3DDisplay::m_assetManager->Create_Render_Obj(m_modelName.str(), scale, 0);
-		DEBUG_ASSERTCRASH(robj, ("*** ASSET ERROR: Model %s not found!\n",m_modelName.str()));
+		if (robj == NULL) DEBUG_LOG(("*** ASSET WARNING: Model %s not found!\n",m_modelName.str())); // 2026-09-14 downgraded: NULL robj handled below
 		if (!robj)
 		{
 			//BONEPOS_LOG(("Bailing: could not load render object\n"));
@@ -3042,7 +3042,7 @@ void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 		else
 		{
 			m_renderObject = W3DDisplay::m_assetManager->Create_Render_Obj(newState->m_modelName.str(), draw->getScale(), m_hexColor);
-			DEBUG_ASSERTCRASH(m_renderObject, ("*** ASSET ERROR: Model %s not found!\n",newState->m_modelName.str()));
+			if (m_renderObject == NULL) DEBUG_LOG(("*** ASSET WARNING: Model %s not found!\n",newState->m_modelName.str())); // 2026-09-14 downgraded
 		}
 
 		//BONEPOS_LOG(("validateStuff() from within W3DModelDraw::setModelState()\n"));
