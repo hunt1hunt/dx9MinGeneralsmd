@@ -56,14 +56,24 @@ def enum_child_texts(hwnd):
         child = user32.GetWindow(child, GW_HWNDNEXT)
     return texts
 
+def _class_of(hwnd):
+    buf = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(hwnd, buf, 64)
+    return buf.value
+
 results = []
 @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
 def _cb(hwnd, lparam):
-    title = get_wtext(hwnd)
-    if not title:
+    if not user32.IsWindowVisible(hwnd):
         return True
-    if user32.IsWindowVisible(hwnd) and any(k in title for k in DIALOG_TITLES):
-        results.append((hwnd, title, enum_child_texts(hwnd)))
+    title = get_wtext(hwnd)
+    cls = _class_of(hwnd)
+    # 2026-09-14: 标准Win32对话框的窗口类是 #32770 — 有些断言确认框(如
+    # "Ignore this crash from now on?")没有标题, 按类识别才不会漏。
+    is_dialog_class = (cls == "#32770")
+    is_titled_dialog = bool(title) and any(k in title for k in DIALOG_TITLES)
+    if is_dialog_class or is_titled_dialog:
+        results.append((hwnd, title or "(无标题对话框)", enum_child_texts(hwnd)))
     return True
 
 def scan_dialogs():
