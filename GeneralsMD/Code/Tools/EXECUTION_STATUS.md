@@ -16,7 +16,7 @@
 | P0余项 | 同场景3遍重复性<5% | zcode | ⬜ | 硬验收 | 建议 P1 的 bench_capture 一并做 |
 | P1 渲染归因 | T4 Present 拆分+渲染三段 | zcode | ✅ | 真实数据落盘 | commit 8386ae2d |
 | P1 | T6 wrapper 状态计数 | zcode | ✅ | draw_calls/state_changes列有数据 | DX8Wrapper现成getter接线 |
-| P1 | T10 bench_capture.ps1 采集脚本 | 可并行认领 | ⬜ | | 录像回放+定时退出 |
+| P1 | T10 bench_capture.ps1 采集脚本 | zcode | ✅ | 脚本就绪待实测 | commit afd4b694; -file回放+-benchmark定时退出(Internal限定) |
 | P2 仿真归因 | T5 逻辑细分+回收 fopen 打点 | zcode | ⬜ | grep fopen=0 | |
 | P2 | T7 GPU Query（实验） | 可并行认领 | ⬜ | 默认关 | dgVoodoo 兼容未知 |
 | P2 | T9 plan_generator.py | 可并行认领 | ⬜ | 产出 DIAG_PLAN | |
@@ -62,6 +62,13 @@
 弹窗降噪类(降级为日志警告,均下游有NULL兜底)：TurretBone/fx骨骼/SubObject/动画缺失/Model缺失/脚本命令按钮未实现(伪装网升级触发)
 内容修复：BurnedTreeArmor护甲模板补全(注意:loose Armor.ini会整体替换INI.big同名文件,必须以完整原版为底追加,已由用户提取原版完成) / w3x_lights.fx等shader部署同步
 游戏目录已部署最新exe+pdb(VEH栈捕获生效版)
+
+## 2026-09-15 中午：真 OOM 崩溃对策 + 首个大规模性能数据点
+
+- **真 OOM**（11:09, 作弊开启+建兵工厂瞬间, GlobalAlloc 1.4MB 失败）：exe 已打 **LARGEADDRESSAWARE**（2GB→4GB, PE头 pe+4+18 |= 0x20 字节补丁, VC6 链接器 /LARGEADDRESSAWARE 无效；**每次构建后需重打**, 勿改 pe+4=Machine 字段会致 WinError 193）。LAA 后实测余量 2.2GB+。
+- OOM_SYSALLOC 失败点已加内存全景快照(commit 后待构建生效)；FrameProbe 每 30s 落 #MEM 水位(commit 51094279)。
+- **首个渲染归因数据**（作弊大战场）：objects 30,873 / draw_calls 74,727，中位帧 1.78s，t_client 50% + t_render 48.5%，t_logic 仅 0.4% → 瓶颈明确在客户端渲染管线。
+- 探针开销理论界 <0.01%（11 组 QPC+环形缓冲/帧）；正式 A/B 用 bench_capture.ps1 -ProbeOff 跑同一回放待做。
 
 ## 2026-09-15 上午：长局必现闪崩已根治（commit f7663009，用户实测长局稳定）
 

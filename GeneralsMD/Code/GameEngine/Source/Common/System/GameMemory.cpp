@@ -240,9 +240,15 @@ static void* sysAllocateDoNotZero(Int numBytes)
 	void* p = ::GlobalAlloc(GMEM_FIXED, numBytes);
 	if (!p)
 	{
-		// DIAG: log the failed OS allocation size before throwing
+		// DIAG: log the failed OS allocation size + full memory picture before
+		// throwing. The 11:09 crash failed a mere 1.4MB GlobalAlloc while the
+		// game was NOT visibly memory-exhausted, so record availVirtual /
+		// memoryLoad / commit state at the failure instant.
+		MEMORYSTATUS ms;
+		GlobalMemoryStatus(&ms);
 		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_SYSALLOC %d\n", (unsigned)timeGetTime(), numBytes); fclose(f); }
+		if (f) { fprintf(f, "[%u] OOM_SYSALLOC %d load=%u availPhys=%u availVirtual=%u\n",
+			(unsigned)timeGetTime(), numBytes, ms.dwMemoryLoad, ms.dwAvailPhys, ms.dwAvailVirtual); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
 	}
 #ifdef MEMORYPOOL_DEBUG
