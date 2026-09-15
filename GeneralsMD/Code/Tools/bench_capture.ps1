@@ -1,4 +1,4 @@
-# bench_capture.ps1 - SagePerfDiag P1/T10 基准采集脚本
+﻿# bench_capture.ps1 - SagePerfDiag P1/T10 基准采集脚本
 # 用法:
 #   .\bench_capture.ps1                       # 默认: 最新回放, 300秒, 探针保持现状
 #   .\bench_capture.ps1 -ReplayPath x.rep -Seconds 180
@@ -25,6 +25,12 @@ if (-not $ReplayPath) {
   $ReplayPath = $r.FullName
 }
 Write-Host "回放: $ReplayPath  时长: ${Seconds}s  轮数: $Runs  探针: $(if($ProbeOff){'关'}else{'开/现状'})"
+
+# WinMain 按空白重新分词命令行(引号无效), 含空格的回放路径会被拆碎导致启动崩溃。
+# 规避: 拷贝到无空格的游戏目录再传参。
+$benchRep = Join-Path $GameDir "bench_replay.rep"
+Copy-Item $ReplayPath $benchRep -Force
+$ReplayPath = $benchRep
 
 # --- 探针开关(可选) ---
 $gameDataIni = Join-Path $GameDir "Data\INI\GameData.ini"
