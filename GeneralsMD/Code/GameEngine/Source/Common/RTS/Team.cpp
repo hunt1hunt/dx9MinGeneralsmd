@@ -30,6 +30,7 @@
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 #include "Common/GameState.h"
+#include "Common/StackDump.h"
 #include "Common/Team.h"
 #include "Common/ThingFactory.h"
 #include "Common/PerfTimer.h"
@@ -336,7 +337,10 @@ Team *TeamFactory::createInactiveTeam(const AsciiString& name)
 {
 	TeamPrototype *tp = findTeamPrototype(name);
 	if (!tp)
+	{
+		DiagThrowSite(2);	// createInactiveTeam - unknown team name (script team?)
 		throw ERROR_BAD_ARG;
+	}
 	
 	Team *t = NULL;
 	if (tp->getIsSingleton())
@@ -377,7 +381,10 @@ Team *TeamFactory::createTeam(const AsciiString& name)
 Team *TeamFactory::createTeamOnPrototype( TeamPrototype *prototype )
 {
 	if( prototype == NULL )
+	{
+		DiagThrowSite(3);	// createTeamOnPrototype - NULL prototype
 		throw ERROR_BAD_ARG;
+	}
 
 	Team *t = NULL;
 	if( prototype->getIsSingleton() )
