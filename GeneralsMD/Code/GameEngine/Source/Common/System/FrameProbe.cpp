@@ -158,6 +158,22 @@ void FrameProbeFlush(void)
 
 	DEBUG_LOG(("FrameProbe: flushed %d frames to '%s'\n", n, path));
 
+	// 2026-09-15: memory watermark on the 30s flush cadence (never the hot
+	// path). After the 11:09 real-OOM crash (OOM_SYSALLOC 1398140 = 32-bit
+	// address space exhausted ~25min into a long game) this shows whether we
+	// leak (steady dwAvailVirtual decline) or just peak.
+	{
+		MEMORYSTATUS ms;
+		GlobalMemoryStatus(&ms);
+		f = fopen("E:\\terrain_diag.log", "a");
+		if (f)
+		{
+			fprintf(f, "[%u] #MEM load=%u availPhys=%u availVirtual=%u totalVirtual=%u\n",
+					(unsigned)timeGetTime(), ms.dwMemoryLoad, ms.dwAvailPhys, ms.dwAvailVirtual, ms.dwTotalVirtual);
+			fclose(f);
+		}
+	}
+
 	g_ringCount = 0;
 	g_ringHead = 0;
 	g_lastFlushTick = timeGetTime();
