@@ -44,6 +44,12 @@ void StackDumpFromContext(DWORD eip,DWORD esp,DWORD ebp, void (*callback)(const 
 // exception handler (see StackDump.cpp). No-op if no fault was captured.
 void DumpFaultContextStack(void (*callback)(const char*));
 
+// 2026-09-15: throw-site breadcrumb. Call right before a `throw ERROR_BAD_ARG`
+// (or any error-code throw reachable from GameEngine::update) with a unique
+// site id so terrain_diag.log names the exact thrower when the release-crash
+// handler itself dies before finishing ReleaseCrashInfo.txt.
+void DiagThrowSite(int siteId);
+
 // Gets count* addresses from the current stack
 void FillStackAddresses(void**addresses, unsigned int count, unsigned int skip = 0);
 
@@ -69,6 +75,10 @@ __inline void GetFunctionDetails(void *pointer, char*name, char*filename, unsign
 
 // Dumps out the exception info and stack trace.
 __inline void DumpExceptionInfo( unsigned int u, EXCEPTION_POINTERS* e_info ) {};
+
+__inline void DumpFaultContextStack(void (*callback)(const char*)) {};
+
+__inline void DiagThrowSite(int siteId) { siteId; }
 
 #endif
 

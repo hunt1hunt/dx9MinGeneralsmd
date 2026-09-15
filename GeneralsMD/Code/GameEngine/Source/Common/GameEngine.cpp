@@ -881,6 +881,9 @@ void GameEngine::execute( void )
 				}
 				catch (INIException e)
 				{
+					// 2026-09-15: branch crumb - the only catch without one when the
+					// 09-15 crash left no UPDATE_CRASH breadcrumb in terrain_diag.log.
+					diagLogI("UPDATE_CRASH_INIEXC", 0);
 					// Release CRASH doesn't return, so don't worry about executing additional code.
 					if (e.mFailureMessage)
 						RELEASE_CRASH((e.mFailureMessage));

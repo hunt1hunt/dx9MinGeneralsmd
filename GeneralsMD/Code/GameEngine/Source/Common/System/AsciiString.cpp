@@ -291,10 +291,15 @@ void AsciiString::format_va(const AsciiString& format, va_list args)
 	validate();
 	char buf[MAX_FORMAT_BUF_LEN];
   if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format.str(), args) < 0) {
-		// DIAG: Remove after diagnosis
+		// 2026-09-15 root fix: _vsnprintf also returns <0 for encoding
+		// failures (e.g. %ls with player names not representable in MBCS),
+		// not just OOM. A failed format must never kill the game - degrade
+		// to a placeholder instead of throwing.
 		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_ASCIIFORMAT format=\"%.256s\"\n", (unsigned)GetTickCount(), format.str()); fclose(f); }
-			throw ERROR_OUT_OF_MEMORY;
+		if (f) { fprintf(f, "[%u] FORMAT_FAIL format=\"%.256s\"\n", (unsigned)GetTickCount(), format.str()); fclose(f); }
+		set("<format-error>");
+		validate();
+		return;
 	}
 	set(buf);
 	validate();
@@ -306,10 +311,12 @@ void AsciiString::format_va(const char* format, va_list args)
 	validate();
 	char buf[MAX_FORMAT_BUF_LEN];
   if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format, args) < 0) {
-		// DIAG: Remove after diagnosis
+		// 2026-09-15 root fix: see AsciiString& overload above.
 		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_ASCIIFORMAT format=\"%.256s\"\n", (unsigned)GetTickCount(), format ? format : "(null)"); fclose(f); }
-			throw ERROR_OUT_OF_MEMORY;
+		if (f) { fprintf(f, "[%u] FORMAT_FAIL format=\"%.256s\"\n", (unsigned)GetTickCount(), format ? format : "(null)"); fclose(f); }
+		set("<format-error>");
+		validate();
+		return;
 	}
 	set(buf);
 	validate();
