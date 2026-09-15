@@ -1974,8 +1974,11 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 
 	Bool doMultiPassWireFrame=FALSE;
 
-	if (((RTS3DScene *)rinfo.Camera.Get_User_Data())->getCustomPassMode() == SCENE_PASS_ALPHA_MASK ||
-		((SceneClass *)rinfo.Camera.Get_User_Data())->Get_Extra_Pass_Polygon_Mode() == SceneClass::EXTRA_PASS_CLEAR_LINE)
+	// 2026-09-15: NULL scene guard (see W3DWater.cpp) - replay load crashed via
+	// the same unchecked Camera.Get_User_Data() dereference pattern.
+	if (rinfo.Camera.Get_User_Data() != NULL &&
+		(((RTS3DScene *)rinfo.Camera.Get_User_Data())->getCustomPassMode() == SCENE_PASS_ALPHA_MASK ||
+		((SceneClass *)rinfo.Camera.Get_User_Data())->Get_Extra_Pass_Polygon_Mode() == SceneClass::EXTRA_PASS_CLEAR_LINE))
 	{
 			if (WW3D::Is_Texturing_Enabled())
 			{	//first pass where we just fill the z-buffer
