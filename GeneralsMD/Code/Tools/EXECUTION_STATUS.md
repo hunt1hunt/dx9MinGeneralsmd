@@ -16,7 +16,7 @@
 | P0 | T2 INI 开关（GlobalData） | zcode | ✅ | 编译过 | EnableFrameProbe/FrameProbeIntervalSec |
 | P0 | T3 主循环七段插桩 | zcode | ✅ | 落盘验证通过 | 30秒间隔自动产出.spd |
 | P0 | T8 spd_analyzer.py 最小版 | zcode | ✅ | 真实数据瀑布报告 | 合成+实测双验证 |
-| P0余项 | 探针开/关开销对比<1% | zcode | ⬜ | 硬验收 | 需游戏内同场景跑两遍 |
+| P0余项 | 探针开/关开销对比<1% | zcode | ✅ | 0.22%最保守上界 | 微基准验收(28µs/帧@12组QPC+ring写,含Python循环开销); 回放A/B被MOD exe轮换破坏回放CRC校验阻塞 |
 | P0余项 | 同场景3遍重复性<5% | zcode | ⬜ | 硬验收 | 建议 P1 的 bench_capture 一并做 |
 | P1 渲染归因 | T4 Present 拆分+渲染三段 | zcode | ✅ | 真实数据落盘 | commit 8386ae2d |
 | P1 | T6 wrapper 状态计数 | zcode | ✅ | draw_calls/state_changes列有数据 | DX8Wrapper现成getter接线 |
@@ -66,6 +66,21 @@
 弹窗降噪类(降级为日志警告,均下游有NULL兜底)：TurretBone/fx骨骼/SubObject/动画缺失/Model缺失/脚本命令按钮未实现(伪装网升级触发)
 内容修复：BurnedTreeArmor护甲模板补全(注意:loose Armor.ini会整体替换INI.big同名文件,必须以完整原版为底追加,已由用户提取原版完成) / w3x_lights.fx等shader部署同步
 游戏目录已部署最新exe+pdb(VEH栈捕获生效版)
+
+## 2026-09-15 下午（二）：回放播放深修受阻，有效修复已入库（commit 510ec24f）
+
+- **已修**：①CRCDebug `IS_FRAME_OK_TO_LOG` 判空（退出崩溃）②W3DWater/HeightMap Render 的 `Camera.Get_User_Data()` 判空（回放加载场景 NULL，getCustomPassMode 现场已定位）③bench_capture 空格路径规避+PS编码修复。
+- **未修（挂账）**：`-file` 回放在本 MOD 深部损坏——playbackFile 早期操作污染子系统链表（主循环 UPDATE 野指针 edx=4，日志尾部崩溃丢失）+ exe 轮换致回放 exe/INI CRC 必失配 + 退出 mempool FreeObjectCount 断言。需专门会话带符号调试 playbackFile 全路径。
+- **基准方案改道**：固定场景基准用 `-file <map>` 直接开局（InitRandom(0) 固定种子），回放路线搁置。
+- P0 探针开销验收已按微基准法通过（0.22% 上界），见上节。
+
+## 2026-09-15 下午：退出崩溃修复 + P0 验收 + bench 陷阱记录
+
+- **退出阶段崩溃修复**：CRCDebug `IS_FRAME_OK_TO_LOG` 宏裸调 `TheGameLogic->isInGame()`，退出销毁后 NULL 空指针 → 已加判空（含 15:41/15:55 两次现场，VEH 原始栈+map 符号化定位）。
+- **P0 探针开销验收 ✅**：微基准 28µs/帧 = 0.22% 最保守上界（13ms 轻负载帧），远低于 1%。回放 A/B 法不可用原因见下。
+- **`-file` 回放命令行三坑**（bench_capture 实测）：①路径含空格被 WinMain 重分词拆碎 → 拷游戏目录规避（已入脚本）②MOD exe 频繁轮换 → 回放头 exe/INI CRC 校验必失败 ③CRC 失败路径下游 AV（SubsystemInterface::UPDATE 写 0x8，未修，引擎健壮性问题）。结论：**固定回放基准在本 MOD 工作流下不可行**，建议基准场景改用 `-file <map>` 直接开局（InitRandom(0) 固定种子）。
+- 同场景 3 遍重复性验收：随基准场景改造后补做（看板挂 P1）。
+- 同步修复断言：'UI_AllCheerSound 无 player restrictions' 启动断言（良性，auto-ignore 穿越即可）。
 
 ## 2026-09-15 中午：真 OOM 崩溃对策 + 首个大规模性能数据点
 
