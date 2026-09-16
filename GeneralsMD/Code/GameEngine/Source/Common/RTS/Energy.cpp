@@ -376,20 +376,11 @@ void Energy::loadPostProcess( void )
 // ------------------------------------------------------------------------------------------------  
 void Energy::depositEnergy(Int amountToDeposit, Bool playSound)
 {
-#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE) 
-	// 检查是否启用了 freebuild 作弊  
-	if (m_owner != NULL && m_owner->buildsForFree())
-	{
-		// freebuild 启用时，增加 1200 单位电量
-	//	player->enableFreeBuild(enable);
-	//	if (enable)
-		amountToDeposit += -1200;
-	
-	}
-	else
-		amountToDeposit += 1200;
-#endif  
-
+	// 2026-09-16: removed the old freebuild +/-1200 hack. That hack was
+	// inverted (ON subtracted 1200, OFF added 1200) and drove production
+	// negative -> ENERGY_CLAMP_PROD. Cheat callers now pass the amount
+	// explicitly: depositEnergy(1200) to top up, withdrawEnergy(1200) to
+	// take it back (withdraw clamps to non-negative).
 	if (amountToDeposit == 0)
 		return;
 
