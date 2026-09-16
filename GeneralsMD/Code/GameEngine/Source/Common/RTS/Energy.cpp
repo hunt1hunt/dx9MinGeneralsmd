@@ -43,6 +43,7 @@
 //-----------------------------------------------------------------------------
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/AudioSettings.h"
 #include "Common/GameAudio.h"
@@ -176,14 +177,13 @@ void Energy::objectLeavingInfluence( Object *obj )
 	// adjust energy
 	if( energy < 0 )
 	{
-		// 2026-09-16 breadcrumb: a negative predicted balance here means the
-		// same object is leaving influence twice (sold AND destroyed in the
-		// same tick) — the root cause of the negative-energy asserts. Log the
-		// template name so the double-remove path can be traced.
+		// 2026-09-16 breadcrumb (terrain_diag.log, all builds): a negative
+		// predicted balance here means the same object is leaving influence
+		// twice (sold AND destroyed in the same tick).
 		if (m_energyConsumption + energy < 0)
 		{
-			DEBUG_LOG(("Energy::objectLeavingInfluence: double-leave? template=%s consume %d + (%d) < 0\n",
-				obj->getTemplate()->getName().str(), m_energyConsumption, energy));
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_DOUBLE_LEAVE obj=%s consume %d + (%d) < 0\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), m_energyConsumption, energy); fclose(f); }
 		}
 		addConsumption( energy );
 	}
@@ -191,8 +191,8 @@ void Energy::objectLeavingInfluence( Object *obj )
 	{
 		if (m_energyProduction - energy < 0)
 		{
-			DEBUG_LOG(("Energy::objectLeavingInfluence: double-leave? template=%s produce %d - %d < 0\n",
-				obj->getTemplate()->getName().str(), m_energyProduction, energy));
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_DOUBLE_LEAVE obj=%s produce %d - %d < 0\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), m_energyProduction, energy); fclose(f); }
 		}
 		addProduction( -energy );
 	}
@@ -215,7 +215,14 @@ void Energy::addPowerBonus( Object *obj )
 	if( obj == NULL )
 		return;
 
-	addProduction(obj->getTemplate()->getEnergyBonus());
+	// 2026-09-16 breadcrumb (terrain_diag.log, all builds): tracks the Control
+	// Rods bonus so a REMOVE without a matching ADD can be spotted.
+	Int bonus = obj->getTemplate()->getEnergyBonus();
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] ENERGY_BONUS_ADD obj=%s bonus=%d prod_before=%d\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), bonus, m_energyProduction); fclose(f); }
+	}
+	addProduction(bonus);
 
 	// sanity
 	DEBUG_ASSERTCRASH( m_energyProduction >= 0 && m_energyConsumption >= 0, 
@@ -234,7 +241,13 @@ void Energy::removePowerBonus( Object *obj )
 	if( obj == NULL )
 		return;
 
-	addProduction( -obj->getTemplate()->getEnergyBonus() );
+	// 2026-09-16 breadcrumb: pairs with ENERGY_BONUS_ADD above.
+	Int bonus = obj->getTemplate()->getEnergyBonus();
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] ENERGY_BONUS_REMOVE obj=%s bonus=%d prod_before=%d\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), bonus, m_energyProduction); fclose(f); }
+	}
+	addProduction( -bonus );
 
 	// sanity
 	DEBUG_ASSERTCRASH( m_energyProduction >= 0 && m_energyConsumption >= 0, 
@@ -258,14 +271,14 @@ void Energy::addProduction(Int amt)
 	// bookkeeping path can still be identified from DebugLogFileI.txt.
 	if (m_energyProduction < 0)
 	{
-		// 2026-09-16: sample the diagnostic (first + every 100th) so a hot
-		// double-leave path cannot flood DebugLogFileI.txt.
+		// 2026-09-16: sample the diagnostic (first + every 100th) and write
+		// it to terrain_diag.log so Release builds see it too.
 		static Int s_clampProdCount = 0;
 		s_clampProdCount++;
 		if (s_clampProdCount == 1 || (s_clampProdCount % 100) == 0)
 		{
-			DEBUG_LOG(("Energy: clamped negative production %d -> 0 (delta=%d, count=%d, double objectLeavingInfluence?)\n",
-				m_energyProduction, amt, s_clampProdCount));
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_CLAMP_PROD %d -> 0 (delta=%d, count=%d)\n", (unsigned)GetTickCount(), m_energyProduction, amt, s_clampProdCount); fclose(f); }
 		}
 		m_energyProduction = 0;
 	}
@@ -287,13 +300,13 @@ void Energy::addConsumption(Int amt)
 	// protection for the consumption side.
 	if (m_energyConsumption < 0)
 	{
-		// 2026-09-16: sample like addProduction (first + every 100th).
+		// 2026-09-16: sample like addProduction; terrain_diag.log for all builds.
 		static Int s_clampConsCount = 0;
 		s_clampConsCount++;
 		if (s_clampConsCount == 1 || (s_clampConsCount % 100) == 0)
 		{
-			DEBUG_LOG(("Energy: clamped negative consumption %d -> 0 (delta=%d, count=%d, double objectLeavingInfluence?)\n",
-				m_energyConsumption, amt, s_clampConsCount));
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_CLAMP_CONS %d -> 0 (delta=%d, count=%d)\n", (unsigned)GetTickCount(), m_energyConsumption, amt, s_clampConsCount); fclose(f); }
 		}
 		m_energyConsumption = 0;
 	}

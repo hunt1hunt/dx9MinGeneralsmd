@@ -29,6 +29,7 @@
  
 // INCLUDES /////////////////////////////////////////////////////////////////////////////////////// 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 #define DEFINE_WEAPONCONDITIONMAP
 #include "Common/BitFlagsIO.h"
 #include "Common/BuildAssistant.h"
@@ -856,14 +857,18 @@ void Object::setOrRestoreTeam( Team* team, Bool restoring )
 
 	Team* oldTeam = m_team;
 
-	// 2026-09-16 breadcrumb: pinpoint the double objectLeavingInfluence path
-	// (sell + destroy both switching team in one tick drives Energy negative).
-	DEBUG_LOG(("setOrRestoreTeam: obj=%s old=%s new=%s inOldList=%d underCon=%d\n",
-		getTemplate()->getName().str(),
-		oldTeam ? oldTeam->getName().str() : "(null)",
-		team ? team->getName().str() : "(null)",
-		(m_team && m_team->isInList_TeamMemberList(this)) ? 1 : 0,
-		getStatusBits().test(OBJECT_STATUS_UNDER_CONSTRUCTION) ? 1 : 0));
+	// 2026-09-16 breadcrumb (terrain_diag.log, all builds): pinpoint the
+	// team-change path so a double subtract can be traced end to end.
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] SET_OR_RESTORE_TEAM obj=%s old=%s new=%s inOldList=%d underCon=%d\n",
+			(unsigned)GetTickCount(),
+			getTemplate()->getName().str(),
+			oldTeam ? oldTeam->getName().str() : "(null)",
+			team ? team->getName().str() : "(null)",
+			(m_team && m_team->isInList_TeamMemberList(this)) ? 1 : 0,
+			getStatusBits().test(OBJECT_STATUS_UNDER_CONSTRUCTION) ? 1 : 0); fclose(f); }
+	}
 
 	// Before Switch //////////////////////////
 	if (m_team)
