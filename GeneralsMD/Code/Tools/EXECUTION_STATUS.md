@@ -117,3 +117,17 @@
    `PATH="/c/Windows/System32:$PATH" cmd //c "③增量构建Internal.bat"` 方式调用；其实际构建结果以
    desk_rts.log 的 "N error(s)" 行为准。
 4. **INI 接线生效凭证**：DebugLogFileI.txt 出现 "FrameProbe: init enable=1"，游戏目录出现 frameprobe_*.spd。
+
+## 2026-09-16：A 项稳定性收口 + B 项部分推进（下会话交接）
+
+- **A2 回放 CRC 失败下游 AV**：GameEngine::update 主循环 7 个单例 UPDATE 全判空（commit 9652672a），用户实测回放 CRC 失败场景已不崩。
+- **A3 负电力 -1200 根因**：面包屑定位为 **ALT+B 免费建造作弊键 `depositEnergy` 的 ±1200 逻辑写反**（开扣1200/关加1200），与卖电厂无关（ENERGY_BONUS_ADD/REMOVE 账目配平）。已修（commit 71c0c0f7）：开 +1200、关 `withdrawEnergy(1200)` 钳到非负。卖电厂路径无 bug。
+- **A1 -file 回放**：静态防御已推（getSlot(-1) 越界 + fread 截断校验，commit b2cc0d4f）；**playbackFile 污染子系统链表（UPDATE 野指针 edx=4）仍挂账**，需专门带符号调试会话。
+- **A4 构建验证**：Release/Internal 均 0 error；用户实测长局稳定。游戏目录 RTSI.exe（Internal 全修复）+ RTS.exe（Release A/B 前）均已打 LAA。
+- **B 项已推**：T5 逻辑细分（6 个 t_logic_* 阶段）+ 回收 GameLogic 热路径 fopen（5d1f7bac）；T9 plan_generator.py（edbd160f）；SagePerfDiag_README（310ee9eb）；W3DView 每帧 VIEW_3D_DONE fopen 已清（1a81b2df）。诊断日志 terrain_diag.log/pbr_compile.log 已改写到游戏目录（不再 E:\ 根）。
+- **剩余（下会话）**：
+  1. B1/B2 基准：bench_capture.ps1 需先支持 `-file <地图名>` 模式（当前只支持回放；回放 CRC 必失配不可用）。同图 3 遍重复性 <5% + 探针开关 A/B <1%。
+  2. B3 draw call 批处理：等受控 .spd 数据到手后专项（性能已定向：t_client 50% + t_render 48.5%，45万 draw_calls 峰值）。
+  3. B5 T7 GPU Query 实验桩（默认关，可随时加）。
+  4. A1 playbackFile 符号调试会话（深部损坏，需专门时间）。
+  5. 已有 658 份非受控 .spd 碎片，可先跑 plan_generator 做初步归因（无需启动游戏）。
