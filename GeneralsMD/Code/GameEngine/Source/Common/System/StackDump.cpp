@@ -23,6 +23,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(IG_DEBUG_STACKTRACE)
 
@@ -93,6 +94,173 @@ MYEIP1:
 	MakeStackTrace(myeip,myesp,myebp, 2, callback);
 }
 
+
+// ---------------------------------------------------------------------------
+// 2026-09-14: fault-context capture via vectored exception handler.
+// The original FillStackAddresses walk breaks under FPO-optimized builds
+// (ebp chain unreliable -> ReleaseCrashInfo.txt always had an EMPTY stack).
+// A VEH grabs the real faulting EIP/ESP/EBP at first chance; ReleaseCrash
+// then uses StackDumpFromContext to symbolize the actual crash site.
+// 2026-09-15: two fixes after the 09-15 crash produced a 1-frame <Unknown> stack.
+// (a) C++ throws (0xE06D7363) raised in benign control flow steal the first-only
+//     capture slot; hard faults now always win, C++ throw contexts go to a small
+//     ring so the LAST throw (the one that reached RELEASE_CRASH) is available.
+// (b) dbghelp cannot walk FPO frames in system DLLs (msvcrt RaiseException etc),
+//     so StackWalk dies after one frame. RawScanFallback scans the faulting stack
+//     for return addresses that land inside the main exe image and prints them as
+//     plain hex - symbolize offline against RTSI.map.
+#define CXX_EXCEPTION_CODE 0xE06D7363
+static DWORD g_FaultEIP = 0, g_FaultESP = 0, g_FaultEBP = 0;
+static Bool g_FaultIsHard = FALSE;
+static struct { DWORD eip, esp, ebp; } g_CxxThrowRing[4];
+static int g_CxxThrowNext = 0;
+
+static Bool IsHardFaultCode(DWORD code)
+{
+	switch (code)
+	{
+	case EXCEPTION_ACCESS_VIOLATION:
+	case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+	case EXCEPTION_DATATYPE_MISALIGNMENT:
+	case EXCEPTION_IN_PAGE_ERROR:
+	case EXCEPTION_ILLEGAL_INSTRUCTION:
+	case EXCEPTION_INT_DIVIDE_BY_ZERO:
+	case EXCEPTION_PRIV_INSTRUCTION:
+	case EXCEPTION_STACK_OVERFLOW:
+	case EXCEPTION_NONCONTINUABLE_EXCEPTION:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static LONG WINAPI FaultVectoredHandler(EXCEPTION_POINTERS *ep)
+{
+	if (ep != NULL && ep->ContextRecord != NULL && ep->ExceptionRecord != NULL)
+	{
+		DWORD code = ep->ExceptionRecord->ExceptionCode;
+		if (IsHardFaultCode(code) || g_FaultEIP == 0)
+		{
+			// A hard fault always overwrites; before the first hard fault the
+			// slot holds the most recent (possibly benign) record.
+			if (g_FaultIsHard && !IsHardFaultCode(code))
+			{
+				// keep the hard fault; do not pollute it with a later C++ throw
+			}
+			else
+			{
+				g_FaultEIP = ep->ContextRecord->Eip;
+				g_FaultESP = ep->ContextRecord->Esp;
+				g_FaultEBP = ep->ContextRecord->Ebp;
+				g_FaultIsHard = IsHardFaultCode(code);
+			}
+		}
+		if (code == CXX_EXCEPTION_CODE)
+		{
+			int slot = g_CxxThrowNext;
+			g_CxxThrowRing[slot].eip = ep->ContextRecord->Eip;
+			g_CxxThrowRing[slot].esp = ep->ContextRecord->Esp;
+			g_CxxThrowRing[slot].ebp = ep->ContextRecord->Ebp;
+			g_CxxThrowNext = (slot + 1) & 3;
+		}
+	}
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// VC6-era SDK lacks AddVectoredExceptionHandler declarations - load it
+// dynamically from kernel32 (available since XP SP2).
+typedef LONG (WINAPI *VECTORED_HANDLER_FN)(EXCEPTION_POINTERS *);
+typedef PVOID (WINAPI *ADD_VEH_FN)(ULONG, VECTORED_HANDLER_FN);
+
+static int InstallFaultContextCapture()
+{
+	HMODULE k32 = ::GetModuleHandle("kernel32.dll");
+	if (k32 == NULL)
+		return -1;
+	ADD_VEH_FN addVeh = (ADD_VEH_FN)::GetProcAddress(k32, "AddVectoredExceptionHandler");
+	if (addVeh == NULL)
+		return -1;
+	return (addVeh(1, (VECTORED_HANDLER_FN)FaultVectoredHandler) != NULL) ? 0 : -1;
+}
+// static initializer: install before main() runs
+static int s_FaultCaptureInstalled = InstallFaultContextCapture();
+
+// 2026-09-15: throw-site breadcrumb (see StackDump.h). fopen only ever runs on
+// a crash path, never in a hot loop.
+void DiagThrowSite(int siteId)
+{
+	FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+	if (f) { fprintf(f, "[%u] THROW_SITE_%d\n", (unsigned)timeGetTime(), siteId); fclose(f); }
+}
+
+// 2026-09-15: print raw return-address candidates from the faulting stack.
+// Filters to addresses inside the main exe image so RTSI.map offline lookup is
+// unambiguous; system-DLL frames are useless for our symbolication anyway.
+static void RawScanFallback(DWORD esp, void (*callback)(const char*))
+{
+	HMODULE exe = GetModuleHandle(NULL);
+	unsigned char *base;
+	unsigned int imageSize;
+	base = (unsigned char *)exe;
+	imageSize = ((PIMAGE_NT_HEADERS)(base + ((PIMAGE_DOS_HEADER)base)->e_lfanew))->OptionalHeader.SizeOfImage;
+
+	callback("[raw stack scan: addresses inside main image]\n");
+	{
+		DWORD p;
+		int shown = 0;
+		for (p = esp & ~3u; p < (esp + 0x1800) && shown < 24; p += 4)
+		{
+			DWORD v;
+			if (IsBadReadPtr((void *)p, 4))
+				break;
+			v = *(DWORD *)p;
+			if ((unsigned char *)v >= base && (unsigned char *)v < base + imageSize)
+			{
+				char line[64];
+				sprintf(line, "  raw candidate 0x%08X\n", v);
+				callback(line);
+				shown++;
+			}
+		}
+		if (shown == 0)
+			callback("  (no in-image candidates found)\n");
+	}
+}
+
+void DumpFaultContextStack(void (*callback)(const char*))
+{
+	if (callback == NULL)
+		callback = StackDumpDefaultHandler;
+	if (g_FaultEIP != 0)
+	{
+		char line[64];
+		sprintf(line, "[fault context eip=0x%08X esp=0x%08X ebp=0x%08X hard=%d]\n",
+				g_FaultEIP, g_FaultESP, g_FaultEBP, (int)g_FaultIsHard);
+		callback(line);
+		StackDumpFromContext(g_FaultEIP, g_FaultESP, g_FaultEBP, callback);
+		RawScanFallback(g_FaultESP, callback);
+	}
+	// most recent C++ throw (the crash was a C++ exception when Last error is empty)
+	{
+		int i, shown = 0;
+		for (i = 3; i >= 0; i--)
+		{
+			int slot = (g_CxxThrowNext + i) & 3;
+			if (g_CxxThrowRing[slot].eip != 0)
+			{
+				char line[96];
+				sprintf(line, "[cxx throw #%d eip=0x%08X esp=0x%08X ebp=0x%08X]\n",
+						shown, g_CxxThrowRing[slot].eip, g_CxxThrowRing[slot].esp, g_CxxThrowRing[slot].ebp);
+				callback(line);
+				StackDumpFromContext(g_CxxThrowRing[slot].eip, g_CxxThrowRing[slot].esp, g_CxxThrowRing[slot].ebp, callback);
+				RawScanFallback(g_CxxThrowRing[slot].esp, callback);
+				shown++;
+				if (shown >= 2)
+					break;	// the two most recent throws are plenty
+			}
+		}
+	}
+}
 
 //*****************************************************************************
 //*****************************************************************************

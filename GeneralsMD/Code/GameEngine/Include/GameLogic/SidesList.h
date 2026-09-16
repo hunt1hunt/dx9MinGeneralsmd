@@ -34,6 +34,7 @@
 
 #include "Common/Dict.h"
 #include "Common/Errors.h"
+#include "Common/StackDump.h"
 #include "Common/GameType.h"
 #include "Common/Snapshot.h"
 #include "Common/GameMemory.h"
@@ -116,10 +117,11 @@ public:
 		{
 			return(&m_teams[team]);
 		}
-		DEBUG_CRASH(("Out of range.")); 
+		DEBUG_CRASH(("Out of range."));
+		DiagThrowSite(6);	// getTeamInfo - index out of range
 		throw ERROR_BAD_ARG;
 		return NULL;
-	}	
+	}
 };
 
 // ----------------------------------------------------------------------------------------------
@@ -216,16 +218,17 @@ inline TeamsInfo * SidesList::getSkirmishTeamInfo(Int team)
 	return m_skirmishTeamrec.getTeamInfo(team);
 }	
 
-inline SidesInfo * SidesList::getSideInfo(Int side) 
+inline SidesInfo * SidesList::getSideInfo(Int side)
 {
-	if (side>=0&&side<m_numSides) 
+	if (side>=0&&side<m_numSides)
 	{
 		return(&m_sides[side]);
 	}
-	DEBUG_CRASH(("Out of range.")); 
+	DEBUG_CRASH(("Out of range."));
+	DiagThrowSite(7);	// getSideInfo - index out of range
 	throw ERROR_BAD_ARG;
 	return NULL;
-}	
+}
 
 inline SidesInfo * SidesList::getSkirmishSideInfo(Int side) 
 {

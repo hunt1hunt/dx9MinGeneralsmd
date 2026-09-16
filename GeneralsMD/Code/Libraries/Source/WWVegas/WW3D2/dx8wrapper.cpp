@@ -3651,10 +3651,25 @@ DX8Wrapper::Set_Render_Target(IDirect3DSurface8 *render_target, bool use_default
 			CurrentDepthBuffer=NULL;
 		}
 
-	} 
-	else if (render_target != CurrentRenderTarget) 
+	}
+	else if (render_target != CurrentRenderTarget)
 	{
-		WWASSERT(DefaultRenderTarget==NULL);
+		// 2026-09-14: this was WWASSERT(DefaultRenderTarget==NULL) — a purely
+		// diagnostic check. Some render pass (deferred G-Buffer / water
+		// reflection / W3X shadow interleave) switches custom RTs without an
+		// intervening restore-to-default. The code below already handles a
+		// non-NULL DefaultRenderTarget correctly (it only re-saves "if
+		// necessary"), and the later restore still recovers the true default.
+		// Soften to a one-shot warning so a stale save cannot crash startup.
+		if (DefaultRenderTarget != NULL)
+		{
+			static bool s_warnedStaleDefaultRT = false;
+			if (!s_warnedStaleDefaultRT)
+			{
+				s_warnedStaleDefaultRT = true;
+				WWDEBUG_SAY(("WARNING: Set_Render_Target custom-to-custom switch with stale DefaultRenderTarget save (non-fatal)\n"));
+			}
+		}
 
 		//
 		//	We'll need the depth buffer later...

@@ -684,6 +684,12 @@ void ReleaseCrash(const char *reason)
 	{
 		fprintf(theReleaseCrashLogFile, "Release Crash at %s; Reason %s\n", getCurrentTimeString(), reason);
 		fprintf(theReleaseCrashLogFile, "\nLast error:\n%s\n\nCurrent stack:\n", g_LastErrorDump.str());
+		// 2026-09-14: dump the real fault site first (captured by the VEH in
+		// StackDump.cpp); the FillStackAddresses walk below is unreliable under
+		// FPO and has been producing empty stacks.
+		fprintf(theReleaseCrashLogFile, "[fault context]\n");
+		::DumpFaultContextStack(releaseCrashLogOutput);
+		fprintf(theReleaseCrashLogFile, "[release-crash site]\n");
 		const int STACKTRACE_SIZE	= 12;
 		const int STACKTRACE_SKIP = 6;
 		void* stacktrace[STACKTRACE_SIZE];

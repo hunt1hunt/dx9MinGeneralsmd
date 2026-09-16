@@ -31,6 +31,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
 #include "Common/ThingFactory.h"
+#include "Common/StackDump.h"
 #include "Common/ThingTemplate.h"
 #include "Common/FileSystem.h"
 #include "Common/GameAudio.h"
@@ -305,7 +306,10 @@ ThingTemplate *ThingFactory::findTemplateInternal( const AsciiString& name, Bool
 Object *ThingFactory::newObject( const ThingTemplate *tmplate, Team *team, ObjectStatusMaskType statusBits )
 {
 	if (tmplate == NULL)
+	{
+		DiagThrowSite(4);	// newObject - NULL template (missing thing template upstream)
 		throw ERROR_BAD_ARG;
+	}
 
 	const std::vector<AsciiString>& asv = tmplate->getBuildVariations();
 	if (!asv.empty())
@@ -350,7 +354,10 @@ Object *ThingFactory::newObject( const ThingTemplate *tmplate, Team *team, Objec
 Drawable *ThingFactory::newDrawable(const ThingTemplate *tmplate, DrawableStatus statusBits)
 {
 	if (tmplate == NULL)
+	{
+		DiagThrowSite(5);	// newDrawable - NULL template
 		throw ERROR_BAD_ARG;
+	}
 
 	Drawable *draw = TheGameClient->friend_createDrawable( tmplate, statusBits );
 

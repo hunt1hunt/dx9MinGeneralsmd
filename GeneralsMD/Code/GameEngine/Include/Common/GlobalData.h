@@ -101,6 +101,8 @@ public:
 	Bool m_useFpsLimit;
 	Bool m_dumpAssetUsage;
 	Int m_framesPerSecondLimit;
+	Bool m_enableFrameProbe;		///< SagePerfDiag: frame-stage profiler master switch (Tools/PERF_DIAG_DESIGN.md)
+	Int m_frameProbeIntervalSec;	///< SagePerfDiag: CSV flush interval in seconds (ring-full also flushes)
 	Int	m_chipSetType;	///<See W3DShaderManager::ChipsetType for options
 	Bool m_windowed;
 	Int m_xResolution;
