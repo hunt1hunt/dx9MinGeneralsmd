@@ -43,6 +43,7 @@
 //-----------------------------------------------------------------------------
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #define DEFINE_SCIENCE_AVAILABILITY_NAMES
 
@@ -1071,10 +1072,12 @@ void Player::becomingTeamMember(Object *obj, Bool yes)
 	if (!obj)
 		return;	
 
-	// 2026-09-16 breadcrumb: trace the sold/destroyed double-leave path that
-	// drives Energy negative (see Energy::objectLeavingInfluence).
-	DEBUG_LOG(("Player::becomingTeamMember obj=%s yes=%d\n",
-		obj->getTemplate()->getName().str(), (int)yes));
+	// 2026-09-16 breadcrumb (terrain_diag.log, all builds): trace the
+	// sold/destroyed team-change path that drives Energy negative.
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] TEAM_MEMBER obj=%s yes=%d\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), (int)yes); fclose(f); }
+	}
 
 	// energy production/consumption hooks, note we ignore things that are UNDER_CONSTRUCTION
 	if( !obj->getStatusBits().test( OBJECT_STATUS_UNDER_CONSTRUCTION ) )
