@@ -3557,16 +3557,15 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 			if (player->getPlayerType() == PLAYER_HUMAN)
 				player->enableFreeBuild(enable);
 
-			// 如果启用 freebuild，给玩家增加 1200 单位电量  
+			// 如果启用 freebuild，给玩家增加 1200 单位电量
 			if (enable)
 			{
-				player->getEnergy()->depositEnergy(0, FALSE); // 调用会自动加 1200  
+				player->getEnergy()->depositEnergy(1200, FALSE); // 开启：+1200
 			}
 			else
-				{
-				// 关闭 freebuild 时，重置电量为初始值  
-			//	player->getEnergy()->resetToInitialEnergy();
-				player->getEnergy()->depositEnergy(0, TRUE); // 调用不自动加 1200
+			{
+			// 关闭 freebuild 时，扣回最多 1200（withdrawEnergy 内部钳到非负）
+				player->getEnergy()->withdrawEnergy(1200, TRUE);
 			}
 		}
 
@@ -5101,18 +5100,15 @@ case GameMessage::MSG_META_DEMO_FREE_BUILD:
 			if (player->getPlayerType() == PLAYER_HUMAN)
 				player->enableFreeBuild(enable);
 
-			// 如果启用 freebuild，给玩家增加 1200 单位电量  
+			// 如果启用 freebuild，给玩家增加 1200 单位电量
 			if (enable)
 			{
-				//player->getEnergy()->depositEnergy(0, FALSE); // 调用会自动加 1200  
-				player->getEnergy()->depositEnergy(0, true); // 调用会自动加 1200 
+				player->getEnergy()->depositEnergy(1200, true); // 开启：+1200
 			}
 			else
 				{
-				// 关闭 freebuild 时，重置电量为初始值  
-			//	player->getEnergy()->resetToInitialEnergy();
-				//player->getEnergy()->depositEnergy(0, TRUE); // 调用不自动加 1200
-				player->getEnergy()->depositEnergy(0, false); // 调用不自动加 1200
+				// 关闭 freebuild 时，扣回最多 1200（withdrawEnergy 内部钳到非负）
+				player->getEnergy()->withdrawEnergy(1200, true);
 			}
 		}
 
