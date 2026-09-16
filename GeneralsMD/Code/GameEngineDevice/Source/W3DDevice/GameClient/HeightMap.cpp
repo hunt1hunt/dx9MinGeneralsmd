@@ -48,6 +48,7 @@
 
 
 #include "W3DDevice/GameClient/heightmap.h"
+#include "Common/System/TerrainDiag.h"
 
 #ifndef USE_FLAT_HEIGHT_MAP // Flat height map uses flattened textures. jba. [3/20/2003]
 
@@ -2088,7 +2089,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 		// Log once for debug: confirm normal atlas bind
 		static Bool normDiagOnce = FALSE;
 		if (!normDiagOnce && m_stageFiveTexture) {
-			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 			if (f) {
 				fprintf(f, "[%d] HT_BIND_STAGE5: normal atlas bound (0x%p) sz=%dx%d\n",
 					timeGetTime(), m_stageFiveTexture,
@@ -2131,7 +2132,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 					// Log once for debug
 					static Bool pbrDiagOnce = FALSE;
 					if (!pbrDiagOnce) {
-						FILE *f = fopen("E:\\terrain_diag.log", "a");
+						FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 						if (f) {
 							fprintf(f, "[%d] HT_PBR_RENDER: sunDir=(%.3f,%.3f,%.3f) sunColor=(%.3f,%.3f,%.3f)\n",
 								timeGetTime(), sunDir[0], sunDir[1], sunDir[2],
@@ -2152,7 +2153,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 					unsigned nowMs = timeGetTime();
 					if (nowMs - s_htCtxLast >= 2000) {
 						s_htCtxLast = nowMs;
-						FILE *fctx = fopen("E:\\terrain_diag.log", "a");
+						FILE *fctx = fopen(GetTerrainDiagLogPath(), "a");
 						if (fctx) {
 							fprintf(fctx, "[%u] HT_DRAW_CTX gbuffer=%d st=%d\n",
 								nowMs, g_gbufferActive ? 1 : 0, (int)st);
@@ -2174,7 +2175,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 						IDirect3DDevice9 *d9pd = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
 						IDirect3DBaseTexture9 *p4 = NULL;
 						d9pd->GetTexture(4, &p4);
-						FILE *fpd = fopen("E:\\pbr_compile.log", "a");
+						FILE *fpd = fopen(GetPbrCompileLogPath(), "a");
 						if (fpd) {
 							fprintf(fpd, "[%u] PRE-DRAW st=%d s4=%p\n", nowMs, (int)st, (void*)p4);
 							fclose(fpd);

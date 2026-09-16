@@ -28,6 +28,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/AudioAffect.h"
 #include "Common/AudioHandleSpecialValues.h"
@@ -1286,13 +1287,13 @@ void GameLogic::startNewGame( Bool loadingSaveGame )
 	m_frame = 0;
 
 	// before loading the map, load the map.ini file in the same directory.
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] SNG_BEFORE_LOADMAPINI\n", (unsigned)timeGetTime()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] SNG_BEFORE_LOADMAPINI\n", (unsigned)timeGetTime()); fclose(f); } }
 	loadMapINI( TheGlobalData->m_mapName );
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] SNG_AFTER_LOADMAPINI\n", (unsigned)timeGetTime()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] SNG_AFTER_LOADMAPINI\n", (unsigned)timeGetTime()); fclose(f); } }
 
 	// load a map
 	TheTerrainLogic->loadMap( TheGlobalData->m_mapName, false );
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] SNG_AFTER_LOADMAP\n", (unsigned)timeGetTime()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] SNG_AFTER_LOADMAP\n", (unsigned)timeGetTime()); fclose(f); } }
 	// anytime the world's size changes, must reset the partition mgr
 	//ThePartitionManager->init();
 
@@ -3958,7 +3959,7 @@ void GameLogic::update( void )
 	/// @todo remove this hack
 	if ( m_startNewGame && !TheDisplay->isMoviePlaying())
 	{
-		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] LOGIC_STARTNEWGAME_BEGIN\n", (unsigned)timeGetTime()); fclose(f); } }
+		{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] LOGIC_STARTNEWGAME_BEGIN\n", (unsigned)timeGetTime()); fclose(f); } }
 	#ifdef DUMP_PERF_STATS
 		Total_Get_Texture_Time=0;
 		Total_Get_HAnim_Time=0;
@@ -3968,7 +3969,7 @@ void GameLogic::update( void )
 
 		startNewGame( FALSE );
 		m_startNewGame = FALSE;
-		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] LOGIC_STARTNEWGAME_END\n", (unsigned)timeGetTime()); fclose(f); } }
+		{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] LOGIC_STARTNEWGAME_END\n", (unsigned)timeGetTime()); fclose(f); } }
 
 	#ifdef DUMP_PERF_STATS
 		char Buf[1024];
@@ -3993,7 +3994,7 @@ void GameLogic::update( void )
 	// update (execute) scripts
 	{
 		TheScriptEngine->UPDATE();
-		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] LOGIC_SCRIPT_DONE\n", (unsigned)timeGetTime()); fclose(f); } }
+		{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] LOGIC_SCRIPT_DONE\n", (unsigned)timeGetTime()); fclose(f); } }
 	}
 
 	Bool freezeTime = TheTacticalView->isTimeFrozen() && !TheTacticalView->isCameraMovementFinished();
@@ -4016,7 +4017,7 @@ void GameLogic::update( void )
 	// This way changes in bridges are noted in the script engine before being cleared in TerrainLogic->update
 	{
 		TheTerrainLogic->UPDATE();
-		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] LOGIC_TERRAIN_DONE\n", (unsigned)timeGetTime()); fclose(f); } }
+		{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] LOGIC_TERRAIN_DONE\n", (unsigned)timeGetTime()); fclose(f); } }
 	}
 
 	// force CRC calculation, so we can keep a cache of the last N CRCs.  We do this right where the recorder
@@ -4064,7 +4065,7 @@ void GameLogic::update( void )
 	// process client commands
 	{
 		processCommandList( TheCommandList );
-		{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] LOGIC_CMDLIST_DONE\n", (unsigned)timeGetTime()); fclose(f); } }
+		{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] LOGIC_CMDLIST_DONE\n", (unsigned)timeGetTime()); fclose(f); } }
 	}
 
 #ifdef ALLOW_NONSLEEPY_UPDATES

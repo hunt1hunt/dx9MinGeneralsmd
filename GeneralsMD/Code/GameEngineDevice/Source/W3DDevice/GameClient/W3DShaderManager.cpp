@@ -54,6 +54,7 @@
 //-----------------------------------------------------------------------------
 
 #include "dx8wrapper.h"
+#include "Common/System/TerrainDiag.h"
 #include "assetmgr.h"
 #include "Lib/BaseType.h"
 #include <stdlib.h>
@@ -2056,7 +2057,7 @@ Int TerrainShaderPixelShader::shutdown(void)
 static Bool g_terrainDiagInit = FALSE;
 static void TerrainDiag(const char *msg)
 {
-	FILE *f = fopen("E:\\terrain_diag.log", g_terrainDiagInit ? "a" : "w");
+	FILE *f = fopen(GetTerrainDiagLogPath(), g_terrainDiagInit ? "a" : "w");
 	if (f) {
 		if (!g_terrainDiagInit) g_terrainDiagInit = TRUE;
 		fprintf(f, "[%d] %s\n", timeGetTime(), msg);
@@ -2083,12 +2084,12 @@ static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppSh
 		NULL, NULL, "main", profile, 0, &compiled, &errors, NULL);
 	DEBUG_LOG(("CP8_TERPBR: %s D3DXCompileShader hr = %d\n", tag, (int)hr));
 	TerrainDiagI(tag, (int)hr);
-	// 2026-09-08: dedicated compile log (E:\pbr_compile.log, APPEND) —
+	// 2026-09-08: dedicated compile log (pbr_compile.log next to the exe, APPEND) —
 	// terrain_diag.log resets ("w") on every map load and wipes the compile
 	// results; without this a terrain PBR init failure silently falls back to
 	// ST_TERRAIN_BASE and NO receive code ever runs.
 	{
-		FILE *clf = fopen("E:\\pbr_compile.log", "a");
+		FILE *clf = fopen(GetPbrCompileLogPath(), "a");
 		if (clf) {
 			fprintf(clf, "[%d] %s (profile %s) compile hr=0x%08x\n",
 				(int)timeGetTime(), tag, profile, (unsigned)hr);
@@ -2232,7 +2233,7 @@ Int TerrainShaderPBR::init( void )
 		;
 		ID3DXBuffer* vsCompiled = NULL; ID3DXBuffer* vsErrors = NULL;
 		HRESULT vsHr = D3DXCompileShader(vsSrc, (UINT)strlen(vsSrc), NULL, NULL, "main", "vs_3_0", 0, &vsCompiled, &vsErrors, NULL);
-		{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+		{ FILE* vf = fopen(GetPbrCompileLogPath(), "a"); if (vf) {
 			fprintf(vf, "[%d] terrainVS (vs_3_0) compile hr=0x%08x\n", (int)timeGetTime(), (unsigned)vsHr);
 			if (vsErrors) fprintf(vf, "    ERR: %s\n", (const char*)vsErrors->GetBufferPointer());
 			fclose(vf); } }
@@ -2727,7 +2728,7 @@ Int TerrainShaderPBR::init( void )
 
 		// DIAG: log which PBR variants are registered
 		{
-			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 			if (f) {
 				fprintf(f, "[%d] PBR_INIT: base=%d noise1=%d noise2=%d noise12=%d\n",
 					timeGetTime(),
@@ -3045,7 +3046,7 @@ Int TerrainShaderPBR::set(Int pass)
 								s_vsEngaged = true;
 								IDirect3DVertexShader9 *curVS = NULL;
 								DX8Wrapper::_Get_D3D_Device8()->GetVertexShader(&curVS);
-								{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+								{ FILE* vf = fopen(GetPbrCompileLogPath(), "a"); if (vf) {
 									fprintf(vf, "[%u] TERRAIN_VS bind: handle=%p deviceHas=%p %s\n",
 										(unsigned)timeGetTime(), (void*)m_dwTerrainVS, (void*)curVS,
 										(curVS == m_dwTerrainVS) ? "ENGAGED" : "MISMATCH!");
@@ -3626,7 +3627,7 @@ Int W3DPBRShader::init( void )
 				DEBUG_LOG(("PBR IBL: env_irradiance.dds not found\n"));
 			}
 			if (!m_envIrradianceMap) {
-				FILE *f = fopen("E:\\terrain_diag.log", "a");
+				FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 				if (f) {
 					FILE *test = fopen("env_irradiance.dds", "rb");
 					fprintf(f, "[%u] PBR IBL: env_irradiance.dds load FAILED (file %s on disk)\n",
@@ -4327,14 +4328,14 @@ Int W3DPBRShader::init( void )
 	{
 		static int once = 0;
 		if (!once) { once = 1;
-			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 			if (f) { fprintf(f, "[%u] PBR_VS_DLL: m_vsPBRUnit=%p g_pbrUnitVS=%p\n", timeGetTime(), (void*)m_vsPBRUnit, (void*)g_pbrUnitVS); fclose(f); }
 		}
 	}
 
 	// DIAG: log IBL initialization status
 	{
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) {
 			fprintf(f, "[%u] PBR_IBL_INIT: irradiance=%s prefiltered=%s brdfLUT=%s hasIBL=%d hasSpecIBL=%d enabled=%d\n",
 				timeGetTime(),
@@ -4396,7 +4397,7 @@ Int W3DPBRShader::set(Int pass)
 	{
 		static Bool diagOnce = FALSE;
 		if (!diagOnce) {
-			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 			if (f) {
 				fprintf(f, "[%d] PBR_SEL: ps20=%p ps30=%p use30=%d hasIBL=%d hasSpecIBL=%d curShader=%d\n",
 					timeGetTime(), m_dwPBRPixelShader, m_dwPBRPixelShader_30,
@@ -6162,7 +6163,7 @@ extern "C" void PBR_BindVS(void)
 		dev->GetPixelShaderConstantF(2, rd_c2, 1);
 		dev->GetVertexShaderConstantF(8, rd_c8, 1);
 		dev->GetPixelShaderConstantF(10, rd_c10, 1);
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) {
 			fprintf(f, "[%u] PBR_VS_CONSTS:"
 				" VS=%p PS=%p\n"
@@ -6186,7 +6187,7 @@ extern "C" void PBR_BindVS(void)
 	{ static int once = 0; if (!once) { once = 1;
 		IDirect3DVertexShader9 *curVS = NULL;
 		dev->GetVertexShader(&curVS);
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) { fprintf(f, "[%u] PBR_VS_BOUND: m_vsPBRUnit=%p devVS=%p eq=%d\n",
 			timeGetTime(), (void*)w3dPBRShader.m_vsPBRUnit, (void*)curVS,
 			(int)(w3dPBRShader.m_vsPBRUnit == curVS)); fclose(f); }

@@ -9,6 +9,7 @@
 **  - VC6: no lambdas, explicit loop scopes, plain C arrays.
 */
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/System/TerrainDiag.h"
 #include "Common/System/FrameProbe.h"
 
 #ifdef FRAME_PROBE
@@ -165,7 +166,7 @@ void FrameProbeFlush(void)
 	{
 		MEMORYSTATUS ms;
 		GlobalMemoryStatus(&ms);
-		f = fopen("E:\\terrain_diag.log", "a");
+		f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f)
 		{
 			fprintf(f, "[%u] #MEM load=%u availPhys=%u availVirtual=%u totalVirtual=%u\n",

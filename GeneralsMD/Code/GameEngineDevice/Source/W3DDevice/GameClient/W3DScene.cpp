@@ -33,6 +33,7 @@
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include <stdlib.h>
+#include "Common/System/TerrainDiag.h"
 #include <string.h>
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
@@ -837,7 +838,7 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		if (TheGlobalData) {
 			static Bool pbrSceneDiag = FALSE;
 			if (!pbrSceneDiag) {
-				FILE *f = fopen("E:\\terrain_diag.log", "a");
+				FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 				if (f) { fprintf(f, "[%d] SCENE_PBR_CONST: always-set (m_useLegacyPBR=%d)\n", timeGetTime(), (int)TheGlobalData->m_useLegacyPBR); fclose(f); }
 				pbrSceneDiag = TRUE;
 			}

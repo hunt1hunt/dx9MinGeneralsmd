@@ -44,6 +44,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/Dict.h"
 #include "Common/GameMemory.h"
@@ -160,7 +161,7 @@ Dict::DictPair *Dict::ensureUnique(int numPairsNeeded, Bool preserveData, DictPa
 	if (numPairsNeeded > MAX_LEN)
 	{
 		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) { fprintf(f, "[%u] OOM_DICT pairs=%d\n", (unsigned)GetTickCount(), numPairsNeeded); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
 	}
