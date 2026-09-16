@@ -1071,6 +1071,11 @@ void Player::becomingTeamMember(Object *obj, Bool yes)
 	if (!obj)
 		return;	
 
+	// 2026-09-16 breadcrumb: trace the sold/destroyed double-leave path that
+	// drives Energy negative (see Energy::objectLeavingInfluence).
+	DEBUG_LOG(("Player::becomingTeamMember obj=%s yes=%d\n",
+		obj->getTemplate()->getName().str(), (int)yes));
+
 	// energy production/consumption hooks, note we ignore things that are UNDER_CONSTRUCTION
 	if( !obj->getStatusBits().test( OBJECT_STATUS_UNDER_CONSTRUCTION ) )
 	{

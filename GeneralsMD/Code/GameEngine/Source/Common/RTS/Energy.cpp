@@ -175,9 +175,27 @@ void Energy::objectLeavingInfluence( Object *obj )
 
 	// adjust energy
 	if( energy < 0 )
+	{
+		// 2026-09-16 breadcrumb: a negative predicted balance here means the
+		// same object is leaving influence twice (sold AND destroyed in the
+		// same tick) — the root cause of the negative-energy asserts. Log the
+		// template name so the double-remove path can be traced.
+		if (m_energyConsumption + energy < 0)
+		{
+			DEBUG_LOG(("Energy::objectLeavingInfluence: double-leave? template=%s consume %d + (%d) < 0\n",
+				obj->getTemplate()->getName().str(), m_energyConsumption, energy));
+		}
 		addConsumption( energy );
+	}
 	else if( energy > 0 )
+	{
+		if (m_energyProduction - energy < 0)
+		{
+			DEBUG_LOG(("Energy::objectLeavingInfluence: double-leave? template=%s produce %d - %d < 0\n",
+				obj->getTemplate()->getName().str(), m_energyProduction, energy));
+		}
 		addProduction( -energy );
+	}
 
 	// sanity
 	DEBUG_ASSERTCRASH( m_energyProduction >= 0 && m_energyConsumption >= 0, 
@@ -240,8 +258,15 @@ void Energy::addProduction(Int amt)
 	// bookkeeping path can still be identified from DebugLogFileI.txt.
 	if (m_energyProduction < 0)
 	{
-		DEBUG_LOG(("Energy: clamped negative production %d -> 0 (delta=%d, double objectLeavingInfluence?)\n",
-			m_energyProduction, amt));
+		// 2026-09-16: sample the diagnostic (first + every 100th) so a hot
+		// double-leave path cannot flood DebugLogFileI.txt.
+		static Int s_clampProdCount = 0;
+		s_clampProdCount++;
+		if (s_clampProdCount == 1 || (s_clampProdCount % 100) == 0)
+		{
+			DEBUG_LOG(("Energy: clamped negative production %d -> 0 (delta=%d, count=%d, double objectLeavingInfluence?)\n",
+				m_energyProduction, amt, s_clampProdCount));
+		}
 		m_energyProduction = 0;
 	}
 
@@ -262,8 +287,14 @@ void Energy::addConsumption(Int amt)
 	// protection for the consumption side.
 	if (m_energyConsumption < 0)
 	{
-		DEBUG_LOG(("Energy: clamped negative consumption %d -> 0 (delta=%d, double objectLeavingInfluence?)\n",
-			m_energyConsumption, amt));
+		// 2026-09-16: sample like addProduction (first + every 100th).
+		static Int s_clampConsCount = 0;
+		s_clampConsCount++;
+		if (s_clampConsCount == 1 || (s_clampConsCount % 100) == 0)
+		{
+			DEBUG_LOG(("Energy: clamped negative consumption %d -> 0 (delta=%d, count=%d, double objectLeavingInfluence?)\n",
+				m_energyConsumption, amt, s_clampConsCount));
+		}
 		m_energyConsumption = 0;
 	}
 
