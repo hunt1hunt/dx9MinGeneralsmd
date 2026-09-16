@@ -27,6 +27,7 @@
 // Author: Michael S. Booth, April 2001
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/ActionManager.h"
 #include "Common/AudioAffect.h"
@@ -755,7 +756,7 @@ void GameEngine::reset( void )
 static int g_diagFrame = 0;
 static void diagLogI(const char *msg, int v)
 {
-	FILE *f = fopen("E:\\terrain_diag.log", "a");
+	FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 	if (f) { fprintf(f, "[%u] %s %d\n", (unsigned)timeGetTime(), msg, v); fclose(f); }
 }
 /// -----------------------------------------------------------------------------------------------

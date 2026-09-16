@@ -61,6 +61,25 @@
 #include "stripoptimizer.h"
 #include "meshgeometry.h"
 
+// 2026-09-16: exe-relative diagnostic log path (was hardcoded E:\terrain_diag.log).
+static const char *TerrainDiagLogPath(void)
+{
+	static char s_path[MAX_PATH] = "";
+	if (s_path[0] == '\0')
+	{
+		char buf[MAX_PATH];
+		GetModuleFileName(NULL, buf, sizeof(buf));
+		char *slash = strrchr(buf, '\\');
+		if (slash)
+			*(slash + 1) = '\0';
+		else
+			buf[0] = '\0';
+		strcpy(s_path, buf);
+		strcat(s_path, "terrain_diag.log");
+	}
+	return s_path;
+}
+
 // PBR diagnostic logging (used only in debug builds or temporary diagnostics)
 #include <stdio.h>
 #include <mmsystem.h>
@@ -776,7 +795,7 @@ unsigned DX8FVFCategoryContainer::Define_FVF(MeshModelClass* mmc,bool enable_lig
 		}
 		if (!s_diagFVF) {
 			s_diagFVF = 1;
-			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			FILE *f = fopen(TerrainDiagLogPath(), "a");
 			if (f) {
 				fprintf(f, "[%d] PBR_FVF_SEL: texCount=%d -> FVF=0x%X\n", timeGetTime(), mmc->Get_UV_Array_Count(), fvf);
 				fclose(f);
@@ -1168,7 +1187,7 @@ void DX8RigidFVFCategoryContainer::Add_Mesh(MeshModelClass* mmc_)
 			}
 			if (!s_diagNorm) {
 				s_diagNorm = 1;
-				FILE *f = fopen("E:\\terrain_diag.log", "a");
+				FILE *f = fopen(TerrainDiagLogPath(), "a");
 				if (f) {
 					int vc = split_table.Get_Vertex_Count();
 					fprintf(f, "[%d] PBR_NORMAL_ENCODE: vertCount=%d norm[0]=(%.3f,%.3f,%.3f)\n",
@@ -1922,7 +1941,7 @@ void DX8TextureCategoryClass::Render(void)
 								pDev->GetPixelShaderConstantF(11, c11, 1);
 								DWORD rsLighting = 0;
 								pDev->GetRenderState(D3DRS_LIGHTING, &rsLighting);
-								FILE *f = fopen("E:\\terrain_diag.log", "a");
+								FILE *f = fopen(TerrainDiagLogPath(), "a");
 								if (f) {
 									// Phase 1: existing diagnostics
 									fprintf(f, "[%u] PBR_UNIT_DIAG #%d: shader=%p nt=%d hasTex=%d dbg=%.0f rsLIGHTING=%lu\n",
@@ -2481,7 +2500,7 @@ SNAPSHOT_SAY(("mesh = %s\n",mesh->Get_Name()));
 				sdev->GetTexture(3, &tx3);
 				sdev->GetTexture(4, &tx4);
 				sdev->GetTexture(5, &tx5);
-				FILE *df = fopen("E:\\terrain_diag.log", "a");
+				FILE *df = fopen(TerrainDiagLogPath(), "a");
 				if (df) {
 					fprintf(df, "[%u] PSTATE_#%d: VS=%p PS=%p"
 						" c0=(%.1f,%.1f,%.1f,%.1f) c4=(%.1f,%.1f,%.1f,%.1f) c8=(%.3f,%.3f,%.3f,%.3f)"

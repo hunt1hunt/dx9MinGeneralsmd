@@ -23,6 +23,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(IG_DEBUG_STACKTRACE)
 
@@ -188,7 +189,7 @@ static int s_FaultCaptureInstalled = InstallFaultContextCapture();
 // a crash path, never in a hot loop.
 void DiagThrowSite(int siteId)
 {
-	FILE *f = fopen("E:\\terrain_diag.log", "a");
+	FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 	if (f) { fprintf(f, "[%u] THROW_SITE_%d\n", (unsigned)timeGetTime(), siteId); fclose(f); }
 }
 

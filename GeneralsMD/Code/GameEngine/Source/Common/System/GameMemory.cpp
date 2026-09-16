@@ -43,6 +43,7 @@
 // ----------------------------------------------------------------------------
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 // SYSTEM INCLUDES 
 
@@ -246,7 +247,7 @@ static void* sysAllocateDoNotZero(Int numBytes)
 		// memoryLoad / commit state at the failure instant.
 		MEMORYSTATUS ms;
 		GlobalMemoryStatus(&ms);
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) { fprintf(f, "[%u] OOM_SYSALLOC %d load=%u availPhys=%u availVirtual=%u\n",
 			(unsigned)timeGetTime(), numBytes, ms.dwMemoryLoad, ms.dwAvailPhys, ms.dwAvailVirtual); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
@@ -1664,7 +1665,7 @@ void* MemoryPool::allocateBlockDoNotZeroImplementation(DECLARE_LITERALSTRING_ARG
 		if (m_overflowAllocationCount == 0)
 		{
 			// DIAG: log which pool is exhausted and its block size
-			FILE *f = fopen("E:\\terrain_diag.log", "a");
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 			if (f) { fprintf(f, "[%u] OOM_POOL %s size=%d\n", (unsigned)timeGetTime(), m_poolName ? m_poolName : "?", m_allocationSize); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;	// this pool is not allowed to grow
 		}
@@ -2265,7 +2266,7 @@ void *DynamicMemoryAllocator::allocateBytesDoNotZeroImplementation(Int numBytes 
   if (unsigned(result)&3)
   {
     // DIAG: Remove after diagnosis
-    { FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] OOM_DMA_ALIGN size=%d result=%p\n", (unsigned)timeGetTime(), numBytes, result); fclose(f); } }
+    { FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] OOM_DMA_ALIGN size=%d result=%p\n", (unsigned)timeGetTime(), numBytes, result); fclose(f); } }
     throw ERROR_OUT_OF_MEMORY;
   }
 #endif
@@ -2675,7 +2676,7 @@ MemoryPool *MemoryPoolFactory::createMemoryPool(const char *poolName, Int alloca
 	if (initialAllocationCount <= 0 || overflowAllocationCount < 0)
 	{
 		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) { fprintf(f, "[%u] OOM_POOLCREATE pool=%s init=%d overflow=%d\n", (unsigned)GetTickCount(), poolName ? poolName : "?", initialAllocationCount, overflowAllocationCount); fclose(f); }
 		DEBUG_CRASH(("illegal pool size: %d %d\n",initialAllocationCount,overflowAllocationCount));
 		throw ERROR_OUT_OF_MEMORY;
@@ -3429,7 +3430,7 @@ void *realloc(void *p, size_t s)
 {
 	DEBUG_CRASH(("realloc is evil. do not call it."));
 	// DIAG: Remove after diagnosis
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] OOM_REALLOC size=%d\n", (unsigned)GetTickCount(), (int)s); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] OOM_REALLOC size=%d\n", (unsigned)GetTickCount(), (int)s); fclose(f); } }
 	throw ERROR_OUT_OF_MEMORY;
 }
 #endif
