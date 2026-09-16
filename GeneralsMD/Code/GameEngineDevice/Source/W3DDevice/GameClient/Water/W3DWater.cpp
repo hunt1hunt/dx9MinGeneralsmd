@@ -32,6 +32,7 @@
 										 
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "stdio.h"
+#include "Common/System/TerrainDiag.h"
 #include "W3DDevice/GameClient/W3DWater.h"
 #include "W3DDevice/GameClient/heightmap.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
@@ -3463,12 +3464,13 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 	if (TheTerrainRenderObject && !TheTerrainRenderObject->getMap())
 		return;	//no map has been loaded yet.
 
-	// 2026-09-15: camera user data (the RTS3DScene) can be NULL during replay
-	// load scene setup - dereferencing it crashed playback (16:14 crash).
-	if (rinfo.Camera.Get_User_Data() == NULL)
-		return;
-	if (((RTS3DScene *)rinfo.Camera.Get_User_Data())->getCustomPassMode() == SCENE_PASS_ALPHA_MASK ||
-		((SceneClass *)rinfo.Camera.Get_User_Data())->Get_Extra_Pass_Polygon_Mode() == SceneClass::EXTRA_PASS_CLEAR_LINE)
+	// 2026-09-15/16: camera user data (the RTS3DScene) can be NULL during
+	// replay load scene setup - dereferencing it crashed playback (16:14
+	// crash). Only the scene-pass query needs the pointer; water itself must
+	// still render when the pointer is absent.
+	if (rinfo.Camera.Get_User_Data() != NULL &&
+		(((RTS3DScene *)rinfo.Camera.Get_User_Data())->getCustomPassMode() == SCENE_PASS_ALPHA_MASK ||
+		((SceneClass *)rinfo.Camera.Get_User_Data())->Get_Extra_Pass_Polygon_Mode() == SceneClass::EXTRA_PASS_CLEAR_LINE))
 		return;	//water is not drawn in wireframe or custom scene passes
 
 #ifdef EXTENDED_STATS
@@ -3487,7 +3489,7 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 			s_waterVSProbe = true;
 			IDirect3DVertexShader9 *curVS = NULL;
 			DX8Wrapper::_Get_D3D_Device8()->GetVertexShader(&curVS);
-			{ FILE* wf = fopen("E:\\pbr_compile.log", "a"); if (wf) {
+			{ FILE* wf = fopen(GetPbrCompileLogPath(), "a"); if (wf) {
 				fprintf(wf, "[%u] WATER_DRAW probe: deviceVS=%p (NULL=FF ok; terrainVS=LEAK!)\n",
 					(unsigned)timeGetTime(), (void*)curVS);
 				fclose(wf); } }
