@@ -38,6 +38,12 @@ typedef enum FrameProbeStage
 	FP_PRESENT,				// Present()/swap wait (P1) - keep separate from RENDER
 	FP_POSTFX,				// post-processing (P1)
 	FP_FPS_LIMIT_SPIN,		// FPS limiter Sleep(0) spin span
+	FP_LOGIC_SCRIPT,		// T5: TheScriptEngine->UPDATE()
+	FP_LOGIC_TERRAIN,		// T5: TheTerrainLogic->UPDATE()
+	FP_LOGIC_CREATE,		// T5: processCommandList (create/destroy commands)
+	FP_LOGIC_AI,			// T5: TheAI->UPDATE()
+	FP_LOGIC_PATHFIND,		// T5: ThePartitionManager->UPDATE() (spatial/pathfind)
+	FP_LOGIC_DESTROY,		// T5: processDestroyList()
 	FP_STAGE_COUNT			// must be last
 } FrameProbeStage;
 

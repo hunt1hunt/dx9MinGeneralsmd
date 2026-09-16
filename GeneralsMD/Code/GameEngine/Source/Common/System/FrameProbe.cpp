@@ -99,7 +99,9 @@ static const char *fpStageName(unsigned int stage)
 	static const char *names[FP_STAGE_COUNT] = {
 		"t_total", "t_radar", "t_audio", "t_client", "t_msg", "t_net",
 		"t_logic", "t_net_wait", "t_render", "t_present", "t_postfx",
-		"t_fps_spin"
+		"t_fps_spin",
+		"t_logic_script", "t_logic_terrain", "t_logic_create",
+		"t_logic_ai", "t_logic_pathfind", "t_logic_destroy"
 	};
 	if (stage >= FP_STAGE_COUNT)
 		return "?";

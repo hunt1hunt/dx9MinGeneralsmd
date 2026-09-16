@@ -17,6 +17,8 @@ BUDGET_MS = 33.3
 STAGE_COLS = [  # t_ 开头的阶段列(排除 t_total)
     "t_radar","t_audio","t_client","t_msg","t_net","t_logic",
     "t_net_wait","t_render","t_present","t_postfx","t_fps_spin",
+    "t_logic_script","t_logic_terrain","t_logic_create",
+    "t_logic_ai","t_logic_pathfind","t_logic_destroy",
 ]
 
 def load(path):
