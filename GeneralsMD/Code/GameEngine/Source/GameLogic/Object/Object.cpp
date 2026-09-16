@@ -856,6 +856,15 @@ void Object::setOrRestoreTeam( Team* team, Bool restoring )
 
 	Team* oldTeam = m_team;
 
+	// 2026-09-16 breadcrumb: pinpoint the double objectLeavingInfluence path
+	// (sell + destroy both switching team in one tick drives Energy negative).
+	DEBUG_LOG(("setOrRestoreTeam: obj=%s old=%s new=%s inOldList=%d underCon=%d\n",
+		getTemplate()->getName().str(),
+		oldTeam ? oldTeam->getName().str() : "(null)",
+		team ? team->getName().str() : "(null)",
+		(m_team && m_team->isInList_TeamMemberList(this)) ? 1 : 0,
+		getStatusBits().test(OBJECT_STATUS_UNDER_CONSTRUCTION) ? 1 : 0));
+
 	// Before Switch //////////////////////////
 	if (m_team)
 	{
