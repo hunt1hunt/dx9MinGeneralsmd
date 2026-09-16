@@ -2,11 +2,19 @@
   "mcpServers": {
     "codegraph": {
       "type": "stdio",
-      "command": "codegraph-mcp",
+      "command": "codegraph",
       "args": [
-        "--workspace",
+        "serve",
+        "--mcp",
+        "-p",
         "E:\\Source\\repos\\MinGeneralsfreebuild2ok"
       ],
+      "env": {}
+    },
+    "mempalace": {
+      "type": "stdio",
+      "command": "mempalace-mcp",
+      "args": [],
       "env": {}
     },
     "bb-browser": {
