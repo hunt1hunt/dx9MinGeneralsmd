@@ -3834,8 +3834,13 @@ void W3DModelDraw::setAnimationFrame( int frame )
 	{
 		const W3DAnimationInfo& animInfo = m_curState->m_animations[ m_whichAnimInCurState ];
 		HAnimClass* animHandle = animInfo.getAnimHandle();	// note that this now returns an ADDREFED handle, which must be released by the caller!
-		m_renderObject->Set_Animation( animHandle, frame );
-		REF_PTR_RELEASE(animHandle);
+		// 2026-09-16: getAnimHandle can return NULL for missing animations
+		// (downgraded from assert to log on 09-14); guard Set_Animation.
+		if (animHandle)
+		{
+			m_renderObject->Set_Animation( animHandle, frame );
+			REF_PTR_RELEASE(animHandle);
+		}
 	}
 }
 
