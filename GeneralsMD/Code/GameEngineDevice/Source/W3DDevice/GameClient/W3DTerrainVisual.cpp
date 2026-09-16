@@ -30,6 +30,7 @@
 // ====================== ��������2�У��޸����д��� ======================
 //#include "W3DAssetManager.h"    // �޸���W3DAssetManager δ����
 #include "W3DDevice/GameClient/W3DAssetManager.h"  // �7�3 ����·�������������ҵ�
+#include "Common/System/TerrainDiag.h"
 //#include "TerrainLogic.h"       // �޸���TheTerrainLogic δ����
 #include "GameLogic/TerrainLogic.h"                // ���ҵ��ĵ����߼�ͷ�ļ�
 // ======================================================================
@@ -649,15 +650,15 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 	if( m_terrainRenderObject == NULL )
 		return FALSE;
 
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_OPEN_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] TVL_OPEN_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 
   ChunkInputStream *pStrm = &fileStrm;
 
   // allocate new height map data to read from file
   REF_PTR_RELEASE( m_logicHeightMap );
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_WORLDHM_BEGIN\n", (unsigned)GetTickCount()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] TVL_WORLDHM_BEGIN\n", (unsigned)GetTickCount()); fclose(f); } }
 	m_logicHeightMap = NEW WorldHeightMap(pStrm);
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_WORLDHM_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] TVL_WORLDHM_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 
 
 
@@ -727,7 +728,7 @@ Bool W3DTerrainVisual::load( AsciiString filename )
 																				 m_logicHeightMap,
 																				 it);
 #endif
-	{ FILE *f = fopen("E:\\terrain_diag.log", "a"); if (f) { fprintf(f, "[%u] TVL_INITHEIGHT_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
+	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] TVL_INITHEIGHT_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
 
 
 	if (it) {

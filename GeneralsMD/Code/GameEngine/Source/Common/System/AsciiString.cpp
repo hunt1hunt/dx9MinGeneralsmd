@@ -43,6 +43,7 @@
 //-----------------------------------------------------------------------------
 ///////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/CriticalSection.h"
 
@@ -137,7 +138,7 @@ void AsciiString::ensureUniqueBufferOfSize(int numCharsNeeded, Bool preserveData
 	if (minBytes > MAX_LEN)
 	{
 		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) { fprintf(f, "[%u] OOM_ASCIISTRING chars=%d minBytes=%d\n", (unsigned)GetTickCount(), numCharsNeeded, minBytes); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
 	}
@@ -291,10 +292,25 @@ void AsciiString::format_va(const AsciiString& format, va_list args)
 	validate();
 	char buf[MAX_FORMAT_BUF_LEN];
   if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format.str(), args) < 0) {
-		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_ASCIIFORMAT format=\"%.256s\"\n", (unsigned)GetTickCount(), format.str()); fclose(f); }
+		// 2026-09-15 root fix: _vsnprintf returns <0 both for encoding
+		// failures (e.g. %ls with player names not representable in MBCS)
+		// and for truncation. 2026-09-16: retry in a larger buffer to tell
+		// the two apart — a genuinely oversized format string must still
+		// fail fast instead of silently degrading (VC6 has no _vscprintf).
+		char bigbuf[8192];
+		va_list args2 = args;
+		int rc = _vsnprintf(bigbuf, sizeof(bigbuf)/sizeof(char)-1, format.str(), args2);
+		if (rc >= 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] FORMAT_TOO_LONG format=\"%.256s\"\n", (unsigned)GetTickCount(), format.str()); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+		}
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] FORMAT_FAIL format=\"%.256s\"\n", (unsigned)GetTickCount(), format.str()); fclose(f); }
+		set("<format-error>");
+		validate();
+		return;
 	}
 	set(buf);
 	validate();
@@ -306,10 +322,21 @@ void AsciiString::format_va(const char* format, va_list args)
 	validate();
 	char buf[MAX_FORMAT_BUF_LEN];
   if (_vsnprintf(buf, sizeof(buf)/sizeof(char)-1, format, args) < 0) {
-		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_ASCIIFORMAT format=\"%.256s\"\n", (unsigned)GetTickCount(), format ? format : "(null)"); fclose(f); }
+		// 2026-09-15 root fix: see AsciiString& overload above.
+		char bigbuf[8192];
+		va_list args2 = args;
+		int rc = _vsnprintf(bigbuf, sizeof(bigbuf)/sizeof(char)-1, format, args2);
+		if (rc >= 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] FORMAT_TOO_LONG format=\"%.256s\"\n", (unsigned)GetTickCount(), format ? format : "(null)"); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+		}
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] FORMAT_FAIL format=\"%.256s\"\n", (unsigned)GetTickCount(), format ? format : "(null)"); fclose(f); }
+		set("<format-error>");
+		validate();
+		return;
 	}
 	set(buf);
 	validate();

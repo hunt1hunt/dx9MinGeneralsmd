@@ -46,6 +46,7 @@
 //         Includes                                                      
 //-----------------------------------------------------------------------------
 #include <stdlib.h>
+#include "Common/System/TerrainDiag.h"
 #include <math.h>
 
 #include "W3DDevice/GameClient/TerrainTex.h"
@@ -59,11 +60,11 @@
 
 // === TERRAIN NORMAL-MAP DIAGNOSTIC ===
 // Append-only diagnostics shared with W3DShaderManager.cpp so the whole
-// normal-map pipeline can be verified from one log file (E:\terrain_diag.log).
+// normal-map pipeline can be verified from one log file (terrain_diag.log, next to the exe).
 static void TerrainNormDiag(const char *msg)
 {
 	static Bool init = FALSE;
-	FILE *f = fopen("E:\\terrain_diag.log", init ? "a" : "w");
+	FILE *f = fopen(GetTerrainDiagLogPath(), init ? "a" : "w");
 	if (f) {
 		init = TRUE;
 		fprintf(f, "[%d] NM_%s\n", timeGetTime(), msg);

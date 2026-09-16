@@ -29,6 +29,7 @@
  
 // INCLUDES /////////////////////////////////////////////////////////////////////////////////////// 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 #define DEFINE_WEAPONCONDITIONMAP
 #include "Common/BitFlagsIO.h"
 #include "Common/BuildAssistant.h"
@@ -855,6 +856,19 @@ void Object::setOrRestoreTeam( Team* team, Bool restoring )
 		return;
 
 	Team* oldTeam = m_team;
+
+	// 2026-09-16 breadcrumb (terrain_diag.log, all builds): pinpoint the
+	// team-change path so a double subtract can be traced end to end.
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] SET_OR_RESTORE_TEAM obj=%s old=%s new=%s inOldList=%d underCon=%d\n",
+			(unsigned)GetTickCount(),
+			getTemplate()->getName().str(),
+			oldTeam ? oldTeam->getName().str() : "(null)",
+			team ? team->getName().str() : "(null)",
+			(m_team && m_team->isInList_TeamMemberList(this)) ? 1 : 0,
+			getStatusBits().test(OBJECT_STATUS_UNDER_CONSTRUCTION) ? 1 : 0); fclose(f); }
+	}
 
 	// Before Switch //////////////////////////
 	if (m_team)
@@ -5538,7 +5552,10 @@ void Object::doCommandButton( const CommandButton *commandButton, CommandSourceT
 			default:
 				break;
 		}
-		DEBUG_CRASH( ("WARNING: Script doCommandButton for button %s not implemented. Doing nothing.", commandButton->getName().str()) );
+		// 2026-09-14 downgraded crash->log: message itself says "Doing nothing";
+		// unhandled script buttons (e.g. Command_UpgradeGLACamoNetting) are
+		// benign no-ops and must not block gameplay with a dialog.
+		DEBUG_LOG( ("WARNING: Script doCommandButton for button %s not implemented. Doing nothing.", commandButton->getName().str()) );
 	}
 }
 
@@ -5653,7 +5670,7 @@ void Object::doCommandButtonAtObject( const CommandButton *commandButton, Object
 			default:
 				break;
 		}
-		DEBUG_CRASH( ("WARNING: Script doCommandButtonAtObject for button %s not implemented. Doing nothing.", commandButton->getName().str()) );
+		DEBUG_LOG( ("WARNING: Script doCommandButtonAtObject for button %s not implemented. Doing nothing.", commandButton->getName().str()) ); // 2026-09-14 downgraded (see doCommandButton note)
 	}
 }
 

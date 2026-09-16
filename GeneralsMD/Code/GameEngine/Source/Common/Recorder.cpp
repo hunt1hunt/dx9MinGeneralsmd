@@ -1156,21 +1156,41 @@ Bool RecorderClass::playbackFile(AsciiString filename)
 	}
 #endif
 
-	Bool isMultiplayer = m_gameInfo.getSlot(header.localPlayerIndex)->getIP() != 0;
+	// 2026-09-16: localPlayerIndex can be -1 (no local player) which passes
+	// readReplayHeader validation but would index getSlot(-1) out of bounds.
+	Bool isMultiplayer = (header.localPlayerIndex >= 0)
+		? (m_gameInfo.getSlot(header.localPlayerIndex)->getIP() != 0)
+		: FALSE;
 	m_crcInfo = NEW CRCInfo(header.localPlayerIndex, isMultiplayer);
 	REPLAY_CRC_INTERVAL = m_gameInfo.getCRCInterval();
 	DEBUG_LOG(("Player index is %d, replay CRC interval is %d\n", m_crcInfo->getLocalPlayer(), REPLAY_CRC_INTERVAL));
 
 	Int difficulty = 0;
-	fread(&difficulty, sizeof(difficulty), 1, m_file);
+	if (fread(&difficulty, sizeof(difficulty), 1, m_file) != 1)
+	{
+		DEBUG_LOG(("RecorderClass::playbackFile - truncated replay at difficulty field\n"));
+		return FALSE;
+	}
 
-	fread(&m_originalGameMode, sizeof(m_originalGameMode), 1, m_file);
+	if (fread(&m_originalGameMode, sizeof(m_originalGameMode), 1, m_file) != 1)
+	{
+		DEBUG_LOG(("RecorderClass::playbackFile - truncated replay at game mode field\n"));
+		return FALSE;
+	}
 
 	Int rankPoints = 0;
-	fread(&rankPoints, sizeof(rankPoints), 1, m_file);
+	if (fread(&rankPoints, sizeof(rankPoints), 1, m_file) != 1)
+	{
+		DEBUG_LOG(("RecorderClass::playbackFile - truncated replay at rank points field\n"));
+		return FALSE;
+	}
 	
 	Int maxFPS = 0;
-	fread(&maxFPS, sizeof(maxFPS), 1, m_file);
+	if (fread(&maxFPS, sizeof(maxFPS), 1, m_file) != 1)
+	{
+		DEBUG_LOG(("RecorderClass::playbackFile - truncated replay at maxFPS field\n"));
+		return FALSE;
+	}
 
 	DEBUG_LOG(("RecorderClass::playbackFile() - original game was mode %d\n", m_originalGameMode));
 	

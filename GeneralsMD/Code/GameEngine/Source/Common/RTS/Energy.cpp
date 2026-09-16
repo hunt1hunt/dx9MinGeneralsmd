@@ -43,6 +43,7 @@
 //-----------------------------------------------------------------------------
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/AudioSettings.h"
 #include "Common/GameAudio.h"
@@ -175,9 +176,26 @@ void Energy::objectLeavingInfluence( Object *obj )
 
 	// adjust energy
 	if( energy < 0 )
+	{
+		// 2026-09-16 breadcrumb (terrain_diag.log, all builds): a negative
+		// predicted balance here means the same object is leaving influence
+		// twice (sold AND destroyed in the same tick).
+		if (m_energyConsumption + energy < 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_DOUBLE_LEAVE obj=%s consume %d + (%d) < 0\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), m_energyConsumption, energy); fclose(f); }
+		}
 		addConsumption( energy );
+	}
 	else if( energy > 0 )
+	{
+		if (m_energyProduction - energy < 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_DOUBLE_LEAVE obj=%s produce %d - %d < 0\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), m_energyProduction, energy); fclose(f); }
+		}
 		addProduction( -energy );
+	}
 
 	// sanity
 	DEBUG_ASSERTCRASH( m_energyProduction >= 0 && m_energyConsumption >= 0, 
@@ -197,7 +215,14 @@ void Energy::addPowerBonus( Object *obj )
 	if( obj == NULL )
 		return;
 
-	addProduction(obj->getTemplate()->getEnergyBonus());
+	// 2026-09-16 breadcrumb (terrain_diag.log, all builds): tracks the Control
+	// Rods bonus so a REMOVE without a matching ADD can be spotted.
+	Int bonus = obj->getTemplate()->getEnergyBonus();
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] ENERGY_BONUS_ADD obj=%s bonus=%d prod_before=%d\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), bonus, m_energyProduction); fclose(f); }
+	}
+	addProduction(bonus);
 
 	// sanity
 	DEBUG_ASSERTCRASH( m_energyProduction >= 0 && m_energyConsumption >= 0, 
@@ -216,7 +241,13 @@ void Energy::removePowerBonus( Object *obj )
 	if( obj == NULL )
 		return;
 
-	addProduction( -obj->getTemplate()->getEnergyBonus() );
+	// 2026-09-16 breadcrumb: pairs with ENERGY_BONUS_ADD above.
+	Int bonus = obj->getTemplate()->getEnergyBonus();
+	{
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] ENERGY_BONUS_REMOVE obj=%s bonus=%d prod_before=%d\n", (unsigned)GetTickCount(), obj->getTemplate()->getName().str(), bonus, m_energyProduction); fclose(f); }
+	}
+	addProduction( -bonus );
 
 	// sanity
 	DEBUG_ASSERTCRASH( m_energyProduction >= 0 && m_energyConsumption >= 0, 
@@ -231,7 +262,26 @@ void Energy::removePowerBonus( Object *obj )
 // ------------------------------------------------------------------------------------------------
 void Energy::addProduction(Int amt)
 {
-	m_energyProduction += amt; 
+	m_energyProduction += amt;
+
+	// 2026-09-14 defensive clamp: a double objectLeavingInfluence (object
+	// sold AND destroyed in the same tick) drives production negative, which
+	// trips the "Negative Energy numbers" DEBUG_ASSERTCRASH and kills the
+	// game mid-skirmish. Clamp at zero and log the delta so the offending
+	// bookkeeping path can still be identified from DebugLogFileI.txt.
+	if (m_energyProduction < 0)
+	{
+		// 2026-09-16: sample the diagnostic (first + every 100th) and write
+		// it to terrain_diag.log so Release builds see it too.
+		static Int s_clampProdCount = 0;
+		s_clampProdCount++;
+		if (s_clampProdCount == 1 || (s_clampProdCount % 100) == 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_CLAMP_PROD %d -> 0 (delta=%d, count=%d)\n", (unsigned)GetTickCount(), m_energyProduction, amt, s_clampProdCount); fclose(f); }
+		}
+		m_energyProduction = 0;
+	}
 
 	if( m_owner == NULL )
 		return;
@@ -244,7 +294,22 @@ void Energy::addProduction(Int amt)
 // ------------------------------------------------------------------------------------------------
 void Energy::addConsumption(Int amt)
 {
-	m_energyConsumption += amt; 
+	m_energyConsumption += amt;
+
+	// 2026-09-14 defensive clamp: see addProduction - same double-leave
+	// protection for the consumption side.
+	if (m_energyConsumption < 0)
+	{
+		// 2026-09-16: sample like addProduction; terrain_diag.log for all builds.
+		static Int s_clampConsCount = 0;
+		s_clampConsCount++;
+		if (s_clampConsCount == 1 || (s_clampConsCount % 100) == 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] ENERGY_CLAMP_CONS %d -> 0 (delta=%d, count=%d)\n", (unsigned)GetTickCount(), m_energyConsumption, amt, s_clampConsCount); fclose(f); }
+		}
+		m_energyConsumption = 0;
+	}
 
 	if( m_owner == NULL )
 		return;
@@ -311,20 +376,11 @@ void Energy::loadPostProcess( void )
 // ------------------------------------------------------------------------------------------------  
 void Energy::depositEnergy(Int amountToDeposit, Bool playSound)
 {
-#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE) 
-	// 检查是否启用了 freebuild 作弊  
-	if (m_owner != NULL && m_owner->buildsForFree())
-	{
-		// freebuild 启用时，增加 1200 单位电量
-	//	player->enableFreeBuild(enable);
-	//	if (enable)
-		amountToDeposit += -1200;
-	
-	}
-	else
-		amountToDeposit += 1200;
-#endif  
-
+	// 2026-09-16: removed the old freebuild +/-1200 hack. That hack was
+	// inverted (ON subtracted 1200, OFF added 1200) and drove production
+	// negative -> ENERGY_CLAMP_PROD. Cheat callers now pass the amount
+	// explicitly: depositEnergy(1200) to top up, withdrawEnergy(1200) to
+	// take it back (withdraw clamps to non-negative).
 	if (amountToDeposit == 0)
 		return;
 

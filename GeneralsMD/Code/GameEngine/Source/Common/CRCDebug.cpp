@@ -49,7 +49,10 @@ static Int numDebugStrings = 0;
 //static Int nextDumpString = 0;
 //static Int numDumpStrings = 0;
 
-#define IS_FRAME_OK_TO_LOG TheGameLogic->isInGame() && !TheGameLogic->isInShellGame() && !TheDebugIgnoreSyncErrors && \
+// 2026-09-15: null-guard TheGameLogic - CRC debug logging fires during engine
+// shutdown (after TheGameLogic is deleted, e.g. at benchmark/replay teardown)
+// and crashed with an access violation in isInGame() (15:41 crash, NULL this).
+#define IS_FRAME_OK_TO_LOG (TheGameLogic != NULL) && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame() && !TheDebugIgnoreSyncErrors && \
 	TheCRCFirstFrameToLog >= 0 && TheCRCFirstFrameToLog <= TheGameLogic->getFrame() \
 	&& TheGameLogic->getFrame() <= TheCRCLastFrameToLog
 

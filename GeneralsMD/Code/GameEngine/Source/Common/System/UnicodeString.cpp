@@ -43,6 +43,7 @@
 //-----------------------------------------------------------------------------
 ///////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
+#include "Common/System/TerrainDiag.h"
 
 #include "Common/CriticalSection.h"
 
@@ -97,7 +98,7 @@ void UnicodeString::ensureUniqueBufferOfSize(int numCharsNeeded, Bool preserveDa
 	if (minBytes > MAX_LEN)
 	{
 		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
 		if (f) { fprintf(f, "[%u] OOM_UNICODESTRING chars=%d minBytes=%d\n", (unsigned)GetTickCount(), numCharsNeeded, minBytes); fclose(f); }
 		throw ERROR_OUT_OF_MEMORY;
 	}
@@ -315,10 +316,24 @@ void UnicodeString::format_va(const UnicodeString& format, va_list args)
 	validate();
 	WideChar buf[MAX_FORMAT_BUF_LEN];
   if (_vsnwprintf(buf, sizeof(buf)/sizeof(WideChar)-1, format.str(), args) < 0) {
-		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_UNICODEFORMAT len=%d\n", (unsigned)GetTickCount(), format.getLength()); fclose(f); }
+		// 2026-09-15 root fix: format failure must not kill the game (see
+		// AsciiString::format_va). 2026-09-16: retry in a larger buffer so a
+		// genuinely oversized format string still fails fast (VC6 has no
+		// _vscwprintf).
+		WideChar bigbuf[8192];
+		va_list args2 = args;
+		int rc = _vsnwprintf(bigbuf, sizeof(bigbuf)/sizeof(WideChar)-1, format.str(), args2);
+		if (rc >= 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] FORMAT_TOO_LONG_UNI len=%d\n", (unsigned)GetTickCount(), format.getLength()); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+		}
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] FORMAT_FAIL_UNI len=%d\n", (unsigned)GetTickCount(), format.getLength()); fclose(f); }
+		set(L"<format-error>");
+		validate();
+		return;
 	}
 	set(buf);
 	validate();
@@ -330,10 +345,21 @@ void UnicodeString::format_va(const WideChar* format, va_list args)
 	validate();
 	WideChar buf[MAX_FORMAT_BUF_LEN];
   if (_vsnwprintf(buf, sizeof(buf)/sizeof(WideChar)-1, format, args) < 0) {
-		// DIAG: Remove after diagnosis
-		FILE *f = fopen("E:\\terrain_diag.log", "a");
-		if (f) { fprintf(f, "[%u] OOM_UNICODEFORMAT format=\"%.256ls\"\n", (unsigned)GetTickCount(), format ? format : L"(null)"); fclose(f); }
+		// 2026-09-15 root fix: see above. 2026-09-16: too-long still throws.
+		WideChar bigbuf[8192];
+		va_list args2 = args;
+		int rc = _vsnwprintf(bigbuf, sizeof(bigbuf)/sizeof(WideChar)-1, format, args2);
+		if (rc >= 0)
+		{
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) { fprintf(f, "[%u] FORMAT_TOO_LONG_UNI format=\"%.256ls\"\n", (unsigned)GetTickCount(), format ? format : L"(null)"); fclose(f); }
 			throw ERROR_OUT_OF_MEMORY;
+		}
+		FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+		if (f) { fprintf(f, "[%u] FORMAT_FAIL_UNI format=\"%.256ls\"\n", (unsigned)GetTickCount(), format ? format : L"(null)"); fclose(f); }
+		set(L"<format-error>");
+		validate();
+		return;
 	}
 	set(buf);
 	validate();

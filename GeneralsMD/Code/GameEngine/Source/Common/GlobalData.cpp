@@ -102,6 +102,8 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "TerrainProbeMode",		INI::parseInt,				NULL,			offsetof( GlobalData, m_terrainProbeMode ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
+	{ "EnableFrameProbe",					INI::parseBool,				NULL,			offsetof( GlobalData, m_enableFrameProbe ) },
+	{ "FrameProbeIntervalSec",			INI::parseInt,				NULL,			offsetof( GlobalData, m_frameProbeIntervalSec ) },
 	{ "ChipsetType",							INI::parseInt,				NULL,			offsetof( GlobalData, m_chipSetType ) },
 	{ "MaxShellScreens",					INI::parseInt,				NULL,			offsetof( GlobalData, m_maxShellScreens ) },
 	{ "UseCloudMap",							INI::parseBool,				NULL,			offsetof( GlobalData, m_useCloudMap ) },
@@ -717,6 +719,8 @@ GlobalData::GlobalData()
 	m_useFpsLimit = FALSE;
 	m_dumpAssetUsage = FALSE;
 	m_framesPerSecondLimit = 0;
+	m_enableFrameProbe = FALSE;
+	m_frameProbeIntervalSec = 30;
 	m_chipSetType = 0;
 	m_windowed = 0;
 	m_xResolution = 800;

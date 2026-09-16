@@ -29,6 +29,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file int the GameEngine
 
 #include "Common/Errors.h"
+#include "Common/StackDump.h"
 #include "Common/StateMachine.h"
 #include "Common/ThingTemplate.h"
 #include "Common/GameState.h"
@@ -524,6 +525,7 @@ State *StateMachine::internalGetState( StateID id )
 		i = m_stateMap.find(m_defaultStateID);
 		if (i == m_stateMap.end()) {
 			DEBUG_LOG(("Failed to located default state.  Aborting...\n"));
+			DiagThrowSite(1);	// StateMachine::internalGetState - no default state
 			throw ERROR_BAD_ARG;
 		} else {
 			DEBUG_LOG(("Located default state to recover.\n"));

@@ -43,6 +43,7 @@ static void drawFramerateBar(void);
 #include "Common/ThingFactory.h"
 #include "Common/GameEngine.h"
 #include "Common/GlobalData.h"
+#include "Common/System/FrameProbe.h"	// SagePerfDiag P1/T4 (Tools/PERF_DIAG_DESIGN.md)
 #include "Common/PerfTimer.h"
 #include "Common/FileSystem.h"
 #include "Common/LocalFileSystem.h"
@@ -1911,8 +1912,11 @@ AGAIN:
 					Debug_Statistics::Record_DX8_Polys_And_Vertices(numRenderTargetPolygons,numRenderTargetVertices,ShaderClass::_PresetOpaqueShader);
 
 				// draw all views of the world
+				FP_BEGIN(RENDER);	// SagePerfDiag: world scene (views, shadows, reflections)
 				drawViews();
+				FP_END(RENDER);
 
+				FP_BEGIN(POSTFX);	// SagePerfDiag: UI/overlay composition
 				// draw the user interface
 				TheInGameUI->DRAW();
 
@@ -1992,7 +1996,16 @@ AGAIN:
 				TheGraphDraw->clear();
 #endif
 				// render is all done!
-				WW3D::End_Render();	
+				FP_END(POSTFX);
+				FP_BEGIN(PRESENT);	// SagePerfDiag: End_Render includes the flip/vsync wait
+				WW3D::End_Render();
+				FP_END(PRESENT);
+
+				// SagePerfDiag P1/T6: per-frame draw submission & state-change magnitudes
+				// (counters already maintained by DX8Wrapper; just harvest them)
+				FP_COUNT(DRAW_CALLS, (int)DX8Wrapper::Get_Last_Frame_Draw_Calls());
+				FP_COUNT(STATE_CHANGES, (int)(DX8Wrapper::Get_Last_Frame_Texture_Changes()
+					+ DX8Wrapper::Get_Last_Frame_Render_State_Changes()));
 			}
 			else
 			{

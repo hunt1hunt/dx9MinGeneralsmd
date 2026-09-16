@@ -1884,13 +1884,25 @@ void PartitionData::doSmallFill(
 	Real halfCellSize = ThePartitionManager->getCellSize() * 0.5f;
 	if (radius > halfCellSize)
 	{
-		DEBUG_CRASH(("object is too large to use a 'small' geometry, truncating size to cellsize\n"));
+		// 2026-09-16: downgraded crash->log. Oversized W3X replacement
+		// buildings legitimately reach this "small" path; the cell-range
+		// clamp below keeps the write bounded, so this is a note, not a dialog.
+		DEBUG_LOG(("object is too large to use a 'small' geometry, truncating size to cellsize\n"));
 		radius = halfCellSize;
 	}
 
 	Int cx1, cy1, cx2, cy2;
 	ThePartitionManager->worldToCell(centerX - radius, centerY - radius, &cx1, &cy1);
 	ThePartitionManager->worldToCell(centerX + radius, centerY + radius, &cx2, &cy2);
+
+	// 2026-09-16: clamp to the asserted 2x2 contract. An object whose center
+	// sits exactly on a cell boundary can span 3 cells (3x3 = 9 > 4 COI
+	// slots), which in release builds (asserts off) overran the COI array.
+	// Clamping keeps the write bounded and matches the debug contract.
+	if (cx2 - cx1 > 1)
+		cx2 = cx1 + 1;
+	if (cy2 - cy1 > 1)
+		cy2 = cy1 + 1;
 
 	DEBUG_ASSERTCRASH(absInt(cx2-cx1)<=1,("bad cx"));
 	DEBUG_ASSERTCRASH(absInt(cy2-cy1)<=1,("bad cy"));
@@ -1902,7 +1914,30 @@ void PartitionData::doSmallFill(
 			PartitionCell *cell = ThePartitionManager->getCellAt(x, y);
 			if (cell)
 			{
-				m_coiArray[m_coiInUseCount++].addCoverage(cell, this);
+				// 2026-09-14: hard bound guard. Oversized objects (W3X
+				// replacement buildings) reach this "small" path; without the
+				// guard the unbounded m_coiInUseCount++ overruns the COI
+				// array and corrupts memory -> silent GameEngine::update
+				// crashes minutes into a skirmish.
+				if (m_coiInUseCount < m_coiArrayCount)
+				{
+					m_coiArray[m_coiInUseCount++].addCoverage(cell, this);
+				}
+				else
+				{
+					// 2026-09-16: one-time diagnostic. Dropped COI coverage
+					// means fog reveal / collision / aura misses in this cell,
+					// so never fail silently.
+					static Bool s_warnedCoiTrunc = FALSE;
+					if (!s_warnedCoiTrunc)
+					{
+						s_warnedCoiTrunc = TRUE;
+						DEBUG_LOG(("PartitionData::doSmallFill: COI array full (%d) dropping cell coverage for %s at cell (%d,%d)\n",
+							m_coiArrayCount,
+							getObject() ? getObject()->getTemplate()->getName().str() : "(no object)",
+							x, y));
+					}
+				}
 			}
 		}
 	}
@@ -2137,7 +2172,7 @@ static AsciiString theObjName;
 //-----------------------------------------------------------------------------
 Int PartitionData::calcMaxCoiForShape(GeometryType geom, Real majorRadius, Real minorRadius, Bool isSmall)
 {
-	Int result;
+	Int result = 4;	// 2026-09-16: init to the same floor as the clamp below; previously uninitialized for geometry types not covered by the switch (UB).
 
 
   // THis is commented out, since some cases od big extets labeled small seem to be escaping.

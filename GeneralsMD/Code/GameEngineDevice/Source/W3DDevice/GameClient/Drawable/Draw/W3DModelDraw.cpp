@@ -350,7 +350,8 @@ HAnimClass* W3DAnimationInfo::getAnimHandle() const
 	{
 		// Get_HAnim addrefs it, so we'll have to release it in our dtor.
 		m_handle = W3DDisplay::m_assetManager->Get_HAnim(m_name.str());
-		DEBUG_ASSERTCRASH(m_handle, ("*** ASSET ERROR: animation %s not found\n",m_name.str()));
+		if (m_handle == NULL)
+			DEBUG_LOG(("*** ASSET WARNING: animation %s not found\n",m_name.str())); // 2026-09-14 downgraded: NULL handle is handled by callers
 		if (m_handle)
 		{
 			m_naturalDurationInMsec = m_handle->Get_Num_Frames() * 1000.0f / m_handle->Get_Frame_Rate();
@@ -362,7 +363,8 @@ HAnimClass* W3DAnimationInfo::getAnimHandle() const
 	return m_handle;
 #else
 	HAnimClass* handle = W3DDisplay::m_assetManager->Get_HAnim(m_name.str());
-	DEBUG_ASSERTCRASH(handle, ("*** ASSET ERROR: animation %s not found\n",m_name.str()));
+	if (handle == NULL)
+		DEBUG_LOG(("*** ASSET WARNING: animation %s not found\n",m_name.str())); // 2026-09-14 downgraded (see above)
 	if (handle != NULL && m_naturalDurationInMsec < 0)
 	{
 		m_naturalDurationInMsec = handle->Get_Num_Frames() * 1000.0f / handle->Get_Frame_Rate();
@@ -621,7 +623,7 @@ void ModelConditionInfo::validateCachedBones(RenderObjClass* robj, Real scale) c
 		}
 
 		robj = W3DDisplay::m_assetManager->Create_Render_Obj(m_modelName.str(), scale, 0);
-		DEBUG_ASSERTCRASH(robj, ("*** ASSET ERROR: Model %s not found!\n",m_modelName.str()));
+		if (robj == NULL) DEBUG_LOG(("*** ASSET WARNING: Model %s not found!\n",m_modelName.str())); // 2026-09-14 downgraded: NULL robj handled below
 		if (!robj)
 		{
 			//BONEPOS_LOG(("Bailing: could not load render object\n"));
@@ -690,8 +692,11 @@ void ModelConditionInfo::validateCachedBones(RenderObjClass* robj, Real scale) c
 	{
 		if (!doSingleBoneName(robj, *it, m_pristineBones))
 		{
-			// DO crash here, since we specifically requested this bone for this model
-			DEBUG_CRASH(("*** ASSET ERROR: public bone '%s' (and variations thereof) not found in model %s!\n",it->str(),m_modelName.str()));
+			// 2026-09-14: W3X replacement INIs are auto-generated across hundreds
+			// of models; damaged-state variants (e.g. avlasertnk_d1) legitimately
+			// lack the Turret bone. The bone simply won't aim - not worth a
+			// blocking crash dialog. Downgraded to a warning.
+			DEBUG_LOG(("*** ASSET WARNING: public bone '%s' (and variations thereof) not found in model %s!\n", it->str(), m_modelName.str()));
 		}
 		//else
 		//{
@@ -849,7 +854,10 @@ void ModelConditionInfo::validateWeaponBarrelInfo() const
 				}
 			}	// if empty
 
-			DEBUG_ASSERTCRASH(!(m_modelName.isNotEmpty() && m_weaponBarrelInfoVec[wslot].empty()), ("*** ASSET ERROR: No fx bone named '%s' found in model %s!\n",fxBoneName.str(),m_modelName.str()));
+			// 2026-09-14: downgraded crash->warning (see public-bone note above);
+			// damaged W3X variants legitimately lack muzzle-fx bones, the empty
+			// barrel vec is already handled downstream (earlier W3X_FIRE logs).
+			DEBUG_LOG(("*** ASSET WARNING: No fx bone named '%s' found in model %s!\n",fxBoneName.str(),m_modelName.str()));
 		}
 	}
 	m_validStuff |= BARRELS_VALID;
@@ -878,20 +886,22 @@ void ModelConditionInfo::validateTurretInfo() const
 		{
 			if (findPristineBone(tur.m_turretAngleNameKey, &tur.m_turretAngleBone) == NULL)
 			{
-				DEBUG_CRASH(("*** ASSET ERROR: TurretBone %s not found! (%s)\n",KEYNAME(tur.m_turretAngleNameKey).str(),m_modelName.str()));
+				// 2026-09-14: downgraded crash->warning (see public-bone note
+				// above); damaged W3X variants legitimately lack turret bones.
+				DEBUG_LOG(("*** ASSET WARNING: TurretBone %s not found! (%s)\n",KEYNAME(tur.m_turretAngleNameKey).str(),m_modelName.str()));
 				tur.m_turretAngleBone = 0;
 			}
 		}
 		else
 		{
 			tur.m_turretAngleBone = 0;
-		}	
+		}
 
 		if (tur.m_turretPitchNameKey != NAMEKEY_INVALID)
 		{
 			if (findPristineBone(tur.m_turretPitchNameKey, &tur.m_turretPitchBone) == NULL)
 			{
-				DEBUG_CRASH(("*** ASSET ERROR: TurretBone %s not found! (%s)\n",KEYNAME(tur.m_turretPitchNameKey).str(),m_modelName.str()));
+				DEBUG_LOG(("*** ASSET WARNING: TurretBone %s not found! (%s)\n",KEYNAME(tur.m_turretPitchNameKey).str(),m_modelName.str()));
 				tur.m_turretPitchBone = 0;
 			}
 		}
@@ -2367,7 +2377,7 @@ void W3DModelDraw::doHideShowSubObjs(const std::vector<ModelConditionInfo::HideS
 			}
 			else
 			{
-				DEBUG_CRASH(("*** ASSET ERROR: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str()));
+				DEBUG_LOG(("*** ASSET WARNING: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str())); // 2026-09-14 downgraded: damaged W3X variants lack subobjects, hide/show miss is a no-op
 			}
 		}
 	}
@@ -3032,7 +3042,7 @@ void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 		else
 		{
 			m_renderObject = W3DDisplay::m_assetManager->Create_Render_Obj(newState->m_modelName.str(), draw->getScale(), m_hexColor);
-			DEBUG_ASSERTCRASH(m_renderObject, ("*** ASSET ERROR: Model %s not found!\n",newState->m_modelName.str()));
+			if (m_renderObject == NULL) DEBUG_LOG(("*** ASSET WARNING: Model %s not found!\n",newState->m_modelName.str())); // 2026-09-14 downgraded
 		}
 
 		//BONEPOS_LOG(("validateStuff() from within W3DModelDraw::setModelState()\n"));
@@ -3824,8 +3834,13 @@ void W3DModelDraw::setAnimationFrame( int frame )
 	{
 		const W3DAnimationInfo& animInfo = m_curState->m_animations[ m_whichAnimInCurState ];
 		HAnimClass* animHandle = animInfo.getAnimHandle();	// note that this now returns an ADDREFED handle, which must be released by the caller!
-		m_renderObject->Set_Animation( animHandle, frame );
-		REF_PTR_RELEASE(animHandle);
+		// 2026-09-16: getAnimHandle can return NULL for missing animations
+		// (downgraded from assert to log on 09-14); guard Set_Animation.
+		if (animHandle)
+		{
+			m_renderObject->Set_Animation( animHandle, frame );
+			REF_PTR_RELEASE(animHandle);
+		}
 	}
 }
 
@@ -4003,7 +4018,7 @@ void W3DModelDraw::updateSubObjects()
 			}
 			else
 			{
-				DEBUG_CRASH(("*** ASSET ERROR: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str()));
+				DEBUG_LOG(("*** ASSET WARNING: SubObject %s not found (%s)!\n",it->subObjName.str(),getDrawable()->getTemplate()->getName().str())); // 2026-09-14 downgraded: damaged W3X variants lack subobjects, hide/show miss is a no-op
 			}
 		}
 	}
