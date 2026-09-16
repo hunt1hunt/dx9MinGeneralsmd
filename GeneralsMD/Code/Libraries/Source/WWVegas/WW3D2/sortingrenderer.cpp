@@ -478,19 +478,22 @@ void SortingRendererClass::Flush_Sorting_Pool()
 					tis_ptr->tri.k = idx3 + vertex_array_offset;
 					tis_ptr->idx = node_id;
 					tis_ptr->z = (v1->z + v2->z + v3->z)/3.0f;
-					// 2026-09-14: NaN triangle centers (bad particle/vertex data
-					// from W3X/replacement assets) asserted here and killed the
-					// game mid-skirmish after ignore left state corrupt. Sanitize
-					// instead of assert: NaN sorts last-ish, one log line.
+					// 2026-09-14/16: NaN triangle centers (bad particle/vertex
+					// data from W3X/replacement assets) used to assert here.
+					// Discard the triangle instead of letting a NaN/0 center
+					// disturb transparent sorting: degenerate it (all three
+					// indices identical) so it rasterizes to zero pixels.
 					if (_isnan(tis_ptr->z) || !_finite(tis_ptr->z))
 					{
 						static bool s_warnedNaNCenter = false;
 						if (!s_warnedNaNCenter)
 						{
 							s_warnedNaNCenter = true;
-							WWDEBUG_SAY(("WARNING: sorting renderer saw NaN triangle center (sanitized to 0)\n"));
+							WWDEBUG_SAY(("WARNING: sorting renderer saw NaN triangle center (triangle discarded as degenerate)\n"));
 						}
 						tis_ptr->z = 0.0f;
+						tis_ptr->tri.j = tis_ptr->tri.i;
+						tis_ptr->tri.k = tis_ptr->tri.i;
 					}
 				}
 			} else {
@@ -514,16 +517,18 @@ void SortingRendererClass::Flush_Sorting_Pool()
 					tis_ptr->z = (mtx[0][2]*(v1->x + v2->x + v3->x) +
 												mtx[1][2]*(v1->y + v2->y + v3->y) +
 												mtx[2][2]*(v1->z + v2->z + v3->z))/3.0f + mtx[3][2];
-					// 2026-09-14: sanitize NaN like the particle path above.
+					// 2026-09-16: discard NaN like the particle path above.
 					if (_isnan(tis_ptr->z) || !_finite(tis_ptr->z))
 					{
 						static bool s_warnedNaNCenter2 = false;
 						if (!s_warnedNaNCenter2)
 						{
 							s_warnedNaNCenter2 = true;
-							WWDEBUG_SAY(("WARNING: sorting renderer saw NaN triangle center, matrix path (sanitized to 0)\n"));
+							WWDEBUG_SAY(("WARNING: sorting renderer saw NaN triangle center, matrix path (triangle discarded as degenerate)\n"));
 						}
 						tis_ptr->z = 0.0f;
+						tis_ptr->tri.j = tis_ptr->tri.i;
+						tis_ptr->tri.k = tis_ptr->tri.i;
 					}
 				}
 			}
