@@ -780,23 +780,39 @@ void GameEngine::update( void )
 				// VERIFY CRC needs to be in this code block.  Please to not pull TheGameLogic->update() inside this block.
 				VERIFY_CRC
 
-				FP_BEGIN(RADAR);
-				TheRadar->UPDATE();
-				FP_END(RADAR);
+				// 2026-09-16: NULL-guard every singleton UPDATE. During replay
+				// CRC-failure teardown one of these can already be deleted while
+				// the loop runs one more frame, and the old unguarded calls AV'd
+				// inside SubsystemInterface::UPDATE (write to 0x8).
+				if (TheRadar != NULL)
+				{
+					FP_BEGIN(RADAR);
+					TheRadar->UPDATE();
+					FP_END(RADAR);
+				}
 
 				/// @todo Move audio init, update, etc, into GameClient update
 
-				FP_BEGIN(AUDIO);
-				TheAudio->UPDATE();
-				FP_END(AUDIO);
+				if (TheAudio != NULL)
+				{
+					FP_BEGIN(AUDIO);
+					TheAudio->UPDATE();
+					FP_END(AUDIO);
+				}
 
-				FP_BEGIN(CLIENT);
-				TheGameClient->UPDATE();
-				FP_END(CLIENT);
+				if (TheGameClient != NULL)
+				{
+					FP_BEGIN(CLIENT);
+					TheGameClient->UPDATE();
+					FP_END(CLIENT);
+				}
 
-				FP_BEGIN(MSG);
-				TheMessageStream->propagateMessages();
-				FP_END(MSG);
+				if (TheMessageStream != NULL)
+				{
+					FP_BEGIN(MSG);
+					TheMessageStream->propagateMessages();
+					FP_END(MSG);
+				}
 
 				if (TheNetwork != NULL)
 				{
@@ -805,11 +821,13 @@ void GameEngine::update( void )
 					FP_END(NET);
 				}
 
-				TheCDManager->UPDATE();
+				if (TheCDManager != NULL)
+					TheCDManager->UPDATE();
 			}
 
 
-			if ((TheNetwork == NULL && !TheGameLogic->isGamePaused()) || (TheNetwork && TheNetwork->isFrameDataReady()))
+			if (TheGameLogic != NULL &&
+				((TheNetwork == NULL && !TheGameLogic->isGamePaused()) || (TheNetwork && TheNetwork->isFrameDataReady())))
 			{
 				FP_BEGIN(LOGIC);
 				TheGameLogic->UPDATE();
