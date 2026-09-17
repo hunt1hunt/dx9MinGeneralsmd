@@ -177,8 +177,17 @@ void FrameProbeFlush(void)
 		}
 	}
 
+	// 2026-09-17: rewinding g_ringHead to 0 WITHOUT clearing slot 0 made the first
+	// frame of every flush window accumulate on top of the previous window's first
+	// frame: FrameProbeCount/FrameProbeEnd only ever do "+=", and the per-frame
+	// zeroing in FrameProbeEndFrame targets the *next* slot (head+1), never slot 0.
+	// Observed symptom: the first row of each .spd carried the running sum of all
+	// earlier windows' first rows (objects 651 -> 1302 -> 1953 -> ...; identical
+	// growth in draw_calls and in every stage timer), which is what produced the
+	// bogus "450k draw_calls peak" headline. Clear the slot we are about to reuse.
 	g_ringCount = 0;
 	g_ringHead = 0;
+	memset(&g_ring[0], 0, sizeof(FPFrameRecord));
 	g_lastFlushTick = timeGetTime();
 }
 
