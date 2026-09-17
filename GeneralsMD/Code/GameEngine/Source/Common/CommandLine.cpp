@@ -655,7 +655,18 @@ Int parseFile(char *args[], int num)
 	if (TheWritableGlobalData && num > 1)
 	{
 		TheWritableGlobalData->m_initialFile = args[1];
-		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
+
+		// 2026-09-17: ConvertShortMapPathToLongMapPath only understands two-segment
+		// "<dir>\<name>.map" paths. Feeding it anything else (notably a .rep replay)
+		// makes it DEBUG_CRASH("Invalid map name") and then keep going, rewriting the
+		// argument into "<xxx.rep>\.map". GameEngine::init then sees a name ending in
+		// ".map", takes the map branch, and the replay is never handed to
+		// TheRecorder->playbackFile() -- it is loaded as a (nonexistent) map instead.
+		// Only .map arguments need the short-path expansion.
+		if (TheWritableGlobalData->m_initialFile.endsWithNoCase(".map"))
+		{
+			ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
+		}
 	}
 	return 2;
 }

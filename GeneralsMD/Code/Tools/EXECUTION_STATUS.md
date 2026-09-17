@@ -4,6 +4,12 @@
 > ②桌面 `SagePerfDiag协作` 文件夹（本机快照）。以 GitHub 为准，桌面版每次会话结束刷新。
 > 协作者开工前先 `git pull` 并读此看板，认领任务后改状态并提交。
 
+## 当前状态（2026-09-17 更新）：**B1 固定地图基准已打通**，B2 采集中；B3 靶子已重新定向
+
+**2026-09-17 关键进展**：`bench_capture.ps1` 支持 `-Map` 模式，Golden Oasis 固定场景直接开局成功（帧号 0..274 连续落盘）。
+**两条看板勘误**（原结论错误，已按源码更正）见文末 2026-09-17 节。
+**B3 靶子改口**：不是"45万 draw_calls 数量"，而是**每次 draw call ≈0.29ms**（1380 draw_calls 就吃掉 398ms）——比健康值高 1–2 个数量级。
+
 ## 当前状态：稳定性里程碑达成（2026-09-15），下会话：A/B探针验收 + P1渲染优化开工
 
 **2026-09-15 稳定性验收**：破笔记本从"单家10分钟必崩"到"4v4八家冷酷+作弊四开+加速模式+26万对象长时间稳定"。三板斧：①%ls格式化炸弹(f7663009) ②LAA 4GB ③诊断网常驻。
@@ -126,8 +132,177 @@
 - **A4 构建验证**：Release/Internal 均 0 error；用户实测长局稳定。游戏目录 RTSI.exe（Internal 全修复）+ RTS.exe（Release A/B 前）均已打 LAA。
 - **B 项已推**：T5 逻辑细分（6 个 t_logic_* 阶段）+ 回收 GameLogic 热路径 fopen（5d1f7bac）；T9 plan_generator.py（edbd160f）；SagePerfDiag_README（310ee9eb）；W3DView 每帧 VIEW_3D_DONE fopen 已清（1a81b2df）。诊断日志 terrain_diag.log/pbr_compile.log 已改写到游戏目录（不再 E:\ 根）。
 - **剩余（下会话）**：
-  1. B1/B2 基准：bench_capture.ps1 需先支持 `-file <地图名>` 模式（当前只支持回放；回放 CRC 必失配不可用）。同图 3 遍重复性 <5% + 探针开关 A/B <1%。
+  1. ~~B1/B2 基准：bench_capture.ps1 需先支持 `-file <地图名>` 模式~~ → **B1 已于 2026-09-17 完成**，见文末。
   2. B3 draw call 批处理：等受控 .spd 数据到手后专项（性能已定向：t_client 50% + t_render 48.5%，45万 draw_calls 峰值）。
   3. B5 T7 GPU Query 实验桩（默认关，可随时加）。
   4. A1 playbackFile 符号调试会话（深部损坏，需专门时间）。
-  5. 已有 658 份非受控 .spd 碎片，可先跑 plan_generator 做初步归因（无需启动游戏）。
+  5. 已有 663 份 .spd 碎片，可先跑 plan_generator 做初步归因（无需启动游戏）。
+
+## 2026-09-17：B1 固定地图基准打通 + 两条勘误 + B3 靶子重新定向
+
+### 已完成
+
+- **`RTSI.exe` 缺失已恢复**：游戏目录只剩改名存档版；已用 `RTSI9月16日收工.exe`（PE 时间戳 2026-09-16 17:38:54，LAA=YES，含 T5）字节复制回 `RTSI.exe`。**注意用户有把 exe 改名存档的习惯，脚本会因此启动失败。**
+- **`bench_capture.ps1` 加 `-Map` 模式**：新增 `-Map "Maps\xxx.map"` / `-Exe` / `-Tag`，产出 `bench_manifest_*.csv`（轮次/探针状态/场景/exe/退出码/spd）。⚠️ 该 .ps1 必须存为 **UTF-8 with BOM**，否则 PowerShell 5.1 按 ANSI 读中文注释会解析报错。
+- **B1 验收通过**：`-Map "Maps\Golden Oasis.map"` 直接开局成功，帧号 0..274 连续落盘，退出码 0。日志双凭证：
+  `Command-line args: -win -noshellmap -ignoreAsserts -file Maps\Golden Oasis.map -benchmark 120`
+  `Shell:showShell() - Maps\Golden Oasis\Golden Oasis.map (no top screen)`
+
+### 勘误一：`-file` 的空格问题不是分词造成的
+
+原结论"路径含空格被 WinMain 重分词拆碎"**不成立**。`Main/WinMain.cpp:1006` 用
+`nextParam(lpCmdLine, "\" ")`，分隔符集合含双引号，引号内的空格会被正确保留（实测 `-file Maps\Golden Oasis.map` 原样到达）。
+
+**真凶**是 `CommandLine.cpp:73 ConvertShortMapPathToLongMapPath()`：它只接受 `.map` 结尾的路径，
+对 `.rep` 会命中 `DEBUG_CRASH("Invalid map name")`，并且继续把路径拼成 `"<xxx.rep>\.map"`
+——于是 `GameEngine.cpp:650` 的 `fname.endsWithNoCase(".map")` 判真，**回放被误送进地图分支**，
+下游必然加载失败/AV。这才是 `-file` 回放一路崩到 `SubsystemInterface::UPDATE` 的上游成因，
+"退出崩溃/mempool 断言"很可能是它的次生现象。**A1 的排查入口应从这里开始，而不是从链表污染开始猜。**
+
+### 勘误二：`-file` 地图路径必须二段式
+
+`ConvertShort` 会把 `<目录>\<名>.map` 展开为 `<目录>\<名>\<名>.map`（幂等）。
+传三段式 `Maps\Golden Oasis\Golden Oasis.map` 会被重复拼成 `Maps\Golden Oasis\Golden Oasis\Golden Oasis.map`。
+**脚本侧只准传 `Maps\<地图名>.map`**（bench_capture.ps1 已有此校验）。
+
+### 试点数据（Golden Oasis，120s，帧 0–274，单家无 AI）
+
+- 中位帧时 472ms / 中位 FPS 2.1 / 超 33.3ms 预算 **98.2%**
+- `t_client` 472ms ⊇ `t_render` 399ms = **帧的 84%**；`t_logic` 仅 0.25ms（0.05%）
+- objects 258 / draw_calls 1380 → **单次 draw call ≈0.29ms**。健康值 1–10µs，差 **1–2 个数量级**。
+- 瞬态帧（#218）：draw_calls 4027、1430ms——开局资产流式加载 + shader 编译期。
+
+### 由试点发现的两个口径问题（B2 验收标准需修订）
+
+1. **"同场景 3 遍 <5%" 按现写法不可能达成**：同一次运行内部漂移就有 41%（344→472ms）。
+   必须改为 **弃瞬态、取稳态窗口**（例如丢弃前 200 帧后比较），否则测的是加载抖动不是重复性。
+2. **"探针开关 A/B <1%" 无可测数据源**：探针关掉就没有 `.spd`，拿不到任何帧时样本。
+   该验收只能靠**微基准上界（0.22%）**收口，或另建一个独立于 FRAME_PROBE 的外部帧计时器。
+   建议：B2b 判定为"由构造保证 + 微基准背书"，不再要求端到端 A/B。
+
+### 环境备注
+
+- 工作区 `W3XRenderObj.cpp` 未提交改动**已存在于所有在役 exe**（`fx='%s' deferred` 在 9-15 的
+  `RTSI4GB版.exe` / `RTS4GB.exe` 里同样能 grep 到）。因此它不构成基准污染（同一 exe 双臂），
+  但仓库工作区仍脏，**提交前必须隔离**，且硬规则 #6 仍然禁止改该文件。
+
+## 2026-09-17（二）：探针重大缺陷 —— 每个落盘窗口首帧被累加污染
+
+### 缺陷（`FrameProbe.cpp:180`，已修，待构建）
+
+`FrameProbeFlush()` 结尾把 `g_ringHead = 0` 复位，**却没有清零 `g_ring[0]`**；
+而 `FrameProbeCount()` / `FrameProbeEnd()` 都只做 `+=`（`:209` / `:201`），
+`FrameProbeEndFrame()` 的清零只作用于**下一个**槽位（`head+1`，`:235`）——永远碰不到 0 号槽。
+
+**后果：每个 `.spd` 的第一行，是"本次窗口首帧 + 之前所有窗口首帧"的累加和。**
+
+算术级证据（Golden Oasis 存档场景，10 个窗口）：
+
+```
+Δobjects    = +287(菜单) +651 +651 +650 +651 +651 +655 +657   ← 正是稳态 objects
+Δdraw_calls = +1770..1794                                     ← 正是稳态 draw_calls
+Δt_total    = +880..955 ms                                    ← 正是稳态帧时
+窗口首帧 t_total 从 914ms 一路累到 14703ms，objects 累到 5140
+```
+
+### 影响面：**历史结论作废，必须重算**
+
+- 看板原 B3 靶子"**45 万 draw_calls 峰值**"是伪结论——那是约 250 个窗口的累加值，不是任何一帧的真实值。
+- 一切基于 max / 峰值 / `spd_analyzer` 卡顿聚类 的结论都不可信（一个窗口只有 1 帧被污染，所以**中位数受影响很小**，中位数结论仍可用）。
+- 试点里那个"瞬态帧 #218：4027 draw_calls / 1430ms"同样是污染帧，不是加载尖峰。
+
+### 修复
+
+- `FrameProbe.cpp` 落盘后补 `memset(&g_ring[0], 0, sizeof(FPFrameRecord));`（1 行，待 Internal 重建）。
+- 兜底（无需构建）：`spd_analyzer.py` / `plan_generator.py` 读档时**丢弃每份 `.spd` 的第一行**，
+  并在报告里标注"含首帧"或"已剔除污染首帧"。
+
+## 2026-09-17（三）：存档基准打通（Golden Oasis12345）+ 干净基线数据
+
+- **引擎没有命令行载入存档的通路**：存档载入只有 UI 的 `doLoadGame` →
+  `TheGameState->loadGame(AvailableGameInfo)`。`-quickstart` 只跳 logo/shellmap/动画；
+  `-map` 只设 `m_mapName` 供 Recorder/Stats 用；`-file` 只认 `.map` / `.rep`。
+- **存档路径不做 exe/INI CRC 校验**（已查 `System/SaveGame/` 全目录），换 exe 后仍可载入。
+- `bench_capture.ps1` 新增 `-ManualLoad -SaveName <显示名> -WarmupSeconds <预热>`：
+  不给 `-file`，由人点"载入游戏"，`-benchmark (Warmup+Seconds)` 负责自动退出。
+- 实测（`00000036.sav`，本地玩家 China，Golden Oasis，150s 预热 + 210s 采集，**探针修复后**）：
+
+| 阶段 | 中位 ms | P95 ms | P99 ms | 占帧 |
+|---|---|---|---|---|
+| **t_total** | **1095.3** | **1145.2** | **1272.8** | 100% |
+| t_client | 1081.1 | 1131.6 | 1205.4 | 98.7% |
+| **t_render** | **865.4** | **897.7** | **921.5** | **79.0%** |
+| t_postfx | 110.2 | 337.2 | 366.4 | 10.1% |
+| t_logic | 14.9 | 24.8 | 36.4 | 1.4% |
+| t_present | 0.77 | 1.75 | 2.16 | 0.1% |
+
+- objects 651（649–654）/ draw_calls 1783 / state_changes 910 → **每次 draw call 0.485 ms**（健康值 0.001–0.01 ms）。
+- **P95/中位 = 1.046**：抖动仅 4.6%，**已落在 B2 的 <5% 口径内** —— 固定场景就用它。
+- 126 帧真实战斗稳态（帧 102–227），**超 33.3ms 预算 100%**。
+- 存档载入帧（#101）t_total = 8804ms，是**真实**的载入尖峰（不是污染）。
+- t_client 1081 = t_render 865 + t_postfx 110 + t_present 0.8 + **其余客户端约 105ms**（尚未细分）。
+
+### 探针修复的功能验证（跨多窗口首帧）
+
+| 构建 | 窗口首帧 objects 序列 | 判定 |
+|---|---|---|
+| 修复前 | 1225 → 1876 → 2526 → 3177 → 3828 → 4483 → 5140 | 每窗口 +651，累加污染 |
+| 修复后 | 651 → 650 → 651 → 651 → 651 | **平坦**，已修好 |
+
+### 重新定向后的 B3 靶子
+
+不是"draw call 数量"，而是**每次 draw call 的成本（0.485ms）**：1783 个 draw call 就吃掉 865ms。
+state_changes 910 / draw_calls 1783 = 0.51，状态切换本身不算失控，嫌疑集中在
+每 draw 的固定开销（shader 常量上传 / dgVoodoo 包装层 / 阴影 pass 重复提交）。
+另外 t_client 里有 **约 105ms 完全未细分**，下一个埋点缺口在这里。
+
+### 回放路线（已修，备用）
+
+- `parseFile` 只对 `.map` 调 `ConvertShortMapPathToLongMapPath`（`CommandLine.cpp`，已改）。
+- 回放名必须是**相对 Replays 目录的裸文件名**（`Recorder.cpp:818-820` 是
+  `fopen(getReplayDir() + filename)`，绝对路径会被拼坏）；且 `GameEngine.cpp:647` 会 `toLower()`。
+- CRC 不一致只是 `DEBUG_ASSERTCRASH`（`Recorder.cpp:1146`，`#ifdef DEBUG_LOGGING`），**不阻断播放**。
+- 实测 `2222.rep` 是 Twilight Flame 8 家混战，能播；但 120s 只推进 54 帧（0.45 FPS），
+  到不了重载状态 —— 所以**基准场景优先用存档，回放留作回归复现**。
+
+## 构建踩坑（2026-09-17 新增）
+
+- **桌面一键 bat 从 git-bash/PowerShell 调会误判失败**：`[1/5]` 的 `find /I` 会被 GNU find 劫持；
+  `[5/5]` 的 `findstr /R` 里 `/R` 被 MSYS 当路径吃掉，导致校验误报 `[失败]` 并**跳过部署**。
+  实际构建是成功的（看 `desk_*.log` 的 `N error(s)`）。**结论：bat 就双击跑；要命令行调就必须先净化 PATH。**
+- 构建成功后**必须手动补三件事**：① 拷 `GeneralsMD\Run\RTSI.exe` → 游戏目录 ② 跑
+  `python Tools/apply_laa.py` 重打 LAA（bat 不做）③ 用标记字符串验证（exe 大小跨构建常常完全相同）。
+- `.ps1` 工具必须存为 **UTF-8 with BOM**，否则 PowerShell 5.1 按 ANSI 读中文注释直接语法报错。
+
+## 退出期崩溃（2026-09-17 现场，已定位未修）
+
+**现象**：载入存档局跑满 `-benchmark` 后被强退时，屏幕反复闪（模态断言窗后面游戏还在重绘）、
+弹出信息、点[忽略]后进程退出。
+
+**判定：不是脚本杀的**。`bench_manifest_*.csv` 里 12 份 spd 的 `exitCode` 全为 `0`
+（若是超时强杀会记成 `killed`，脚本也会打印"超时未退出, 强制结束"）。
+
+**真身是退出期访问违例**（`DebugLogFileI.txt` 尾部，本轮起始行 91，全轮仅 4 个断言）：
+
+```
+EXCEPTION DUMP / Exception is access violation
+Access address: 000005DE was read from
+  common/asciistring.h(589) : operator==(); 0x00405760
+ASSERTION FAILURE: Warning: Xfer file '00000000.sav' was left open
+Stack Dump: [Ignore]        ← 用户点忽略后日志仍正常收尾
+```
+
+**触发条件**：`-benchmark` 计时器在**局内**强退 → `TheGameLogic->clearGameData()` +
+`setQuitting(TRUE)`，而此时存档的临时 scratch-pad `00000000.sav` 的 Xfer 句柄还没关，
+teardown 顺序错乱 → `AsciiString::operator==()` 比较到已失效指针。
+
+**与本次两处改动无关**：这一轮没传 `-file`（`parseFile` 分支不执行）；
+`FrameProbe.cpp` 的 memset 只作用于静态数组，没有能引发该 AV 的路径。
+
+**对数据无影响**：AV 发生在采集窗口之后，12 份 `.spd` 全部有效。
+
+**已做的规避**：`bench_capture.ps1` 的 `-ManualLoad` 模式补上 `-ignoreAsserts`（原先漏了，
+所以弹窗会挡住流程）。断言仍照常写进 `DebugLogFileI.txt`。
+
+**待办**：这是可稳定复现的真实 bug（存档局 + 局内强退即可触发），值得单独一轮排查
+`GameStateMap` 的 scratch-pad 清理与 `XferLoad` 关闭时序。
