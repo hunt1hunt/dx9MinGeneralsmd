@@ -4,16 +4,39 @@
 > ②桌面 `SagePerfDiag协作` 文件夹（本机快照）。以 GitHub 为准，桌面版每次会话结束刷新。
 > 协作者开工前先 `git pull` 并读此看板，认领任务后改状态并提交。
 
-## 当前状态（2026-09-17 更新）：**B1 固定地图基准已打通**，B2 采集中；B3 靶子已重新定向
+## 当前状态（2026-09-17 收工）：**存档基准打通 + 探针重大缺陷已修**，B2 待正式验收
 
-**2026-09-17 关键进展**：`bench_capture.ps1` 支持 `-Map` 模式，Golden Oasis 固定场景直接开局成功（帧号 0..274 连续落盘）。
-**两条看板勘误**（原结论错误，已按源码更正）见文末 2026-09-17 节。
-**B3 靶子改口**：不是"45万 draw_calls 数量"，而是**每次 draw call ≈0.29ms**（1380 draw_calls 就吃掉 398ms）——比健康值高 1–2 个数量级。
+> 本轮成果：commit **`b79c433a`**（已推送 origin/main）。
+> `bench_capture.ps1` 现有 `-Map` / `-ReplayPath` / `-ManualLoad` 三种模式；A1 回放已可播；
+> 探针累加污染已修并跨窗口验证；存档基准拿到可信基线（P95/中位 = 1.046）。
 
-## 当前状态：稳定性里程碑达成（2026-09-15），下会话：A/B探针验收 + P1渲染优化开工
+### 下会话交接 —— 剩余 5 条（按优先级）
+
+| # | 任务 | 为什么 / 怎么做 | 依赖 |
+|---|---|---|---|
+| **1** | **补 `t_client` 内约 105ms 的未细分埋点** | 存档局 `t_client` 1081ms = `t_render` 865 + `t_postfx` 110 + `t_present` 0.8 + **约 105ms 黑盒（占帧 11%）**。查 `TheGameClient->UPDATE()` 里除 render/postfx 外的大户（drawable 更新 / UI / 雷达绘制）。 | 需 Internal 构建 |
+| **2** | **重扫历史 669 份 `.spd`** | 探针累加缺陷使每份 `.spd` 首帧 = 累加污染（"45 万 draw_calls 峰值"就是它）。先给 `spd_analyzer.py` / `plan_generator.py` 加"丢弃每份首行"兜底，再重算历史结论——**一切基于 max/峰值/卡顿聚类 的结论都要重过**（中位数结论不受影响）。 | 无需构建，可立即做 |
+| **3** | **修退出期 AV** | 载入存档局被 `-benchmark` 局内强退 → scratch-pad `00000000.sav` 的 Xfer 句柄未关 → `AsciiString::operator==()` AV（读 `0x000005DE`，`asciistring.h:589`）。**可稳定复现**（存档局 + 局内强退即可）。查 `GameStateMap` 的 scratch-pad 清理与 `XferLoad` 关闭时序。 | 需构建 + 带符号调试 |
+| **4** | **B2 正式验收（终于可做了）** | 存档局已是目前最稳场景：**P95/中位 = 1.046（抖动 4.6%）**，"同场景 3 遍 <5%" 有希望一次过。探针开销 A/B 仍**无数据源**（探针关掉就没有 `.spd`），维持"由构造保证 + 微基准 0.22% 上界背书"收口。 | 无需构建 |
+| **5** | **B3 专项：每次 draw call 0.485ms 的归因** | 靶子不是 draw call **数量**（真实峰值仅 ~1790），而是**每次成本**。`state_changes/draw_call = 0.51` 不算失控 → 嫌疑在每 draw 固定开销（shader 常量上传 / dgVoodoo 包装层 / 阴影 pass 重复提交）。 | 需构建（加埋点） |
+
+### ⚠️ 开工前必读
+
+- `W3XRenderObj.cpp` 的在制品改动在 **`stash@{0}`**（补丁备份 `/tmp/w3x_shadow_diag_wip.patch`）。
+  **做阴影调试前先 `git stash pop`**；做性能基准时必须让它保持 stash（硬规则 #6）。
+- 游戏目录 exe 身份：`RTSI.exe`(`f896a9d2`, LAA=YES) = 本轮双修复构建；
+  `RTSI9月16日收工.exe` / `RTSI.exe.bak`(`064045d3`) = 原版对照，**不要覆盖**。
+- 基准场景：存档 **`00000036.sav`**（游戏内名 **Golden Oasis12345**，本地玩家 China）。
+- 一键命令：`powershell -File Tools\bench_capture.ps1 -ManualLoad -SaveName "Golden Oasis12345" -WarmupSeconds 150 -Seconds 210 -Tag <标签>`
+  （已带 `-ignoreAsserts`；退出码见 `bench_manifest_*.csv`，`0`=正常退出，`killed`=脚本超时强杀）。
+
+## （历史）2026-09-15 稳定性里程碑
+
+> ⚠️ 本节"45 万 draw_calls 峰值 / draw call 批处理"的靶子**已被 2026-09-17 证伪**（探针累加污染），
+> 只保留作历史记录。真实峰值约 1790，靶子应改为"每次 draw call 成本"。
 
 **2026-09-15 稳定性验收**：破笔记本从"单家10分钟必崩"到"4v4八家冷酷+作弊四开+加速模式+26万对象长时间稳定"。三板斧：①%ls格式化炸弹(f7663009) ②LAA 4GB ③诊断网常驻。
-**性能数据已定向**：加速模式瓶颈大转移（<20万对象渲染占85-99% → 26万对象t_logic独占99%）。P1靶: draw call批处理(45万峰值)；P2靶: 每对象逻辑开销(T5)。
+**性能数据已定向（口径见上方警示）**：加速模式瓶颈大转移（<20万对象渲染占85-99% → 26万对象t_logic独占99%）。
 **待办**：探针开销A/B(bench_capture -ProbeOff跑00000000.rep)、重建带OOM快照exe+重打LAA、P1渲染归因开工。
 
 | 阶段 | 任务 | 负责人 | 状态 | 验收 | 备注 |
@@ -23,13 +46,16 @@
 | P0 | T3 主循环七段插桩 | zcode | ✅ | 落盘验证通过 | 30秒间隔自动产出.spd |
 | P0 | T8 spd_analyzer.py 最小版 | zcode | ✅ | 真实数据瀑布报告 | 合成+实测双验证 |
 | P0余项 | 探针开/关开销对比<1% | zcode | ✅ | 0.22%最保守上界 | 微基准验收(28µs/帧@12组QPC+ring写,含Python循环开销); 回放A/B被MOD exe轮换破坏回放CRC校验阻塞 |
-| P0余项 | 同场景3遍重复性<5% | zcode | ⬜ | 硬验收 | 建议 P1 的 bench_capture 一并做 |
+| P0余项 | 同场景3遍重复性<5% | zcode | 🔄 | 硬验收 | **2026-09-17 起可做**：存档局 P95/中位=1.046(抖动4.6%)，场景已足够稳 |
 | P1 渲染归因 | T4 Present 拆分+渲染三段 | zcode | ✅ | 真实数据落盘 | commit 8386ae2d |
 | P1 | T6 wrapper 状态计数 | zcode | ✅ | draw_calls/state_changes列有数据 | DX8Wrapper现成getter接线 |
-| P1 | T10 bench_capture.ps1 采集脚本 | zcode | ✅ | 脚本就绪待实测 | commit afd4b694; -file回放+-benchmark定时退出(Internal限定) |
-| P2 仿真归因 | T5 逻辑细分+回收 fopen 打点 | zcode | ⬜ | grep fopen=0 | |
+| P1 | T10 bench_capture.ps1 采集脚本 | zcode | ✅ | 三种模式实测通过 | b79c433a: -Map/-ReplayPath/-ManualLoad + manifest |
+| P1余项 | **探针累加污染修复** | zcode | ✅ | 跨窗口首帧序列变平坦 | b79c433a; 原"45万draw_calls峰值"由此证伪 |
+| P2 仿真归因 | T5 逻辑细分+回收 fopen 打点 | zcode | ✅ | 6个t_logic_*列有数据 | 5d1f7bac; 存档局 t_logic 占1.4% |
 | P2 | T7 GPU Query（实验） | 可并行认领 | ⬜ | 默认关 | dgVoodoo 兼容未知 |
-| P2 | T9 plan_generator.py | 可并行认领 | ⬜ | 产出 DIAG_PLAN | |
+| P2 | T9 plan_generator.py | zcode | ✅ | 可产出 DIAG_PLAN | edbd160f; 待接"丢首行"兜底后重扫历史数据 |
+| P2 | t_client 内 105ms 未细分埋点 | zcode | ⬜ | 黑盒降到 <2% | 下会话第1条 |
+| P2 | 退出期 AV（scratch-pad Xfer 未关） | zcode | ⬜ | 存档局+局内强退不再崩 | 下会话第3条; 可稳定复现 |
 | P3 常驻化 | 收编 #ifdef FRAME_PROBE | zcode | ⬜ | | |
 
 状态图例：⬜待办 🔄进行中 ✅完成 ⛔受阻
