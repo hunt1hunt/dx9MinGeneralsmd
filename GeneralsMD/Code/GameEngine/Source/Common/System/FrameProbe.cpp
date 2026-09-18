@@ -130,7 +130,9 @@ static const char *fpCounterName(unsigned int c)
 		// T7: 1 = GPU had still not caught up at that point
 		"gpu_busy_postfx_end", "gpu_busy_present_end", "gpu_query_unavailable",
 		// T7b (2026-09-18): must stay in lockstep with FrameProbeCounter in FrameProbe.h
-		"gpu_busy_postfx_start"
+		"gpu_busy_postfx_start",
+		// T15 (2026-09-18): must stay in lockstep with FrameProbeCounter in FrameProbe.h
+		"vb_lock_us", "vb_lock_count", "postfx_pcpu_us"
 	};
 	if (c >= FP_CNT_COUNT)
 		return "?";
@@ -279,6 +281,63 @@ int FrameProbeCpuSinceMark(unsigned int slot)
 	return (int)delta;
 }
 
+// ---------------------------------------------------------------------------
+// T15: same idea as above but for the whole PROCESS (kernel + user, all threads).
+// Comparing this against the per-thread number around one block answers "was any
+// thread at all running during this?" -- which separates "blocked on the GPU /
+// driver" from "blocked on a lock another thread is hogging".
+static __int64 fpProcessCpu100ns(void)
+{
+	FILETIME creation, exitTime, kernel, user;
+	__int64 k, u;
+	if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user))
+		return 0;
+	k = ((__int64)kernel.dwHighDateTime << 32) | (__int64)kernel.dwLowDateTime;
+	u = ((__int64)user.dwHighDateTime << 32) | (__int64)user.dwLowDateTime;
+	return k + u;
+}
+
+int FrameProbeProcessCpuMs(void)
+{
+	__int64 t;
+	if (g_enabled == 0)
+		return 0;
+	t = fpProcessCpu100ns();
+	if (t <= 0)
+		return 0;
+	return (int)(t / 10000);				// 100ns -> ms
+}
+
+// ---------------------------------------------------------------------------
+// T15: time blocked inside a dynamic vertex/index buffer Lock.
+static __int64 g_lockMark = 0;
+
+void FrameProbeLockEnter(void)
+{
+	if (g_enabled == 0)
+		return;
+	QueryPerformanceCounter((LARGE_INTEGER *)&g_lockMark);
+}
+
+void FrameProbeLockLeave(void)
+{
+	__int64 now;
+	if (g_enabled == 0 || g_lockMark == 0)
+		return;
+	QueryPerformanceCounter((LARGE_INTEGER *)&now);
+	{
+		double us = fpDeltaMs(g_lockMark, now) * 1000.0;
+		if (us > 0.0)
+		{
+			if (us > 2147483647.0)
+				us = 2147483647.0;
+			FrameProbeCount(FP_CNT_VB_LOCK_US, (int)us);
+		}
+	}
+	FrameProbeCount(FP_CNT_VB_LOCK_COUNT, 1);
+	g_lockMark = 0;
+}
+
 void FrameProbeEndFrame(void)
 {
 	unsigned nowTick;
@@ -328,6 +387,9 @@ void FrameProbeEnd(unsigned int stage) { (void)stage; }
 void FrameProbeCount(unsigned int counter, int add) { (void)counter; (void)add; }
 void FrameProbeCpuMark(unsigned int slot) { (void)slot; }
 int  FrameProbeCpuSinceMark(unsigned int slot) { (void)slot; return 0; }
+void FrameProbeLockEnter(void) {}
+void FrameProbeLockLeave(void) {}
+int  FrameProbeProcessCpuMs(void) { return 0; }
 void FrameProbeEndFrame(void) {}
 void FrameProbeFlush(void) {}
 

@@ -45,6 +45,12 @@
 #include "thread.h"
 #include "wwmemlog.h"
 
+// T15 (2026-09-18): declared locally because WW3D2 has no GameEngine include path.
+// Defined in GameEngine/Source/Common/System/FrameProbe.cpp; ww3d2 is a static
+// library linked into RTSI.exe, so this is the same module and plain linkage works.
+void FrameProbeLockEnter(void);
+void FrameProbeLockLeave(void);
+
 #define DEFAULT_IB_SIZE 5000
 
 static bool _DynamicSortingIndexArrayInUse=false;
@@ -432,12 +438,14 @@ DynamicIBAccessClass::WriteLockClass::WriteLockClass(DynamicIBAccessClass* ib_ac
 		WWASSERT(DynamicIBAccess);
 //		WWASSERT(!dynamic_dx8_index_buffer->Engine_Refs());
 		DX8_Assert();
+		FrameProbeLockEnter();	// T15: this call can BLOCK waiting for the GPU
 		DX8_ErrorCode(
 			static_cast<DX8IndexBufferClass*>(DynamicIBAccess->IndexBuffer)->Get_DX8_Index_Buffer()->Lock(
 			DynamicIBAccess->IndexBufferOffset*sizeof(WORD),
 			DynamicIBAccess->Get_Index_Count()*sizeof(WORD),
 			(void**)&Indices,
 			!DynamicIBAccess->IndexBufferOffset ? D3DLOCK_DISCARD : D3DLOCK_NOOVERWRITE));
+		FrameProbeLockLeave();
 		break;
 	case BUFFER_TYPE_DYNAMIC_SORTING:
 		Indices=static_cast<SortingIndexBufferClass*>(DynamicIBAccess->IndexBuffer)->index_buffer;

@@ -219,6 +219,11 @@ static Bool s_notFirstDump = FALSE;
 static IDirect3DQuery9 *s_t7GpuQuery = NULL;
 static Int s_t7GpuState = 0;	// 0 = untried, 1 = ready, -1 = unavailable/disabled
 
+// T15: process-wide CPU sample taken when the postfx block starts, so its end can
+// report how much CPU -- across ALL threads -- was burned during the HUD. A
+// near-zero value alongside ~280ms of wall time proves no thread was running.
+static Int s_t15PostfxPc0 = 0;
+
 static void T7GpuRelease(void)
 {
 	if (s_t7GpuQuery)
@@ -2025,6 +2030,7 @@ AGAIN:
 				// this block brackets the GPU's scene completion inside the HUD block.
 				FP_COUNT(GPU_BUSY_AT_POSTFX_START, T7GpuStillBehind());
 				FP_CPU_MARK(POSTFX);	// T14
+				s_t15PostfxPc0 = FrameProbeProcessCpuMs();	// T15: process-wide baseline
 				FP_BEGIN(POSTFX_UI);	// SagePerfDiag T13: the HUD
 				FP_CPU_MARK(POSTFX_UI);	// T14: the number that decides the +74% question
 				// draw the user interface
@@ -2118,6 +2124,7 @@ AGAIN:
 				// render is all done!
 				FP_END(POSTFX);
 				FP_COUNT(CPU_POSTFX_US, FP_CPU_SINCE(POSTFX));
+				FP_COUNT(POSTFX_PCPU_US, (FrameProbeProcessCpuMs() - s_t15PostfxPc0) * 1000);	// T15
 				FP_COUNT(GPU_BUSY_AT_POSTFX_END, T7GpuStillBehind());	// T7: poll after the HUD
 
 				FP_BEGIN(PRESENT);	// SagePerfDiag: End_Render includes the flip/vsync wait

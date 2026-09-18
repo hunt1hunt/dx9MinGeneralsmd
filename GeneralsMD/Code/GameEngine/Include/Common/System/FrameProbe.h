@@ -110,6 +110,17 @@ typedef enum FrameProbeCounter
 	// scene work completed *inside* the block that is currently charged for it.
 	// Appended (not inserted) so existing CSV column order stays stable.
 	FP_CNT_GPU_BUSY_AT_POSTFX_START,
+	// T15 (2026-09-18): t_postfx is ~280ms of wall time carrying ~0 CPU, and the
+	// GPU is already caught up when it starts (T7b) -- so the thread is BLOCKED on
+	// something that is neither the CPU nor the scene's GPU work. Prime suspect is
+	// the dynamic vertex/index buffer Lock path (dx8vertexbuffer.cpp:864 uses
+	// D3DLOCK_DISCARD / D3DLOCK_NOOVERWRITE, which a translation layer may emulate
+	// as a synchronous wait). VB_LOCK_US measures time spent inside those Lock
+	// calls; POSTFX_PCPU_US measures total process CPU over the HUD block, so a
+	// near-zero value proves no thread of this process was running either.
+	FP_CNT_VB_LOCK_US,
+	FP_CNT_VB_LOCK_COUNT,
+	FP_CNT_POSTFX_PCPU_US,
 	FP_CNT_COUNT
 } FrameProbeCounter;
 
@@ -152,6 +163,17 @@ void FrameProbeCount(unsigned int counter, int add);
 // other. Returns 0 when the probe is off or no mark was taken yet.
 void FrameProbeCpuMark(unsigned int slot);
 int  FrameProbeCpuSinceMark(unsigned int slot);
+
+// T15: wall-clock microseconds blocked inside a dynamic vertex/index buffer Lock.
+// Callers are in the WW3D2 library, which has no GameEngine include path, so they
+// declare these two locally; ww3d2 is a static library linked into RTSI.exe, so it
+// is the same module and ordinary linkage resolves. Never leaves a pending mark.
+void FrameProbeLockEnter(void);
+void FrameProbeLockLeave(void);
+
+// T15: total CPU time (all threads) of this process, in milliseconds. Pair it
+// around a block to learn whether any thread was running during it.
+int  FrameProbeProcessCpuMs(void);
 
 // Close the current frame record: commit ring slot, handle flush triggers
 // (ring full / interval timer). Call EXACTLY once per GameEngine::update.
