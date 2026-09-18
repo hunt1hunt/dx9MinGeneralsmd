@@ -388,13 +388,24 @@ void Shell::popImmediate( void )
 
 	// run the shutdown
 	Bool immediatePop = TRUE;
+	// 2026-09-17 SHX breadcrumbs: the benchmark exit-time access violation
+	// (AsciiString::operator==, RTSI.map 0x00405740) first fires immediately after
+	// this function's DEBUG_LOG, and the crash stack has only 2 frames (FPO, not
+	// walkable). Bracket each step so the log names the step that faults.
+	// Not a hot path -- screen transitions only.
+	DEBUG_LOG(("SHX: popImmediate -> runShutdown\n"));
 	screen->runShutdown( &immediatePop );
+	DEBUG_LOG(("SHX: popImmediate <- runShutdown\n"));
 
 	// pop the screen of the stack
+	DEBUG_LOG(("SHX: popImmediate -> doPop\n"));
 	doPop( FALSE );
+	DEBUG_LOG(("SHX: popImmediate <- doPop\n"));
 
 	if (TheIMEManager)
 		TheIMEManager->detatch();
+
+	DEBUG_LOG(("SHX: popImmediate done\n"));
 
 }  // end popImmediate
 
@@ -632,22 +643,36 @@ void Shell::doPop( Bool impendingPush )
 	// there better be a top of the stack since we're popping
 	DEBUG_ASSERTCRASH( currentTop, ("Shell: No top of stack and we want to pop!\n") );
 		
+	// 2026-09-17 SHX breadcrumbs (see popImmediate). Suspect ordering: the popped
+	// WindowLayout is deleteInstance()'d and then runInit() runs on the NEXT screen
+	// -- in the benchmark repro that is Menus/SaveLoad.wnd, still on the stack, and
+	// its init walks the save directory.
 	// remove this screen from our list
+	DEBUG_LOG(("SHX: doPop -> unlinkScreen\n"));
 	unlinkScreen( currentTop );
+	DEBUG_LOG(("SHX: doPop <- unlinkScreen\n"));
 
 	// delete all the windows in the screen
+	DEBUG_LOG(("SHX: doPop -> destroyWindows\n"));
 	currentTop->destroyWindows();
+	DEBUG_LOG(("SHX: doPop <- destroyWindows\n"));
 
 	// release the screen object back to the memory pool
+	DEBUG_LOG(("SHX: doPop -> deleteInstance\n"));
 	currentTop->deleteInstance();
+	DEBUG_LOG(("SHX: doPop <- deleteInstance\n"));
 
 	// run the init for the new top of the stack if present
 	WindowLayout *newTop = top();
 	if( newTop && !impendingPush )
 	{
+		DEBUG_LOG(("SHX: doPop -> newTop->runInit\n"));
 		newTop->runInit( NULL );
+		DEBUG_LOG(("SHX: doPop <- newTop->runInit\n"));
 		//newTop->bringForward();
 	}
+
+	DEBUG_LOG(("SHX: doPop done\n"));
 
 	if (TheIMEManager)
 		TheIMEManager->detatch();

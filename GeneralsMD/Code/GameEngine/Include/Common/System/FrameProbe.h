@@ -44,6 +44,33 @@ typedef enum FrameProbeStage
 	FP_LOGIC_AI,			// T5: TheAI->UPDATE()
 	FP_LOGIC_PATHFIND,		// T5: ThePartitionManager->UPDATE() (spatial/pathfind)
 	FP_LOGIC_DESTROY,		// T5: processDestroyList()
+	// T11 (2026-09-17): the savegame baseline left ~105ms of t_client unexplained
+	// (11% of frame time) once RENDER/POSTFX/PRESENT were subtracted. Stage ids are
+	// appended at the end so the existing CSV column order stays stable; the two
+	// FP_DRAW_* ids cover the part of W3DDisplay::draw() that runs *before*
+	// FP_BEGIN(RENDER) and was therefore never inside any probe.
+	FP_CLIENT_INPUT,		// snow / anim2d / keyboard / eva / mouse updates
+	FP_CLIENT_WINDOW,		// window manager + video player
+	FP_CLIENT_GHOST,		// ghost object manager orphan sweep
+	FP_CLIENT_DRAWABLES,	// per-Drawable updateDrawable() loop
+	FP_CLIENT_TERRAIN,		// TheTerrainVisual->UPDATE()
+	FP_CLIENT_DISPUPD,		// TheDisplay->UPDATE() (outside DRAW)
+	FP_CLIENT_STRMGR,		// DisplayStringManager->update()
+	FP_CLIENT_SHELL,		// TheShell->UPDATE()
+	FP_CLIENT_INGAMEUI,		// TheInGameUI->UPDATE()
+	FP_DRAW_VIEWS,			// draw() pre-RENDER: updateViews + particle update
+	FP_DRAW_RTTEX,			// draw() pre-RENDER: water/shadow render-target updates
+	// T12 (2026-09-18): split FP_DRAW_RTTEX. Shadow textures already short-circuit on a
+	// light-position cache (W3DProjectedShadow::update, W3DProjectedShadow.cpp:2242) and
+	// the sun is static, so the water reflection is expected to dominate -- this confirms it.
+	FP_DRAW_RTTEX_WATER,	// WaterRenderObjClass::updateRenderTargetTextures
+	FP_DRAW_RTTEX_SHADOW,	// W3DProjectedShadowManager::updateRenderTargetTextures
+	// T13 (2026-09-18): split FP_POSTFX. After the ResolveTextureDDS cache fix,
+	// t_render fell 24% but t_postfx ROSE 55% with identical draw_calls -- it ate
+	// most of the gain and nothing in the code path explains it. Measure the parts.
+	FP_POSTFX_UI,			// TheInGameUI->DRAW()  (the HUD)
+	FP_POSTFX_DEBUG,		// debug display + drawFPSStats + framerate bar
+	FP_POSTFX_MISC,			// mouse + video buffer + copyright + letterbox + cinematic
 	FP_STAGE_COUNT			// must be last
 } FrameProbeStage;
 

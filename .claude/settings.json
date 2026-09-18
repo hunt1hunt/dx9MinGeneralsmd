@@ -1,19 +1,45 @@
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.3-flash[1m]",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "glm-5.3-flash",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.3-flash[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "glm-5.3-flash",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.3-flash[1m]",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "glm-5.3-flash",
-    "ANTHROPIC_MODEL": "glm-5.3-flash[1m]",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
-    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"
+    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "deepseek-v4-pro",
+    "ANTHROPIC_MODEL": "deepseek-v4-flash",
+    "DISABLE_UPDATES": "1"
   },
   "permissions": {
     "allow": [
-      "mcp__codegraph__*"
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(python:*)",
+      "PowerShell(Get-Content:*)",
+      "PowerShell(Get-ChildItem:*)",
+      "PowerShell(Get-Item:*)",
+      "PowerShell(Get-FileHash:*)",
+      "PowerShell(Select-String:*)",
+      "PowerShell(Add-Type:*)",
+      "PowerShell(code:*)",
+      "PowerShell(git status:*)",
+      "PowerShell(git diff:*)",
+      "PowerShell(git log:*)"
+    ],
+    "deny": [
+      "PowerShell(Set-Content:*)",
+      "PowerShell(Out-File:*)",
+      "PowerShell(Remove-Item:*)",
+      "PowerShell(Move-Item:*)",
+      "PowerShell(New-Item:*)",
+      "PowerShell(Clear-Content:*)",
+      "PowerShell(Add-Content:*)",
+      "PowerShell(git commit:*)",
+      "PowerShell(git push:*)",
+      "PowerShell(git reset:*)",
+      "PowerShell(git checkout:*)",
+      "PowerShell(git clean:*)"
     ]
   }
 }

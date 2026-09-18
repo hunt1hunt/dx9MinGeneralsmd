@@ -39,6 +39,7 @@
 #include "Common/PerfTimer.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/System/FrameProbe.h"	// SagePerfDiag T11 (Tools/PERF_DIAG_DESIGN.md)
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
 #include "Common/Xfer.h"
@@ -605,6 +606,8 @@ void GameClient::update( void )
 		}
 	}
 
+	FP_BEGIN(CLIENT_INPUT);	// SagePerfDiag T11: snow/anim2d/keyboard/eva/mouse
+
 	//Update snow particles.
 	if (TheSnowManager)
 		TheSnowManager->UPDATE();
@@ -630,6 +633,9 @@ void GameClient::update( void )
 		TheMouse->createStreamMessages();
 
 	}  // end if
+
+	FP_END(CLIENT_INPUT);
+
 	
 
   if (TheInGameUI->isCameraTrackingDrawable())
@@ -656,6 +662,8 @@ void GameClient::update( void )
 		return;
 	}
 
+	FP_BEGIN(CLIENT_WINDOW);	// SagePerfDiag T11: window manager + video player
+
 	// update the window system itself
 	{
 		TheWindowManager->UPDATE();
@@ -665,6 +673,8 @@ void GameClient::update( void )
 	{
 		TheVideoPlayer->UPDATE();
 	}
+
+	FP_END(CLIENT_WINDOW);
 
 	Bool freezeTime = TheTacticalView->isTimeFrozen() && !TheTacticalView->isCameraMovementFinished();
 	freezeTime = freezeTime || TheScriptEngine->isTimeFrozenDebug();
@@ -698,12 +708,18 @@ void GameClient::update( void )
 					nonLocalPlayerIndices[numNonLocalPlayers++]=player->getPlayerIndex();
 			}
 			//update ghostObjects which don't have drawables or objects.
+			FP_BEGIN(CLIENT_GHOST);
 			TheGhostObjectManager->updateOrphanedObjects(nonLocalPlayerIndices,numNonLocalPlayers);
+			FP_END(CLIENT_GHOST);
 #else
+			FP_BEGIN(CLIENT_GHOST);
 			TheGhostObjectManager->updateOrphanedObjects(NULL,0);
+			FP_END(CLIENT_GHOST);
 #endif
 		}
 
+
+		FP_BEGIN(CLIENT_DRAWABLES);	// SagePerfDiag T11: per-Drawable update loop
 
 		// call the update for all client drawables
 		Drawable* draw = firstDrawable();
@@ -745,6 +761,8 @@ void GameClient::update( void )
 			draw->updateDrawable();
 			draw = next;
 		}
+
+		FP_END(CLIENT_DRAWABLES);
 	}
 
 #if defined(_INTERNAL) || defined(_DEBUG)
@@ -764,15 +782,19 @@ void GameClient::update( void )
 
 	}  // end if
 
+	FP_BEGIN(CLIENT_TERRAIN);	// SagePerfDiag T11: terrain visual update
 	// update the terrain visuals
 	{
 		TheTerrainVisual->UPDATE();
 	}
+	FP_END(CLIENT_TERRAIN);
 
+	FP_BEGIN(CLIENT_DISPUPD);	// SagePerfDiag T11: TheDisplay->UPDATE() (not DRAW)
 	// update display
 	{
 		TheDisplay->UPDATE();
 	}
+	FP_END(CLIENT_DISPUPD);
 
 	{
 		USE_PERF_TIMER(GameClient_draw)
@@ -783,20 +805,26 @@ void GameClient::update( void )
 		TheDisplay->DRAW();
 	}
 
+	FP_BEGIN(CLIENT_STRMGR);	// SagePerfDiag T11
 	{
 		// let display string factory handle its update
 		TheDisplayStringManager->update();
 	}
+	FP_END(CLIENT_STRMGR);
 
+	FP_BEGIN(CLIENT_SHELL);	// SagePerfDiag T11
 	{
 		// update the shell
 		TheShell->UPDATE();
 	}
+	FP_END(CLIENT_SHELL);
 
+	FP_BEGIN(CLIENT_INGAMEUI);	// SagePerfDiag T11
 	{
-		// update the in game UI 
+		// update the in game UI
 		TheInGameUI->UPDATE();
 	}
+	FP_END(CLIENT_INGAMEUI);
 }  // end update
 
 /** -----------------------------------------------------------------------------------------------
