@@ -601,7 +601,17 @@ GPU 队列更满，后续 HUD 绘制阻塞在等 GPU 上，这段等待被记进
 独立 code review 结果 **APPROVE**（0 CRITICAL / 0 HIGH / 0 MEDIUM，2 条 LOW 已按建议修正注释）。
 
 **不在仓库内的环境侧改动**
-- 桌面 `③增量构建Internal.bat` 的 `findstr` 修复（已改好并**端到端验证**：本轮构建自动部署成功）
+- 桌面 4 个构建 bat 的 `findstr` 修复（2026-09-18 会话二补全：原先只修了
+  `③增量构建Internal.bat`，本次把 **`①增量构建Release.bat` / `②全量重编Release.bat` /
+  `④全量重编Internal.bat`** 一并修掉，四个现在都是
+  `findstr /C:" error(s)"` 写法）。
+  **同一份日志上的对照验证**（日志为 `RTS.exe - 0 error(s), 1 warning(s)`，即构建成功）：
+  新写法 → **通过、继续部署**；旧写法 → **判为[失败]、跳过部署** —— bug 复现与修复同时坐实。
+  ⚠️ 这正是本轮 Release 构建"成功却报 [失败] 且不部署"的原因。
+  改法为**字节级替换**（这些 .bat 是 GBK 编码，用普通文本工具改写会把中文注释转成 UTF-8 而弄乱），
+  每份都留了 `.bak-20260918`。
+  ⚠️ **扫描时注意假阳性**：已修的 Internal 那份在 `rem` 注释里**引用**了旧写法，
+  按字节扫会误判成"未修"，必须**按行首判定**（跳过 `rem`/`::` 行）。
 - `.claude/settings.local.json`（含 `ANTHROPIC_AUTH_TOKEN`，已 gitignore）
 - `.claude/settings.json` 的 `permissions.deny` 移除了 `PowerShell(Copy-Item:*)`（其余 12 条保留）
 
