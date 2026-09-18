@@ -46,8 +46,7 @@ from spd_rescan import (  # noqa: E402
     load,
     steady_state,
     detect_contaminated_first_row,
-    FASTMODE_ZERO_RENDER_FRAC,
-    FASTMODE_MIN_ROWS,
+    is_fastmode_recording,
 )
 
 BUDGET_MS = 33.3
@@ -141,7 +140,8 @@ def run_stats(files, min_objects):
         zero_render = sum(1 for x in r
                           if x.get("t_render", 0.0) == 0.0 and x.get("draw_calls", 0) == 0)
         n = len(r)
-        is_fast = n >= FASTMODE_MIN_ROWS and zero_render / float(n) >= FASTMODE_ZERO_RENDER_FRAC
+        # 共享判据（零渲染占比 + 稳态 objects > 0），避免与 spd_rescan 规则漂移。
+        is_fast = is_fastmode_recording(r, zero_render)
         per_file.append({
             "name": os.path.basename(f),
             "n": n,
