@@ -147,6 +147,13 @@ public:
 	Int m_waterProbeMode;		///< VF-1a: water dual-channel probe - 1=skip shroud pass, 2=skip main pass, 3=skip both (default 0 = normal)
 	Bool m_terrainVSRoute;	///< VF-1b: terrain vertex-shader route. DEATH 2026-09-18 (fan-2.0): even a MINIMAL position-only vs_2_0 over the terrain XYZDUV2 FVF stream misrenders (dragged vertices = fan) on this driver stack - matrix/constants/inputs/binary/declaration all verified correct (NUMCHK+DRAWTIME+fxc disasm). Keep No; all P1 features run on the FF/TSS route.
 	Bool m_terrainMRTDepth;	///< VF-1c: terrain MRT G-Buffer depth (RT1 oct-normal + RT2 NDC z during the G-Buffer pass). Dead as designed (needs vs_3_0); scene depth pivots to z-buffer-texture sampling (shadow-D24X8 precedent).
+	Bool m_useSampleableZBuffer;	///< VF-1c(new 2026-09-19): bind the main z-buffer as a D3DUSAGE_DEPTHSTENCIL TEXTURE (shadow-D24X8 creation pattern) so VF-2 can sample scene depth. Default FALSE (A/B against the auto DS).
+	Bool m_useVolumetricFog;	///< VF-2: raymarch height fog, depth-gated by the sampled main z-texture (default FALSE; requires UseSampleableZBuffer=Yes)
+	Real m_volFogDensity;		///< VF-2 INI FogDensity: extinction per world unit at ground level (default 0.006)
+	Real m_volFogHeightScale;	///< VF-2 INI FogVolumeHeight: density e-folding height in world units (default 12.5 = doubao 1/0.08)
+	Real m_volFogGroundDensity;	///< VF-2 INI FogGroundDensity: ground density multiplier (default 1.0)
+	Real m_volFogSunScatter;	///< VF-2 INI SunScatterStrength: sun in-scattering gain (default 0.5)
+	Int m_volFogDebug;			///< VF-2 INI VolumetricFogDebug: 1 = raw sampled-z grayscale viz (depth-sampling probe), 2 = fog factor viz (default 0)
 	Int m_terrainProbeMode;		///< VF-1a: terrain pass probe - 1=skip shroud pass, 2=skip tracks, 4=skip bridges, 8=force cloud map off (default 0 = normal)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;

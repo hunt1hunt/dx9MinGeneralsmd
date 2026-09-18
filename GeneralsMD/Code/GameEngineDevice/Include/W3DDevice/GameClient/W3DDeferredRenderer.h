@@ -33,6 +33,7 @@
 
 class DX8Wrapper;
 class TextureClass;
+struct ID3DXEffect;	///< d3dx9effect.h only included in the .cpp (project convention, see W3XEffectManager.h)
 
 /**
  * W3DDeferredRenderer — G-Buffer + deferred lighting pass manager.
@@ -149,6 +150,37 @@ public:
 	IDirect3DPixelShader9 *m_bloomBlurPS;
 	IDirect3DPixelShader9 *m_bloomCompositePS;
 	bool m_bloomAvailable;
+
+	// ---- VF-1c(new 2026-09-19): sampleable main z-buffer ----
+	// The main z is re-bound from the auto DS to a D3DUSAGE_DEPTHSTENCIL
+	// TEXTURE (the proven shadow-D24X8 creation pattern), so the scene depth
+	// becomes sampleable for VF-2's fog depth gating. The z texture is ONLY
+	// reliably sampleable under dgVoodoo2 through a D3DX Effect sampler_state
+	// (Point/Clamp) - a standalone PS + SetTexture reads 1.0 (2026-09-05 dump
+	// note) - so VF-2's fog pass runs as an effect, not a loose shader.
+	bool createMainZTexture();
+	void releaseMainZTexture();
+	bool isMainZAvailable() const { return m_mainZAvailable; }
+	IDirect3DTexture9 *m_mainZTex;			///< main z as a sampleable DEPTHSTENCIL texture
+	IDirect3DSurface9 *m_mainZSurface;	///< its level-0 surface (bound as the device DS)
+	bool m_mainZAvailable;
+
+	// ---- VF-2: raymarch height fog, depth-gated by the sampled main z ----
+	// Recipe (vf2-fog-reference-digest.md): doubao density function
+	// (exp(-z/HeightScale) * GroundDensity), pizi0475 depth gate (march
+	// endpoint = min(scene distance, FogEnd)), KW LightRays-style sun
+	// in-scattering. Scene color resolved via StretchRect (shadow/bloom
+	// pattern). Runs BEFORE aoCompositePass (P3 Bloom domain, LDR).
+	void volumetricFogPass(
+		const Matrix4x4 &invViewProj,
+		const Vector3 &cameraPos,
+		const Vector3 &sunDir,
+		const Vector3 &sunColor);
+	bool createFogResources();
+	void releaseFogResources();
+	TextureClass *m_fogSceneRT;				///< full-res resolved copy of the backbuffer
+	ID3DXEffect *m_fogFX;						///< fog composite effect (owns the z sampler_state)
+	bool m_fogAvailable;
 
 	bool createCompositeShaders();
 	void releaseCompositeShaders();

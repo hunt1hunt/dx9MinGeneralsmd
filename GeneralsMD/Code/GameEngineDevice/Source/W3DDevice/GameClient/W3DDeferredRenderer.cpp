@@ -220,7 +220,13 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_stencilSphereVerts(0),
 	m_stencilSphereTris(0),
 	m_aoCompositePS(NULL),
-	m_iblCompositePS(NULL)
+	m_iblCompositePS(NULL),
+	m_mainZTex(NULL),
+	m_mainZSurface(NULL),
+	m_mainZAvailable(false),
+	m_fogSceneRT(NULL),
+	m_fogFX(NULL),
+	m_fogAvailable(false)
 {
 	m_gbufferRT[0] = NULL;
 	m_gbufferRT[1] = NULL;
@@ -416,6 +422,13 @@ void W3DDeferredRenderer::init()
 	createStencilSphere();
 	createCompositeShaders();
 
+	// VF-1c(new): re-bind the main z as a sampleable DEPTHSTENCIL texture
+	// (shadow-D24X8 creation pattern). Must run AFTER all other creates so
+	// the first frame already renders into (and clears) our texture.
+	createMainZTexture();
+	// VF-2: fog composite resources (scene-color resolve RT + effect).
+	createFogResources();
+
 	// Step 5: Log INI switch status.
 	DIAG_LOG(("STEP5: INI UsePBRMaterials=%d UseNormalMaps=%d PBRLightCount=%d UsePS30=%d UseIBL=%d\n",
 		TheGlobalData?TheGlobalData->m_usePBRMaterials:0, TheGlobalData?TheGlobalData->m_useNormalMaps:0,
@@ -450,6 +463,8 @@ void W3DDeferredRenderer::shutdown()
 	releaseIBLResources();
 	releaseStencilSphere();
 	releaseCompositeShaders();
+	releaseMainZTexture();
+	releaseFogResources();
 	m_available = false;
 	m_initialized = false;
 }
@@ -1232,6 +1247,8 @@ void W3DDeferredRenderer::ReleaseResources()
 	releaseIBLResources();
 	releaseStencilSphere();
 	releaseCompositeShaders();
+	releaseMainZTexture();
+	releaseFogResources();
 }
 
 // ============================================================================
@@ -1297,6 +1314,10 @@ void W3DDeferredRenderer::ReAcquireResources()
 	createIBLResources();
 	createStencilSphere();
 	createCompositeShaders();
+	// VF-1c(new): re-create + re-bind the sampleable main z right after the
+	// Reset (Reset() reverts the DS to the auto one) and the fog resources.
+	createMainZTexture();
+	createFogResources();
 }
 
 // ============================================================================
@@ -1597,6 +1618,330 @@ void W3DDeferredRenderer::releaseShadowResources()
 	}
 	m_shadowMapAvailable = false;
 	m_shadowDepthStencilAvailable = false;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::createMainZTexture  (VF-1c new, 2026-09-19)
+// ============================================================================
+// Re-binds the main z-buffer from the auto depth stencil to a
+// D3DUSAGE_DEPTHSTENCIL TEXTURE - the exact creation pattern of the shadow
+// D24X8 (proven on this stack). Nothing downstream changes behavior: the
+// wrapper and every pass save/restore the DS via Get/SetDepthStencilSurface,
+// so our surface simply becomes the "default" they cache and restore.
+// Sampling constraint: under dgVoodoo2 a depth texture is ONLY reliably
+// sampleable through a D3DX Effect sampler_state (Point/Clamp) - the
+// 2026-09-05 dump finding; a standalone PS + SetTexture reads 1.0. VF-2
+// therefore runs as an effect (see volumetricFogPass).
+// INI: UseSampleableZBuffer (default No - this reroutes the WHOLE frame's
+// depth; A/B against the auto DS before trusting).
+bool W3DDeferredRenderer::createMainZTexture()
+{
+	m_mainZAvailable = false;
+	if (!TheGlobalData || !TheGlobalData->m_useSampleableZBuffer) {
+		return false;	// INI off: the main z stays the auto DS
+	}
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// Mirror the CURRENT depth-stencil (size + format = whatever the engine
+	// picked for this display mode; D24S8 is preferred first because the
+	// volumetric-shadow / point-light volumes need the stencil bits).
+	UINT zw = 0, zh = 0;
+	D3DFORMAT zfmt = D3DFMT_D24S8;
+	IDirect3DSurface9 *curDS = NULL;
+	if (SUCCEEDED(d9->GetDepthStencilSurface(&curDS)) && curDS) {
+		D3DSURFACE_DESC dsd;
+		if (SUCCEEDED(curDS->GetDesc(&dsd))) {
+			zw = dsd.Width; zh = dsd.Height; zfmt = dsd.Format;
+		}
+		curDS->Release();
+	}
+	if (zw == 0 || zh == 0) {
+		IDirect3DSurface9 *bb = NULL;
+		if (SUCCEEDED(d9->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) && bb) {
+			D3DSURFACE_DESC bbd;
+			if (SUCCEEDED(bb->GetDesc(&bbd))) { zw = bbd.Width; zh = bbd.Height; }
+			bb->Release();
+		}
+	}
+	if (zw == 0 || zh == 0) { zw = (UINT)m_gbufferWidth; zh = (UINT)m_gbufferHeight; }
+
+	if (m_mainZSurface) { m_mainZSurface->Release(); m_mainZSurface = NULL; }
+	if (m_mainZTex) { m_mainZTex->Release(); m_mainZTex = NULL; }
+
+	HRESULT hr = d9->CreateTexture(zw, zh, 1,
+		D3DUSAGE_DEPTHSTENCIL, zfmt, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
+	if (FAILED(hr) || !m_mainZTex) {
+		DIAG_LOG(("W3DDeferredRenderer: main z texture create FAILED hr=0x%08x (%ux%u fmt=%d) - staying on auto DS.\n",
+			(int)hr, zw, zh, (int)zfmt));
+		return false;
+	}
+	if (FAILED(m_mainZTex->GetSurfaceLevel(0, &m_mainZSurface)) || !m_mainZSurface) {
+		DIAG_LOG(("W3DDeferredRenderer: main z GetSurfaceLevel FAILED.\n"));
+		m_mainZTex->Release(); m_mainZTex = NULL;
+		return false;
+	}
+	d9->SetDepthStencilSurface(m_mainZSurface);
+	// Clear once so the very first frame's samples read far (1.0), not garbage.
+	d9->Clear(0, NULL, D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1.0f, 0);
+	m_mainZAvailable = true;
+	DIAG_LOG(("W3DDeferredRenderer: main z re-bound as sampleable DEPTHSTENCIL texture (%ux%u, fmt=%d).\n",
+		zw, zh, (int)zfmt));
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::releaseMainZTexture
+// ============================================================================
+void W3DDeferredRenderer::releaseMainZTexture()
+{
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev && m_mainZSurface) {
+		// Unbind before release - the device still holds it as the current DS.
+		static_cast<IDirect3DDevice9*>(dev)->SetDepthStencilSurface(NULL);
+	}
+	if (m_mainZSurface) { m_mainZSurface->Release(); m_mainZSurface = NULL; }
+	if (m_mainZTex) { m_mainZTex->Release(); m_mainZTex = NULL; }
+	m_mainZAvailable = false;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::createFogResources  (VF-2)
+// ============================================================================
+bool W3DDeferredRenderer::createFogResources()
+{
+	m_fogAvailable = false;
+	if (!TheGlobalData || !TheGlobalData->m_useVolumetricFog) {
+		return false;	// INI off: nothing to own
+	}
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return false;
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// Full-res resolved copy of the backbuffer - the StretchRect pattern
+	// shared with the shadow sampler copy and bloom src (sampling the
+	// backbuffer directly is illegal; RT->SRV needs the explicit resolve).
+	REF_PTR_RELEASE(m_fogSceneRT);
+	m_fogSceneRT = DX8Wrapper::Create_Render_Target(
+		m_gbufferWidth, m_gbufferHeight, WW3D_FORMAT_A8R8G8B8, true);
+	if (!m_fogSceneRT) {
+		DIAG_LOG(("W3DDeferredRenderer: VF-2 fog scene RT create FAILED.\n"));
+		return false;
+	}
+
+	// The fog composite runs as a D3DX EFFECT, not a loose shader: the main z
+	// texture is only reliably sampleable through an effect sampler_state
+	// under dgVoodoo2 (2026-09-05 dump finding - a standalone PS reads 1.0).
+	// ZSampler copies the exact declaration of the proven shadow-dump
+	// sampler (Point/Clamp). Recipe = vf2-fog-reference-digest.md:
+	// doubao density exp(-z/heightScale)*groundDensity, pizi0475 depth gate
+	// (march endpoint = min(scene distance, FogEnd)), KW-style sun
+	// in-scattering; composite in the additive-factored form.
+	static const char fxsrc[] =
+		"texture SceneTex;\n"
+		"sampler2D SceneSampler = sampler_state {\n"
+		"    Texture = <SceneTex>;\n"
+		"    MinFilter = Point; MagFilter = Point; MipFilter = None;\n"
+		"    AddressU = Clamp; AddressV = Clamp;\n"
+		"};\n"
+		"texture ZTex;\n"
+		"sampler2D ZSampler = sampler_state {\n"
+		"    Texture = <ZTex>;\n"
+		"    MinFilter = Point; MagFilter = Point; MipFilter = None;\n"
+		"    AddressU = Clamp; AddressV = Clamp;\n"
+		"};\n"
+		"float4 gCamPos;\n"			// xyz = camera world pos
+		"float4 gSunDir;\n"			// xyz = light TRAVEL dir (sun->ground); w = SunScatterStrength
+		"float4 gSunColor;\n"		// rgb = sun color
+		"float4 gFogColor;\n"		// rgb = fog color
+		"float4 gFogParams;\n"		// x = extinction@z0, y = 1/heightScale, z = FogEnd clamp, w = debug mode
+		"float4 gInvRow0;\n"		// invViewProj rows (sunLightPass c3..c6 upload convention)
+		"float4 gInvRow1;\n"
+		"float4 gInvRow2;\n"
+		"float4 gInvRow3;\n"
+		"float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
+		"    float zw = tex2D(ZSampler, uv).x;\n"
+		"    if (gFogParams.w >= 1.0) return float4(zw, zw, zw, 1.0);\n"		// debug 1: raw sampled z
+		"    float3 scene = tex2D(SceneSampler, uv).rgb;\n"
+		"    float2 screenPos = uv * 2.0 - 1.0;\n"
+		"    float4 clipPos = float4(screenPos, zw, 1.0);\n"
+		"    float4 wp;\n"
+		"    wp.x = dot(clipPos, float4(gInvRow0.x, gInvRow1.x, gInvRow2.x, gInvRow3.x));\n"
+		"    wp.y = dot(clipPos, float4(gInvRow0.y, gInvRow1.y, gInvRow2.y, gInvRow3.y));\n"
+		"    wp.z = dot(clipPos, float4(gInvRow0.z, gInvRow1.z, gInvRow2.z, gInvRow3.z));\n"
+		"    wp.w = dot(clipPos, float4(gInvRow0.w, gInvRow1.w, gInvRow2.w, gInvRow3.w));\n"
+		"    wp.xyz /= wp.w;\n"
+		"    float3 ray = wp.xyz - gCamPos.xyz;\n"
+		"    float sceneDist = length(ray);\n"
+		// pizi0475 depth gate: never march past the surface (near objects
+		// stay clear) nor past FogEnd.
+		"    float marchLen = min(sceneDist, gFogParams.z);\n"
+		"    if (marchLen <= 0.001) return float4(scene, 1.0);\n"
+		"    float3 rd = ray / sceneDist;\n"
+		// doubao density integrated front-to-back + sun in-scattering
+		"    float dt = marchLen / 24.0;\n"
+		"    float trans = 1.0;\n"
+		"    float3 scat = float3(0.0, 0.0, 0.0);\n"
+		"    float cosT = dot(rd, -gSunDir.xyz);\n"
+		"    float phase = 0.75 + 0.25 * cosT * cosT;\n"
+		"    float3 sunTerm = gSunColor.rgb * gFogColor.rgb * phase;\n"
+		"    for (int i = 0; i < 24; i++) {\n"
+		"        float t = ((float)i + 0.5) * dt;\n"
+		"        float3 p = gCamPos.xyz + rd * t;\n"
+		"        float d = gFogParams.x * exp(-max(p.z, 0.0) * gFogParams.y);\n"
+		"        float od = d * dt;\n"
+		"        scat += sunTerm * (od * trans);\n"
+		"        trans *= exp(-od);\n"
+		"        if (trans < 0.01) break;\n"
+		"    }\n"
+		"    if (gFogParams.w >= 2.0) return float4(1.0 - trans, 1.0 - trans, 1.0 - trans, 1.0);\n"	// debug 2: fog factor
+		"    float3 fogCol = gFogColor.rgb * (1.0 - trans);\n"
+		"    return float4(scene * trans + fogCol + scat * gSunDir.w, 1.0);\n"
+		"}\n"
+		"technique T {\n"
+		"    pass p0 {\n"
+		"        PixelShader = compile ps_3_0 main();\n"
+		"    }\n"
+		"}\n";
+	if (m_fogFX) { m_fogFX->Release(); m_fogFX = NULL; }
+	{
+		ID3DXBuffer *fxErr = NULL;
+		HRESULT fxhr = D3DXCreateEffect(d9, fxsrc, (UINT)strlen(fxsrc), NULL, NULL, 0, NULL, &m_fogFX, &fxErr);
+		if (fxErr) {
+			DIAG_LOG(("W3DDeferredRenderer: VF-2 fog effect FAILED: %s\n", (const char*)fxErr->GetBufferPointer()));
+			fxErr->Release();
+		}
+		if (FAILED(fxhr) || !m_fogFX) return false;
+	}
+	m_fogAvailable = true;
+	DIAG_LOG(("W3DDeferredRenderer: VF-2 fog resources created (%dx%d scene RT + effect).\n",
+		m_gbufferWidth, m_gbufferHeight));
+	return true;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::releaseFogResources
+// ============================================================================
+void W3DDeferredRenderer::releaseFogResources()
+{
+	REF_PTR_RELEASE(m_fogSceneRT);
+	if (m_fogFX) { m_fogFX->Release(); m_fogFX = NULL; }
+	m_fogAvailable = false;
+}
+
+// ============================================================================
+// W3DDeferredRenderer::volumetricFogPass  (VF-2)
+// ============================================================================
+// Full-screen height-fog raymarch, depth-gated by the sampled main z.
+// Runs after the forward pass, before aoCompositePass (digest: before AO
+// composite, before P3 Bloom). Mechanics = bloom (StretchRect resolve +
+// quad) + the effect sampler for the z texture. The z texture must NOT be
+// the bound depth-stencil while sampled, so the pass unbinds it for the
+// draw and restores after.
+void W3DDeferredRenderer::volumetricFogPass(
+	const Matrix4x4 &invViewProj,
+	const Vector3 &cameraPos,
+	const Vector3 &sunDir,
+	const Vector3 &sunColor)
+{
+	if (!TheGlobalData || !TheGlobalData->m_useVolumetricFog) return;
+	if (!m_fogAvailable || !m_fogFX || !m_fogSceneRT || !m_quadVB || !m_quadIB) return;
+	if (!m_mainZAvailable || !m_mainZTex) {
+		static bool s_zWarn = false;
+		if (!s_zWarn) {
+			s_zWarn = true;
+			DIAG_LOG(("W3DDeferredRenderer: VF-2 fog SKIPPED - main z texture unavailable (UseSampleableZBuffer=Yes?).\n"));
+		}
+		return;
+	}
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// 0) resolve the backbuffer into the scene RT (bloom-proven route).
+	IDirect3DSurface9 *backSurf = NULL;
+	if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backSurf)) || !backSurf) return;
+	IDirect3DSurface9 *fogSurf = m_fogSceneRT->Get_D3D_Surface_Level();
+	HRESULT sr = dev->StretchRect(backSurf, NULL, fogSurf, NULL, D3DTEXF_NONE);
+	fogSurf->Release();
+	backSurf->Release();
+	if (FAILED(sr)) { DIAG_LOG(("W3DDeferredRenderer: fog StretchRect FAILED hr=0x%08X.\n", (int)sr)); return; }
+
+	// 1) save the state we override.
+	D3DVIEWPORT9 vpMain;
+	dev->GetViewport(&vpMain);
+	IDirect3DSurface9 *oldDS = NULL;
+	d9->GetDepthStencilSurface(&oldDS);
+	DWORD oldZen, oldZw, oldBlend, oldCull;
+	dev->GetRenderState(D3DRS_ZENABLE, &oldZen);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &oldZw);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldBlend);
+	dev->GetRenderState(D3DRS_CULLMODE, &oldCull);
+
+	// 2) unbind the z texture from DS (sampling it while bound is illegal),
+	//    set up the full-screen quad.
+	d9->SetDepthStencilSurface(NULL);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+	dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+	dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+	dev->SetIndices(m_quadIB);
+
+	// 3) effect params. The invViewProj rows use the exact c3..c6 upload of
+	//    sunLightPass (whose uv->NDC->world reconstruction is proven).
+	{
+		Matrix4x4 inv = invViewProj;
+		D3DXVECTOR4 r0(inv[0][0], inv[0][1], inv[0][2], inv[0][3]);
+		D3DXVECTOR4 r1(inv[1][0], inv[1][1], inv[1][2], inv[1][3]);
+		D3DXVECTOR4 r2(inv[2][0], inv[2][1], inv[2][2], inv[2][3]);
+		D3DXVECTOR4 r3(inv[3][0], inv[3][1], inv[3][2], inv[3][3]);
+		D3DXVECTOR4 vCam(cameraPos.X, cameraPos.Y, cameraPos.Z, 0.0f);
+		D3DXVECTOR4 vSun(sunDir.X, sunDir.Y, sunDir.Z, TheGlobalData->m_volFogSunScatter);
+		D3DXVECTOR4 vSunCol(sunColor.X, sunColor.Y, sunColor.Z, 0.0f);
+		D3DXVECTOR4 vFog(TheGlobalData->m_fogColorR, TheGlobalData->m_fogColorG, TheGlobalData->m_fogColorB, 0.0f);
+		float ext = TheGlobalData->m_volFogDensity * TheGlobalData->m_volFogGroundDensity;
+		float hs = TheGlobalData->m_volFogHeightScale;
+		if (hs < 0.01f) hs = 0.01f;
+		D3DXVECTOR4 vPrm(ext, 1.0f / hs, TheGlobalData->m_fogEnd, (float)TheGlobalData->m_volFogDebug);
+		m_fogFX->SetVector("gCamPos", &vCam);
+		m_fogFX->SetVector("gSunDir", &vSun);
+		m_fogFX->SetVector("gSunColor", &vSunCol);
+		m_fogFX->SetVector("gFogColor", &vFog);
+		m_fogFX->SetVector("gFogParams", &vPrm);
+		m_fogFX->SetVector("gInvRow0", &r0);
+		m_fogFX->SetVector("gInvRow1", &r1);
+		m_fogFX->SetVector("gInvRow2", &r2);
+		m_fogFX->SetVector("gInvRow3", &r3);
+		m_fogFX->SetTexture("SceneTex", m_fogSceneRT->Peek_D3D_Base_Texture());
+		m_fogFX->SetTexture("ZTex", m_mainZTex);
+	}
+
+	// 4) draw onto the backbuffer (quad covers the gbuffer-sized viewport;
+	//    at gbufferScale 1.0 that is exactly the backbuffer).
+	{
+		UINT passes = 0;
+		m_fogFX->SetTechnique("T");
+		if (SUCCEEDED(m_fogFX->Begin(&passes, 0))) {
+			for (UINT p = 0; p < passes; p++) {
+				m_fogFX->BeginPass(p);
+				dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+				m_fogFX->EndPass();
+			}
+			m_fogFX->End();
+		}
+	}
+
+	// 5) restore.
+	d9->SetDepthStencilSurface(oldDS);
+	if (oldDS) oldDS->Release();
+	dev->SetViewport(&vpMain);
+	dev->SetRenderState(D3DRS_ZENABLE, oldZen);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZw);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, oldBlend);
+	dev->SetRenderState(D3DRS_CULLMODE, oldCull);
 }
 
 // ============================================================================
