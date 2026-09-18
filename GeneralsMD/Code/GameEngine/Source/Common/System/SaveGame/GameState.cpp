@@ -187,20 +187,40 @@ GameState::SnapshotBlock *GameState::findBlockInfoByToken( AsciiString token, Sn
 	if( token.isEmpty() )
 		return NULL;
 
+	// 2026-09-18 SHXL. The exit-time access violation (asciistring.h(589)
+	// operator==, 0x00405760, exactly 152 dumps per run) is reached from here:
+	// Shell::doPop -> SaveLoad.wnd runInit -> SaveLoadMenuInit ->
+	// populateSaveGameListbox -> getSaveGameInfoFromFile -> findBlockInfoByToken.
+	// The bad operand is blockInfo->blockName, whose m_data holds a non-pointer
+	// (0xC7000008 / 0x80000008 = freed or pool-reused memory). Log the index BEFORE
+	// the name so that if the name itself faults, the log still pins the entry.
+	DEBUG_LOG(("SHXL: findBlockInfoByToken enter token='%s' which=%d size=%d\n",
+						 token.str(), (Int)which, (Int)m_snapshotBlockList[which].size()));
+
 	// search for match our list
 	SnapshotBlock *blockInfo;
 	SnapshotBlockListIterator it;
+	Int shxlIdx = 0;
 	for( it = m_snapshotBlockList[which].begin(); it != m_snapshotBlockList[which].end(); ++it )
 	{
 
 		// get info
 		blockInfo = &(*it);
 
+		DEBUG_LOG(("SHXL:  blk[%d] ", shxlIdx));
+		DEBUG_LOG(("name='%s'\n", blockInfo->blockName.str()));
+		++shxlIdx;
+
 		// check for match
 		if( blockInfo->blockName == token )
+		{
+			DEBUG_LOG(("SHXL: findBlockInfoByToken hit at idx=%d\n", shxlIdx - 1));
 			return blockInfo;
+		}
 
 	}  // end for
+
+	DEBUG_LOG(("SHXL: findBlockInfoByToken miss, scanned %d\n", shxlIdx));
 
 	// not found
 	return NULL;
@@ -291,6 +311,8 @@ GameState::GameState( void )
 GameState::~GameState( void )
 {
 
+	DEBUG_LOG(("SHXL: ~GameState enter, clearing %d block list(s)\n", (Int)SNAPSHOT_MAX));
+
 	// clear our snapshot block list
 	for (Int i=0; i<SNAPSHOT_MAX; ++i)
 	m_snapshotBlockList[i].clear();
@@ -308,6 +330,16 @@ GameState::~GameState( void )
 // ------------------------------------------------------------------------------------------------
 void GameState::init( void )
 {
+
+	// 2026-09-18 SHXL: log how many blocks are already registered before we add ours.
+	// init() registers ~23 blocks and nothing but ~GameState() ever clears the list,
+	// so a second init() on the same object would silently leave duplicates behind.
+	{
+		Int shxlI;
+		for( shxlI = 0; shxlI < SNAPSHOT_MAX; ++shxlI )
+			DEBUG_LOG(("SHXL: GameState::init pre-existing list[%d] size=%d\n",
+								 shxlI, (Int)m_snapshotBlockList[shxlI].size()));
+	}
 
 	// add all the snapshot objects to our list of data blocks for save game files
 	addSnapshotBlock( GAME_STATE_BLOCK_STRING,				TheGameState,							SNAPSHOT_SAVELOAD );
@@ -971,6 +1003,10 @@ Bool GameState::doesSaveGameExist( AsciiString filename )
 // ------------------------------------------------------------------------------------------------
 void GameState::getSaveGameInfoFromFile( AsciiString filename, SaveGameInfo *saveGameInfo )
 {
+	// 2026-09-18 SHXL: called once per .sav by addGameToAvailableList. The AV is
+	// 38 files x 4 comparisons, so this is the per-file anchor in the trace.
+	DEBUG_LOG(("SHXL: getSaveGameInfoFromFile enter '%s'\n", filename.str()));
+
 	AsciiString token;
 	Int blockSize;
 	Bool done = FALSE;
@@ -1001,6 +1037,7 @@ void GameState::getSaveGameInfoFromFile( AsciiString filename, SaveGameInfo *sav
 
 		// read next token
 		xferLoad.xferAsciiString( &token );
+		DEBUG_LOG(("SHXL: saveinfo token='%s'\n", token.str()));
 
 		// check for end of file token
 		if( token.compareNoCase( SAVE_FILE_EOF ) == 0 )
@@ -1069,6 +1106,8 @@ void GameState::getSaveGameInfoFromFile( AsciiString filename, SaveGameInfo *sav
 	// close the file
 	xferLoad.close();
 
+	DEBUG_LOG(("SHXL: getSaveGameInfoFromFile exit\n"));
+
 }  // end getSaveGameInfoFromFile
 
 // ------------------------------------------------------------------------------------------------
@@ -1077,6 +1116,13 @@ void GameState::getSaveGameInfoFromFile( AsciiString filename, SaveGameInfo *sav
 static void addGameToAvailableList( AsciiString filename, void *userData )
 {
 	AvailableGameInfo **listHead = (AvailableGameInfo **)userData;
+
+	// 2026-09-18 SHXL: one line per .sav processed. The catch below swallows
+	// everything, so if the access violation is being converted into a C++
+	// exception anywhere up-stack, the CAUGHT breadcrumb names the file it
+	// happened on -- that would also explain why the loop survives 152 faults
+	// and still returns normally.
+	DEBUG_LOG(("SHXL: addGameToAvailableList '%s'\n", filename.str()));
 
 	// sanity
 	DEBUG_ASSERTCRASH( listHead != NULL, ("addGameToAvailableList - Illegal parameters\n") );
@@ -1140,6 +1186,8 @@ static void addGameToAvailableList( AsciiString filename, void *userData )
 	}  // end else
 	} catch(...) {
 		// Do nothing - just return.
+		DEBUG_LOG(("SHXL: addGameToAvailableList CAUGHT an exception for '%s'\n",
+							 filename.str()));
 	}
 
 
@@ -1155,6 +1203,26 @@ void GameState::populateSaveGameListbox( GameWindow *listbox, SaveLoadLayoutType
 	// sanity
 	if( listbox == NULL )
 		return;
+
+	// 2026-09-18 SHXL. Dump the whole SAVELOAD block table once, before anything
+	// in this path touches it, so a dangling blockName is named right here instead
+	// of only faulting later inside operator==. Index is logged before the name for
+	// the same reason as in findBlockInfoByToken.
+	{
+		Int shxlI = 0;
+		SnapshotBlockListIterator shxlIt;
+		DEBUG_LOG(("SHXL: populateSaveGameListbox enter layoutType=%d\n", (Int)layoutType));
+		DEBUG_LOG(("SHXL: SAVELOAD block table size=%d\n",
+							 (Int)m_snapshotBlockList[SNAPSHOT_SAVELOAD].size()));
+		for( shxlIt = m_snapshotBlockList[SNAPSHOT_SAVELOAD].begin();
+				 shxlIt != m_snapshotBlockList[SNAPSHOT_SAVELOAD].end(); ++shxlIt )
+		{
+			DEBUG_LOG(("SHXL:  tbl[%d] ", shxlI));
+			DEBUG_LOG(("name='%s'\n", (*shxlIt).blockName.str()));
+			++shxlI;
+		}
+		DEBUG_LOG(("SHXL: SAVELOAD block table dump done\n"));
+	}
 
 	// first clear all entries in the listbox
 	GadgetListBoxReset( listbox );
