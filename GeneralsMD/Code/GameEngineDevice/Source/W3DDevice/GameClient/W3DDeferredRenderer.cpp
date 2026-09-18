@@ -1666,6 +1666,14 @@ bool W3DDeferredRenderer::createMainZTexture()
 		}
 	}
 	if (zw == 0 || zh == 0) { zw = (UINT)m_gbufferWidth; zh = (UINT)m_gbufferHeight; }
+	// 2026-09-19 white-screen hunt: the fog effect reads the D24S8 texture
+	// as its creation-clear 1.0 (SRV seemingly never exposes the DSV
+	// writes), while the shadow precedent that DID sample visibly is D24X8.
+	// SampleableZFormat lets the INI force the precedent format as an A/B
+	// (1=D24X8 - drops stencil, volumetric shadows degrade, PROBE ONLY;
+	// 2=D24S8 explicit; 0=mirror the current DS format).
+	if (TheGlobalData->m_sampleableZFormat == 1) zfmt = D3DFMT_D24X8;
+	else if (TheGlobalData->m_sampleableZFormat == 2) zfmt = D3DFMT_D24S8;
 
 	if (m_mainZSurface) { m_mainZSurface->Release(); m_mainZSurface = NULL; }
 	if (m_mainZTex) { m_mainZTex->Release(); m_mainZTex = NULL; }
@@ -1889,15 +1897,25 @@ void W3DDeferredRenderer::volumetricFogPass(
 	}
 
 	// Debug mode 3: one-shot CONTENT dump of the main z through the PROVEN
-	// effect readback (dumpShadowTexToPPM machinery). Decides the white
-	// screen: PPM shows geometry => the texture holds real depth and the
-	// problem is OUR effect's in-frame sampling; PPM flat white => the
-	// texture never received the scene (write/bind cause). No fog draw.
+	// effect readback (dumpShadowTexToPPM machinery). 2026-09-19 second
+	// round: UNBIND the DS first - the first dump sampled the z texture
+	// while it was still the bound depth-stencil (illegal read, all-black
+	// 0.0) and proved nothing. Decides the white screen CLEANLY now:
+	// PPM shows geometry => texture holds depth + effect sampling works;
+	// PPM flat 1.0 => the SRV never exposes the DSV writes (dgVoodoo depth
+	// view desync - try SampleableZFormat=1 for the D24X8 precedent format);
+	// PPM flat 0.0 => the dump draw itself died (re-examine machinery).
+	// No fog draw.
 	if (TheGlobalData->m_volFogDebug == 3) {
 		static bool s_zDumped = false;
 		if (!s_zDumped) {
-			s_zDumped = true;
+			IDirect3DSurface9 *dsSave = NULL;
+			d9->GetDepthStencilSurface(&dsSave);
+			d9->SetDepthStencilSurface(NULL);
 			dumpShadowTexToPPM(m_mainZTex, "E:\\mainz_dump.ppm");
+			d9->SetDepthStencilSurface(dsSave);
+			if (dsSave) dsSave->Release();
+			s_zDumped = true;
 		}
 		return;
 	}

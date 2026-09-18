@@ -100,6 +100,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "TerrainVSRoute",			INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainVSRoute ) },
 	{ "TerrainMRTDepth",		INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainMRTDepth ) },
 	{ "UseSampleableZBuffer",		INI::parseBool,				NULL,			offsetof( GlobalData, m_useSampleableZBuffer ) },
+	{ "SampleableZFormat",			INI::parseInt,				NULL,			offsetof( GlobalData, m_sampleableZFormat ) },
 	{ "UseVolumetricFog",			INI::parseBool,				NULL,			offsetof( GlobalData, m_useVolumetricFog ) },
 	{ "FogDensity",						INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogDensity ) },
 	{ "FogVolumeHeight",			INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogHeightScale ) },
@@ -771,6 +772,7 @@ GlobalData::GlobalData()
 	m_terrainVSRoute = FALSE;	// VF-1b: road-style FF/TSS terrain (VS route is INI opt-in)
 	m_terrainMRTDepth = FALSE;	// VF-1c: quarantined OFF. The MRT twins ride the vs_3_0 terrain route, and that route is quarantined by fan-case-2.0 (2026-09-14 night A/B: TerrainVSRoute=Yes alone reproduces black terrain + fan on a build behaviorally identical to 57540f3f; =No is clean). Re-enable only after the VS route is exonerated.
 	m_useSampleableZBuffer = FALSE;	// VF-1c(new): main z stays the auto DS until INI-enabled (whole-frame depth route change - A/B before trusting)
+	m_sampleableZFormat = 0;	// VF-1c probe: 0=mirror current DS, 1=D24X8 precedent format, 2=D24S8
 	m_useVolumetricFog = FALSE;	// VF-2: off until INI-enabled (needs UseSampleableZBuffer=Yes)
 	m_volFogDensity = 0.006f;	// VF-2: extinction/world-unit at z=0
 	m_volFogHeightScale = 12.5f;	// VF-2: e-folding height (doubao 1/0.08)
