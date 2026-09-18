@@ -1360,6 +1360,11 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					Customized_Render(rinfo); Flush(rinfo);
 						QueryPerformanceCounter(&fE);
 						if (s_pipeDiag) DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
+						// VF-2: raymarch height fog, depth-gated by the sampled
+						// main z texture (runs before AO composite / P3 Bloom
+						// per the vf2-fog reference digest). No-op unless
+						// UseVolumetricFog + UseSampleableZBuffer are INI-on.
+						g_theW3DDeferredRenderer->volumetricFogPass(invViewProj, camPos, sunDir, sunColor);
 						g_theW3DDeferredRenderer->aoCompositePass();
 						g_theW3DDeferredRenderer->iblCompositePass();
 						// P3: bloom LAST - it must see the final composited LDR frame

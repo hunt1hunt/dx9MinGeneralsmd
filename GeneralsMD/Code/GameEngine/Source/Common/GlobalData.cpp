@@ -99,6 +99,13 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "WaterProbeMode",			INI::parseInt,				NULL,			offsetof( GlobalData, m_waterProbeMode ) },
 	{ "TerrainVSRoute",			INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainVSRoute ) },
 	{ "TerrainMRTDepth",		INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainMRTDepth ) },
+	{ "UseSampleableZBuffer",		INI::parseBool,				NULL,			offsetof( GlobalData, m_useSampleableZBuffer ) },
+	{ "UseVolumetricFog",			INI::parseBool,				NULL,			offsetof( GlobalData, m_useVolumetricFog ) },
+	{ "FogDensity",						INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogDensity ) },
+	{ "FogVolumeHeight",			INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogHeightScale ) },
+	{ "FogGroundDensity",			INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogGroundDensity ) },
+	{ "SunScatterStrength",		INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogSunScatter ) },
+	{ "VolumetricFogDebug",		INI::parseInt,				NULL,			offsetof( GlobalData, m_volFogDebug ) },
 	{ "TerrainProbeMode",		INI::parseInt,				NULL,			offsetof( GlobalData, m_terrainProbeMode ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
@@ -763,6 +770,13 @@ GlobalData::GlobalData()
 	m_waterProbeMode = 0;	// VF-1a: probe off - both water channels drawn normally
 	m_terrainVSRoute = FALSE;	// VF-1b: road-style FF/TSS terrain (VS route is INI opt-in)
 	m_terrainMRTDepth = FALSE;	// VF-1c: quarantined OFF. The MRT twins ride the vs_3_0 terrain route, and that route is quarantined by fan-case-2.0 (2026-09-14 night A/B: TerrainVSRoute=Yes alone reproduces black terrain + fan on a build behaviorally identical to 57540f3f; =No is clean). Re-enable only after the VS route is exonerated.
+	m_useSampleableZBuffer = FALSE;	// VF-1c(new): main z stays the auto DS until INI-enabled (whole-frame depth route change - A/B before trusting)
+	m_useVolumetricFog = FALSE;	// VF-2: off until INI-enabled (needs UseSampleableZBuffer=Yes)
+	m_volFogDensity = 0.006f;	// VF-2: extinction/world-unit at z=0
+	m_volFogHeightScale = 12.5f;	// VF-2: e-folding height (doubao 1/0.08)
+	m_volFogGroundDensity = 1.0f;	// VF-2: ground multiplier
+	m_volFogSunScatter = 0.5f;	// VF-2: in-scattering gain
+	m_volFogDebug = 0;	// VF-2: 0=off 1=raw z viz 2=fog factor viz
 	m_terrainProbeMode = 0;	// VF-1a: probe off - all terrain passes drawn normally
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;
