@@ -1857,11 +1857,18 @@ AGAIN:
 			}
 		}
 
+		// 2026-09-18: hoist the render gate up here. The RT-texture updates below run
+		// *before* the main render block but are only consumed by it; on frames where the
+		// scene is not rendered (m_TiVOFastMode ON -- see the gate at the bottom of this
+		// loop) that work was thrown away. Measured as t_draw_rttex, 77ms/frame.
+		Bool willRenderScene = ( (TheGameLogic->getFrame() % 30 == 1) || ( ! (!TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode) ) );
+
 		// update all views of the world - recomputes data which will affect drawing
 		if (DX8Wrapper::_Get_D3D_Device8() && (DX8Wrapper::_Get_D3D_Device8()->TestCooperativeLevel()) == D3D_OK)
 		{	//Checking if we have the device before updating views because the heightmap crashes otherwise while
 			//trying to refresh the visible terrain geometry.
 //			if(TheGlobalData->m_loadScreenRender != TRUE)
+				FP_BEGIN(DRAW_VIEWS);	// SagePerfDiag T11: updateViews + particle update
 				updateViews();
      		TheParticleSystemManager->update();//LORENZEN AND WILCZYNSKI MOVED THIS FROM ITS NATIVE POSITION, ABOVE
                                            //FOR THE PURPOSE OF LETTING THE PARTICLE SYSTEM LOOK UP THE RENDER OBJECT"S
@@ -1871,17 +1878,35 @@ AGAIN:
                                            //MOVE WITH THE CLIENT TRANSFORMS, NOW.
                                            //REVOLUTIONARY!
                                            //-LORENZEN
+				FP_END(DRAW_VIEWS);
 
+				FP_BEGIN(DRAW_RTTEX);	// SagePerfDiag T11: water + projected-shadow RT updates
 
+			// 2026-09-18: both of these render *into* offscreen textures that only the main
+			// render block consumes, so when that block is skipped the work is discarded.
+			// Gate on the same condition. This does NOT change what is drawn on any frame
+			// that does render -- normal mode renders every frame, so this is a no-op there
+			// and only removes waste under m_TiVOFastMode.
+			if (willRenderScene)
+			{
+
+			FP_BEGIN(DRAW_RTTEX_WATER);	// SagePerfDiag T12: split water vs shadow
 			//原版是TheGlobalData->m_waterType == 2时才执行updateRenderTargetTextures
 			//这里改为任何水类型都执行（内部会按水类型自行判断是否跳过）
 			if (TheWaterRenderObj)
 				TheWaterRenderObj->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
+			FP_END(DRAW_RTTEX_WATER);
 
+			FP_BEGIN(DRAW_RTTEX_SHADOW);
 			//Can't render into textures while rendering to screen so these textures need to be updated
 			//before we enter main rendering loop.
 			if (TheW3DProjectedShadowManager)
 				TheW3DProjectedShadowManager->updateRenderTargetTextures();
+			FP_END(DRAW_RTTEX_SHADOW);
+
+			}
+
+				FP_END(DRAW_RTTEX);
 		}
 
 		Debug_Statistics::End_Statistics();	//record number of polygons rendered in RenderTargetTextures.
@@ -1891,7 +1916,9 @@ AGAIN:
 		Int numRenderTargetVertices=Debug_Statistics::Get_DX8_Vertices();
 
 		// start render block
-    if ( (TheGameLogic->getFrame() % 30 == 1) || ( ! (!TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode) ) )
+    // (same gate as willRenderScene, evaluated once above so the RT-texture updates and
+    //  this block can never disagree about whether the scene is being rendered)
+    if ( willRenderScene )
 		{
 			//USE_PERF_TIMER(BigAssRenderLoop)
 			static Bool couldRender = true;
@@ -1917,11 +1944,14 @@ AGAIN:
 				FP_END(RENDER);
 
 				FP_BEGIN(POSTFX);	// SagePerfDiag: UI/overlay composition
+				FP_BEGIN(POSTFX_UI);	// SagePerfDiag T13: the HUD
 				// draw the user interface
 				TheInGameUI->DRAW();
+				FP_END(POSTFX_UI);
 
 				// end of video example code
 
+				FP_BEGIN(POSTFX_MISC);	// SagePerfDiag T13: mouse/video/copyright/letterbox/cinematic
 				// draw the mouse
 				if( TheMouse )
 					TheMouse->DRAW();
@@ -1969,7 +1999,9 @@ AGAIN:
 
 					m_cinematicTextFrames--;
 				}
+				FP_END(POSTFX_MISC);
 
+				FP_BEGIN(POSTFX_DEBUG);	// SagePerfDiag T13: debug display + FPS stats + framerate bar
 				if ( m_debugDisplayCallback )
 				{
 					// draw the current debug display
@@ -1990,6 +2022,7 @@ AGAIN:
 					drawFramerateBar();
 				}
 #endif
+				FP_END(POSTFX_DEBUG);
 
 #ifdef PERF_TIMERS
 				TheGraphDraw->render();

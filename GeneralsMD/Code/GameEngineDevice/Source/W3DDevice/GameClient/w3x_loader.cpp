@@ -53,6 +53,7 @@
 #include "always.h"
 #include "w3x_loader.h"
 #include <map>
+#include <string>	// std::string for the ResolveTextureDDS memo table
 #include <io.h>		// _findfirst/_findnext for recursive Art/W3X sub-dir search
 
 // pugixml configuration: disable STL streams (not available with VC6/STLport)
@@ -1055,11 +1056,50 @@ void W3XLoader::ParseAnimationScalar(pugi::xml_node &node, W3XAnimation &anim)
 
 //=============================================================================
 // W3XLoader::ResolveTextureDDS
+// Memoized front-end for ResolveTextureDDSUncached.
+//
+// 2026-09-18: this is the single hottest path in the W3X draw code. Both call
+// sites wrap it in their own 32-entry cache, but that cache STOPS GROWING once
+// full (`if (size < 32) size++`) and is never reset or evicted -- so every
+// texture beyond the first 32 misses on EVERY call. Measured over one benchmark
+// run: 1,198,848 successful calls covering just 74 distinct texture names, i.e.
+// ~1.2M needless file reads + full pugixml parses (~98% of the entire log).
+//
+// The name -> path mapping is fixed for the process lifetime (the file system is
+// built once at startup), so memoize it here: both callers are fixed at once and
+// the change stays inside this file -- the sibling caller lives in
+// W3XRenderObj.cpp, which is an active hot zone and off-limits.
+//
+// Only non-empty results are cached. Be precise about what that buys: it keeps an
+// EMPTY result (XML parse error, or no <Texture> node) from being latched in, so
+// those are retried next call. It does NOT protect the "all four XML reads failed"
+// fallback further down -- that returns a non-empty "<texName>.dds" and IS cached.
+// That is fine in practice because the file system is mounted before the first
+// render, so a lookup cannot precede it; but do not read this as a general
+// "transient misses are never cached" guarantee.
+//=============================================================================
+AsciiString W3XLoader::ResolveTextureDDS(const char *texName)
+{
+	if (!texName || !texName[0]) return AsciiString("");
+
+	static std::map<std::string, std::string> s_texMemo;
+	std::map<std::string, std::string>::const_iterator it = s_texMemo.find(std::string(texName));
+	if (it != s_texMemo.end())
+		return AsciiString(it->second.c_str());
+
+	AsciiString resolved = ResolveTextureDDSUncached(texName);
+	if (!resolved.isEmpty())
+		s_texMemo[std::string(texName)] = std::string(resolved.str());
+	return resolved;
+}
+
+//=============================================================================
+// W3XLoader::ResolveTextureDDSUncached
 // Resolve a texture name to a DDS file path via the texture XML declaration.
 // Texture XML files are in the same directory as the model, named <texName>.xml.
 // Format: <Texture id="texName" File="texName.dds" OutputFormat="DXT5"/>
 //=============================================================================
-AsciiString W3XLoader::ResolveTextureDDS(const char *texName)
+AsciiString W3XLoader::ResolveTextureDDSUncached(const char *texName)
 {
 	if (!texName || !texName[0]) return AsciiString("");
 

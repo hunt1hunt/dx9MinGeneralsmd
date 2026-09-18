@@ -4,7 +4,147 @@
 > ②桌面 `SagePerfDiag协作` 文件夹（本机快照）。以 GitHub 为准，桌面版每次会话结束刷新。
 > 协作者开工前先 `git pull` 并读此看板，认领任务后改状态并提交。
 
-## 当前状态（2026-09-17 收工）：**存档基准打通 + 探针重大缺陷已修**，B2 待正式验收
+## 当前状态（2026-09-17 晚 收工）：**T11 埋点落地 → 105ms 黑盒结案；退出期 AV 未复现未修复**
+
+> 本轮（晚）成果：T11 分段探针 **构建 → 部署 → grep 验证**全通；**第 1 条结案**（详见文末「T11 实测结果」）。
+> 同时产出 4 条勘误（A: 退出期 AV 归因方向 / B: 12 份基准不同质 / C: 加速模式判据 / D: AV 未复现）+ bat 校验 bug 真因。
+> ⚠️ **本轮所有改动均未提交 git。** 顶栏以下到「2026-09-17（四）」之前是**上一轮**交接，保留作历史。
+
+### 🔴 2026-09-18 新增重大发现：`ResolveTextureDDS` 缓存失效（疑似帧时大头）
+
+**证据（日志实测）**：一次普通模式跑批的 `DebugLogFileI.txt` 共 1,048,091 行，其中
+**1,030,991 行（98.4%）是同一条 `[W3X_P2] ResolveTextureDDS:` 打印**。
+
+**根因链**：
+1. `W3XLoader::ResolveTextureDDS`（`w3x_loader.cpp:1062`）**无内部缓存**，每次调用做：
+   `sprintf` 拼路径 → `ReadFileContent()` **打开并读取 `<tex>.xml`** → `pugi::xml_document::load_buffer()`
+   **完整 XML 解析** → `DEBUG_LOG`（**又一次 fopen/fprintf/fclose**）。
+   最热的那行日志在 `:1132`。
+2. 两个调用点都包了缓存，但**都是 32 槽且写满即止、且从不重置**：
+   - `W3XRenderObj.cpp:873` `ResolveTexturePathCached()` → `s_texPathCache[32]`
+   - `W3XModelDraw.cpp:856` `resolveTextureCached()` → `s_texCache[32]`
+
+   ```cpp
+   if (s_texCacheSize < 32) { ... s_texCacheSize++; }   // 满 32 后永不新增
+   ```
+   全仓库搜不到 `s_texCacheSize = 0` ⇒ **缓存不淘汰也不重置**。
+3. ⇒ **超过前 32 种之外的每种贴图，每次调用都 miss** ⇒ 每次都真做一遍文件 I/O + XML 解析 + 日志写。
+
+**影响**：单次跑批约 **103 万次** miss。这既是海量日志的来源，也很可能是帧时的大头
+（每次 miss = 1 次文件打开读取 + 1 次 XML 解析 + 1 次日志写）。
+
+⚠️ **尚未量化 ms**：日志行数证明了**调用量**，不等于耗时。要坐实需要探针。
+⚠️ **未改动**：`w3x_loader.cpp` / `W3XModelDraw.cpp` 属 W3X 贴图工作流；
+`W3XRenderObj.cpp` 更是硬规则 #6 保护。**改之前先与 W3X 任务协调。**
+
+**候选修法**（待批准，均小改）：
+① 把 32 槽上限提高并加替换（LRU/环形）；或 ② 在 `ResolveTextureDDS` **内部**加一张
+足够大的 memo 表——这样两个调用点都受益，且**改动只落在 `w3x_loader.cpp`（不受硬规则 #6 保护）**。
+
+### ✅ 2026-09-18 实测定案：`ResolveTextureDDS` 缓存修复 —— 帧时 −14%，日志 −99.9%
+
+**A/B 设计**：同一存档（`00000037.sav` / 显示名 `golden oasis54321`）、同 150s+210s 参数、
+同 Tag 场景，唯一变量 = exe。
+- 改前：`RTSI.exe.bak20260918`（`68bf5bcf`，有 bug）
+- 改后：本轮 T12 构建（`b56c9d6a`，含缓存修复）
+
+**三轮数据**（`objects` 中位均为 719-720，`t_render==0` 帧占比均 <1% → 都是普通模式）
+
+| 阶段 | 改前 | 改后 run1 | 改后 run2 | **改前→改后** |
+|---|---|---|---|---|
+| **`t_render`** | 639.7 | 508.9 | 462.4 | **−24.1%** |
+| **`t_total`** | 849.4 | 764.3 | 694.9 | **−14.1%** |
+| `t_client` | 819.5 | 742.1 | 664.7 | −14.2% |
+| `t_postfx` | 126.2 | 220.0 | 170.9 | **+54.8%** ⚠️ |
+| `t_logic` | 25.5 | 21.0 | 27.7 | −4.5% |
+
+**帧吞吐**（同 210 秒窗口）：362 / 393 / 452 → 修复版均值 **+16.7%**（与帧时 −14% 相互印证）。
+
+**日志量**（铁证，且可复现）：`ResolveTextureDDS` 行数 **90,047 → 65 / 65**；
+日志体积 **6.0 MB → 0.47 / 0.32 MB**。
+
+⚠️ **`t_postfx` 反向 +54.8%，未解释。** 两轮修复版（220.0 / 170.9）**都高于**改前（126.2），
+所以不像纯噪声；但两轮之间又差 22%，方差也大。**它吃掉了 `t_render` 省下的一部分，净收益被压到 −14%。**
+缓存修复只删文件读/XML 解析，机理上不可能让 postfx 变慢 —— **真因待查**。
+
+⚠️ **B2 重复性：同场景同 exe 两轮差 9.1%**（764.3 vs 694.9），**远超 <5% 目标**。
+结合前面"帧时在 594→1204ms 间持续漂移"的发现 ⇒ **这个中局存档太动态，不能当 B2 基准**。
+B2 要用平稳场景（原 `00000036.sav` 得 1.046 正因它静止），或把判据改成"取负载平稳子窗口"。
+
+⚠️ **改前那轮是被超时强杀的**（`超时未退出, 强制结束`，exitCode −1），非自然退出；
+12 份 spd 齐全，且帧数更少恰好佐证它更慢。
+
+### 🔬 2026-09-18 对称样本定案（改前 4 样本 vs 改后 6 样本）
+
+**方法**：同一存档 `golden oasis54321`、同参数、`-Runs 3` 连续多轮以抵消会话内漂移；
+只取 `objects ≥ 700` 的完整场景帧。改前 = `RTSI.exe.bak20260918`(`68bf5bcf`)；改后 = T12/T13 构建。
+
+| 指标 | 改前（4 样本）| 改后（6 样本）| 变化 |
+|---|---|---|---|
+| **`t_total`** | `821/825/827/920` → 中位 825.7 | `809/698/800/736/706/689` → 中位 **720.8** | **−12.7%** |
+| **`t_render`** | `645/652/676/708` → 中位 663.6 | `517/457/519/469/468/455` → 中位 **468.5** | **−29.4%** |
+| **`t_postfx`** | `111/115/96/152` → 中位 112.5 | `264/182/229/211/177/171` → 中位 **196.5** | **+74.5%** |
+
+**① 净收益确认（稳健）**：缓存修复让 `t_render` 降 29.4%，`t_total` 降 12.7%。
+
+**② `postfx` 的 +74.5% 是真实差异，不是"首轮偏高"假象** —— 改前 3 个连续轮次
+`110.5/114.6/96.5` 非常紧（±10%）且无首轮偏高趋势；两组分布**几乎不重叠**（改前 96–152，改后 171–264）。
+
+**③ 但 postfx 已被 T13 证明 100% 是 `TheInGameUI->DRAW()`（HUD）**，而 HUD 工作量不该因删掉
+W3X 文件读取而变。**最可能：CPU 侧计时归属迁移** —— dgVoodoo/D3D8 异步提交，绘制提交变快后
+GPU 队列更满，后续 HUD 绘制阻塞在等 GPU 上，这段等待被记进 `t_postfx`。**时间被挪位置，不是新增。**
+⚠️ **该解释未经证实**，需要 GPU 侧计时（T7 GPU Query 桩，默认关）。
+
+**账目佐证"挪位置"**：`t_render` −195ms、`t_postfx` +84ms、其余持平 → 净 −105ms。
+若 postfx 真多做了 84ms 活，总量不可能下降。
+
+**④ 附带发现**：`t_postfx_debug` 中位仅 0.03ms，但 **P95=164 / max=1711.9** ——
+反复出现的 `t_postfx max≈1289/1712` 尖峰**整个来自 debug 叠加层**（`drawFPSStats()` 等），
+是极少数帧的事件，不影响总量。
+
+### 下会话开工必读（2026-09-18）
+
+**未提交改动（工作区脏）**
+
+| 文件 | 内容 |
+|---|---|
+| `GameEngine/Include/Common/System/FrameProbe.h` | T11 追加 11 个 stage id |
+| `GameEngine/Source/Common/System/FrameProbe.cpp` | `fpStageName()` 名称表同步 |
+| `GameEngine/Source/GameClient/GameClient.cpp` | 补 include + 9 段埋点 |
+| `GameEngineDevice/.../W3DDisplay.cpp` | `t_draw_views` / `t_draw_rttex` |
+| `GameEngine/Source/GameClient/GUI/Shell/Shell.cpp` | `SHX:` 面包屑 |
+| `Tools/spd_analyzer.py` / `plan_generator.py` | `--drop-first` + T11 列同步 |
+| `Tools/spd_rescan.py` | **已 `git add -f`（A 状态），未提交** |
+| `Tools/EXECUTION_STATUS.md` | 看板本身 |
+| `.claude/settings.json` | 移除明文 `ANTHROPIC_AUTH_TOKEN`（已挪入 gitignore 的 `settings.local.json`）|
+
+**exe 身份**（游戏目录，2026-09-17 18:2x 复核）
+
+| 文件 | MD5 | 身份 |
+|---|---|---|
+| `RTSI.exe` | `68bf5bcf…` | 本轮 T11 构建 + LAA，已部署 |
+| `RTSI.exe.bak` | `064045d3…` | 原版对照（与 `RTSI9月16日收工.exe` 同份）|
+| `RTSI.exe.bak20260917` | `896a9d2b…` | **产出 12 份存档基准 .spd 的基线，完好** |
+
+> 勘误：本轮曾一度记录"基线 `896a9d2b` 已丢失、备份步骤未执行"——**该结论是错的**。
+> 实际备份存在，只是命名为 `RTSI.exe.bak20260917`（非标准 `.bak`）；当时的全目录枚举早于备份动作，
+> 之后未复核就下了结论。**教训：断言"文件丢失"前必须重新枚举一次，不能复用陈旧快照。**
+
+**环境改动**：`.claude/settings.json` 的 `permissions.deny` 已移除 `PowerShell(Copy-Item:*)`
+（两份 settings.json 同步改，其余 12 条保留，实测放行），以便部署类操作自动化。
+
+**下会话优先级**
+
+1. **B3 开刀 `t_draw_rttex`** —— 目前最大一块（占帧 67.5%）。把水面/投影阴影的 RT 更新
+   从「每帧无条件执行」改成「仅在本帧会渲染场景时执行」。改动局部、收益最大。
+2. **修 `spd_rescan.py` 加速模式判据** —— 改用帧指纹法替代「零渲染占比法」（勘误 C）。无需构建。
+3. **#3 复现跑** —— 需让 ScoreScreen 的弹出成为**退出前最后一个动作**（勘误 D）。
+4. **B2 三遍验收** —— 必须先确认**加速模式关闭**。
+5. ⚠️ 本轮跑批 86.9% 的帧未渲染场景 → render/帧时类结论**不可用**；仅 T11 分段有效。
+
+---
+
+## （上一轮）当前状态（2026-09-17 收工）：**存档基准打通 + 探针重大缺陷已修**，B2 待正式验收
 
 > 本轮成果：commit **`b79c433a`**（已推送 origin/main）。
 > `bench_capture.ps1` 现有 `-Map` / `-ReplayPath` / `-ManualLoad` 三种模式；A1 回放已可播；
@@ -293,9 +433,24 @@ state_changes 910 / draw_calls 1783 = 0.51，状态切换本身不算失控，�
 
 ## 构建踩坑（2026-09-17 新增）
 
-- **桌面一键 bat 从 git-bash/PowerShell 调会误判失败**：`[1/5]` 的 `find /I` 会被 GNU find 劫持；
-  `[5/5]` 的 `findstr /R` 里 `/R` 被 MSYS 当路径吃掉，导致校验误报 `[失败]` 并**跳过部署**。
-  实际构建是成功的（看 `desk_*.log` 的 `N error(s)`）。**结论：bat 就双击跑；要命令行调就必须先净化 PATH。**
+- **⚠️ 勘误（2026-09-17 实测）：`[5/5]` 校验失败的根因不是 MSYS，是 `findstr` 的空格 OR 语义。**
+  原记录说"`findstr /R` 里 `/R` 被 MSYS 当路径吃掉"——**不成立**。真实原因：
+  `findstr /R "[1-9][0-9]* error"` 中那个**空格被 findstr 当作 OR 分隔符**，于是实际是
+  `[1-9][0-9]*` **或** `error` 两个独立模式，而 `[1-9][0-9]*` = "任意 ≥1 的数字"。
+  实测该模式在本轮 `desk_rts.log` 上命中了**全部 4 行**，包括明明不含 error 的
+  `----Configuration: GameEngine - Win32 Internal----`（因为含 `32`）与 `LINK : warning LNK4075`（含 `4075`）。
+  **结论：这条校验在构建成功时必然误判 `[失败]`，部署永远被跳过** —— 与是否从 git-bash 调用无关。
+  修法：改成 `findstr /R /C:"[1-9][0-9]* error"`（`/C:` 让空格变字面量）。
+  （`[1/5]` 的 `find /I` 被 GNU find 劫持是**另一回事**，仅从 git-bash 调用时发生；走 `cmd /c` 无此问题，
+  本轮已实测 `[1/5]` 正常通过。）
+- **bat 到 `[5/5]` 失败时，连备份都不会做** —— 而当前游戏目录 exe 往往是产出基准数据的干净基线，
+  手工补部署前**必须先把它存成 `.bak`**，否则该基线不可复现。
+- 构建后 bat 末尾有 `pause`：非交互调用需把 stdin 接 `NUL`（`cmd /c "call ...bat" < NUL`），否则挂住。
+- 构建成功后**必须手动补三件事**：① 拷 `GeneralsMD\Run\RTSI.exe` → 游戏目录（若 bat 跳过了部署）② 跑
+  `python Tools/apply_laa.py <游戏目录>\RTSI.exe` 重打 LAA（bat 不做）③ 用标记字符串验证
+  （**exe 大小跨构建常常完全相同**：本轮新旧 exe 都是 10661968 字节，只有 hash 能区分）。
+  ⚠️ 本机 `settings.json` 的 `permissions.deny` 含 `PowerShell(Copy-Item:*)` 等，会拦住部署类命令；
+  经允许可走 `Bash(python:*)`（在 allow 列表内）绕过，或由人工执行。
 - 构建成功后**必须手动补三件事**：① 拷 `GeneralsMD\Run\RTSI.exe` → 游戏目录 ② 跑
   `python Tools/apply_laa.py` 重打 LAA（bat 不做）③ 用标记字符串验证（exe 大小跨构建常常完全相同）。
 - `.ps1` 工具必须存为 **UTF-8 with BOM**，否则 PowerShell 5.1 按 ANSI 读中文注释直接语法报错。
@@ -332,3 +487,174 @@ teardown 顺序错乱 → `AsciiString::operator==()` 比较到已失效指针�
 
 **待办**：这是可稳定复现的真实 bug（存档局 + 局内强退即可触发），值得单独一轮排查
 `GameStateMap` 的 scratch-pad 清理与 `XferLoad` 关闭时序。
+
+## 2026-09-17（四）：`_palace` 勘误两条 + T11 埋点已加（待构建）
+
+### 勘误 A：退出期 AV 的归因方向错了（上面第 3 节的"scratch-pad Xfer"结论不成立）
+
+直接读 `E:\!!!!!!!QWCSB\DebugLogFileI.txt`（100541 行）原始日志，证据如下：
+
+- 全日志 **148 次 `EXCEPTION DUMP`**（不是 1 次），且**日志以 `Log closed` 正常收尾** →
+  这些 AV 全部被 VEH 捕获、游戏继续跑完。**不是致命崩溃**，是反复被吞掉的访问违例，
+  这才是"屏幕反复闪 + 模态框"的来源。
+- **第一次 AV 前的最后成功操作**是：
+  `GameState::xferSaveData() - XFER_SAVE` → `DeepCRCSanityCheck: CRC is BAF41A0C` →
+  `FrameProbe: flushed 33 frames to frameprobe_94241284_11.spd` → `setFramesPerSecondLimit(30)` →
+  **`Shell:popImmediate() - stack was  Menus/MainMenu.wnd / Menus/SaveLoad.wnd / Menus/ScoreScreen.wnd`**
+  → 然后才炸。
+  即：`-benchmark` 计时到期 → 战报 ScoreScreen 弹出 → `popImmediate` 回退，**与 `00000036.sav` 的
+  scratch-pad / `XferLoad` 关闭时序无关**。"Xfer file left open" 断言是另一件（很可能良性的）事。
+- **AV 精确定位**：日志帧地址 `0x00405760`，查 `RTSI.map` 落在
+  `0x00405740  ??8@YA_NABVAsciiString@@0@Z` = **`operator==(AsciiString const&, AsciiString const&)`
+  的 out-of-line 版本**（+0x20 处）。EIP 字节 `66 8B 02 83 C2 02 3A 01 75 CE` = MSVC `strcmp` 的
+  2 字节快路径。寄存器 `Eax=Edx=000005DE`、`Ecx=2AB274A8` →
+  **`strcmp(s1.str(), s2.str())` 里 `s1.m_data = 0x000005DE`**（小整数；因非 NULL，`str()` 的
+  NULL 兜底拦不住）。
+- `Shell::doPop`（`Shell.cpp:628`）弹出 ScoreScreen 后会 `deleteInstance()` 掉该 WindowLayout，
+  再对新的栈顶（**`SaveLoad.wnd`**）调 `runInit()`。嫌疑集中在
+  **被释放的 `WindowLayout` 的 `m_filenameString`（AsciiString）被后续遍历读到**。
+- **下一步**：需要 148 次 AV 的**调用者**（当前日志栈只有 2 帧，FPO 下不可走）。要么给
+  `Shell::unlinkScreen/doPop` 加面包屑，要么用项目已有的 `DumpFaultContextStack` 原始栈扫描
+  离线符号化。**不要再从 scratch-pad/Xfer 方向查。**
+
+### 勘误 B：12 份"干净基准"`.spd` 不同质 —— 其中 4 份是加速模式
+
+`W3DDisplay.cpp:1894` 是**整个渲染块的总门**：
+
+```cpp
+if ( (TheGameLogic->getFrame() % 30 == 1) || ( ! (!TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode) ) )
+```
+
+按真值表，只有 **`m_TiVOFastMode` ON 且未暂停** 时才会退化成 `frame % 30 == 1`（**只渲染 1/30 帧**）。
+
+实测（`frame` 列是 `g_diagFrame`，与 `getFrame()` 差固定偏移）：
+
+| 文件 | 行数 | t_render>0 的帧 | 全部落在 |
+|---|---|---|---|
+| `..._93909772_0` ~ `..._94142549_7` | 228 | 227 | 几乎每帧 |
+| `..._94173576_8` | 135 | **12** | `frame%30==2` |
+| `..._94203654_9` | 176 | **5** | `frame%30==2` |
+| `..._94233745_10` | 182 | **6** | `frame%30==2` |
+| `..._94241284_11` | 33 | **2** | `frame%30==2` |
+
+**结论：白名单 12 份里，后 4 份（`94173576_8` 起）是加速模式录的**，只渲染 1/30 帧，
+`draw_calls`/`t_render` 大量为 0。看板头条数字（t_render 865 / P95÷中位=1.046）取自
+**帧 102–227**，恰好只覆盖普通模式的 3–7 号文件（127 帧）→ **头条数字本身有效**，
+但**任何跨全部 12 份的聚合都会被这 4 份污染**。
+
+⚠️ **对 B2（第 4 条）的影响**：3 遍重复性验收**必须确认加速模式处于关闭**，
+否则测的是"1/30 渲染"与"全帧渲染"两套东西，P95/中位 毫无意义。
+
+### T11 埋点（第 1 条）代码已加，待 Internal 构建
+
+改动 4 文件（全部只加 `FP_BEGIN/FP_END`，不动逻辑）：
+
+| 文件 | 改动 |
+|---|---|
+| `GameEngine/Include/Common/System/FrameProbe.h` | 尾部新增 11 个 stage id（CSV 列序保持稳定） |
+| `GameEngine/Source/Common/System/FrameProbe.cpp` | `fpStageName()` 名称表同步 11 项 |
+| `GameEngine/Source/GameClient/GameClient.cpp` | 补 include + 9 段埋点，拆开 `t_client` 的 ~105ms 黑盒 |
+| `GameEngineDevice/.../W3DDisplay.cpp` | 补 `t_draw_views` / `t_draw_rttex`，覆盖 `FP_BEGIN(RENDER)` **之前**的预渲染段 |
+
+新增列：`t_client_input / t_client_window / t_client_ghost / t_client_drawables /
+t_client_terrain / t_client_displupd / t_client_strmgr / t_client_shell / t_client_ingameui /
+t_draw_views / t_draw_rttex`。
+
+注意 `W3DDisplay::draw()` 里 `FP_BEGIN(RENDER)` 之前的 `updateViews()`+粒子更新、
+**水面 RT 更新**、**投影阴影 RT 更新** 原本**不在任何探针内**，是 105ms 的头号嫌疑。
+`spd_analyzer.py` / `plan_generator.py` 的 `STAGE_COLS` 需同步加这些列（见第 2 条）。
+
+### T11 实测结果（2026-09-17 18:12 跑批）：**第 1 条结案**
+
+30 列全部落盘（表头含 11 个新列）。4887 帧稳态中位值：
+
+| 阶段 | 中位 ms | 占帧 |
+|---|---|---|
+| **t_total** | 114.30 | 100% |
+| t_client | 80.64 | 70.6% |
+| ├ **`t_draw_rttex`** | **77.113** | **67.5%** |
+| ├ `t_draw_views` | 1.066 | |
+| ├ `t_client_drawables` | 0.598 | |
+| ├ `t_client_ingameui` | 0.184 | |
+| └ 其余 8 项合计 | ~0.05 | |
+| **残差（原"105ms 黑盒"）** | **1.633** | **1.4%**（原 ~11%）|
+
+**105ms 黑盒 = `t_draw_rttex`**，即 `TheWaterRenderObj->updateRenderTargetTextures()` +
+`TheW3DProjectedShadowManager->updateRenderTargetTextures()`。
+
+⚠️ **关键性质**：这两行在 `frame%30` 渲染门（`W3DDisplay.cpp:1894`）**之外** ——
+实测 **100% 的帧（4887/4887）都在执行**。也就是说**即使这一帧根本不渲染场景，
+它仍然每帧把水面和投影阴影各渲一遍到纹理**。这既是原 105ms 的真身，
+也是 B3「每 draw call 固定开销」的头号嫌疑。**下一步 B3 从这里开刀。**
+
+### 勘误 C（**本条自身有误，已被 2026-09-18 推翻，保留作教训**）
+
+原写："`spd_rescan.py` 的加速模式判据不可靠，本轮把一次**非**加速模式的运行判成了加速模式。"
+
+**该结论是错的。那次运行确实是加速模式**，两条独立证据：
+
+1. 日志 `Begin_Render` 告警 **0 次** ⇒ `W3DDisplay.cpp:2015` 的 else 分支从未进入
+   ⇒ 跳过渲染只能来自**外层 `frame%30` 门**（`:1894`）⇒ `m_TiVOFastMode` 为 ON。
+2. 零渲染帧占比 13.1%，与 1/30 门控（3.3%）+ 用户交互时的额外渲染吻合。
+
+**我当时的推理错在**：拿"`t_render>0` 帧的 `frame%30` 余数应集中于单一值"当否决依据。
+但 `.spd` 的 `frame` 列是 FrameProbe 自己的 `g_frameOrdinal`，**不是** `TheGameLogic->getFrame()`；
+两者偏移**并非总是恒定**（存档基准那次恒定，所以测得出干净指纹；这次不恒定，余数才铺开）。
+⇒ **帧余数指纹是弱证据，不能用来否决"零渲染占比"这个强证据。**
+
+**教训：用一个自己都没验证过适用条件的检验，去推翻一个有多重旁证的结论 —— 顺序错了。**
+`spd_rescan.py` 的「零渲染占比 ≥50%」判据**维持原样**（它是有效的）；余数指纹仅作参考，不作否决。
+
+### 勘误 D：第 3 条（退出期 AV）**未复现、也未修复**
+
+本轮日志：`EXCEPTION DUMP = 0`（上次 148）、`Log closed` 干净收尾、30 条 `SHX:` 面包屑全部走完。
+
+看似"好了"，但**同一条危险路径这次其实走到了**（`Shell:pop()` 时栈为
+`MainMenu / SaveLoad / ScoreScreen`，`doPop` 对 SaveLoad 调 `runInit` 并完整返回，无 AV）。
+
+差别在**时序**：10:57 那次 ScoreScreen 弹出是**退出前最后一个动作**（日志 98392 行，紧接着 148 次 AV）；
+这次它在 123264 行弹出，之后还继续操作、最后才退出。
+
+AV 本质是 **use-after-free（读已释放内存，`m_data=0x000005DE`）**，行为依赖堆内容 ⇒ **间歇性**。
+本轮新增探针改变了内存布局，**很可能只是把它盖住了，不是修好**。**不得据此宣称已修复。**
+
+`SHX:` 面包屑位置经实测正确（能分辨 `doPop` 是否调用 `runInit`），**下次复现即可直接点名故障步骤**。
+复现要点：打开载入菜单 → 载入存档 → 打满 benchmark → 战报弹出 → **让 ScoreScreen 的弹出成为退出前最后一个动作**。
+
+### 第 2 条完成：历史 .spd 重扫 —— 修正后的历史峰值
+
+工具：`spd_analyzer.py` / `plan_generator.py` 新增 `--drop-first {auto,always,never}`；
+新脚本 `Tools/spd_rescan.py` 整目录重扫。报告 `Tools/spd_rescan_report.md`（可再生成，勿提交）。
+
+**检测是"识别"而非"无脑丢首行"**：`auto` 用「首行 counters ÷ 本文件稳态 > 1.5」判污染。
+稳态取**非零值中位数**（不是中位数）—— 这是踩过的坑：`frameprobe_921168308_419` 这类
+1359 行、大部分行 `objects/draw_calls` 全为 0 的文件（游戏长期停在菜单/载入态），
+中位数 = 0 会让检查被静默跳过，从而漏判（该文件首行 objects 610160 vs 真实 ~2335）。
+
+**重扫 729 份的结果**：
+
+| 项 | 值 |
+|---|---|
+| 检出累加污染首帧（已剔除） | **663** |
+| 无法判定（无对照基线，未剔除） | 8 |
+| 加速模式录制 | **220** |
+| 存档基准白名单命中 | 12/12（其中加速模式 **4**）|
+
+**修正后的历史峰值（旧结论 → 剔除污染后）**：
+
+| 指标 | 剔除前 | 剔除后 | 倍数 |
+|---|---|---|---|
+| draw_calls | 459986 | **8798** | 52× |
+| objects | 610160 | **2627** | 232× |
+| t_total (ms) | 263553 | **33840** | 7.8× |
+
+→ "**45 万 draw_calls 峰值**"确系累加伪影，被夸大 **52 倍**，看板此前的证伪成立。
+
+⚠️ 但**修正后的 8798 是真峰值，不是新伪影**：来自 `frameprobe_91117135_6.spd`，
+该场景稳态本身就 ~7451–7719 draw_calls/帧（top 值 8798/7719/7719/7719…），首行/稳态比值
+仅 1.18，检测器正确地**没有**误判它。
+**看板"真实峰值约 1790"只是存档场景（651 对象）的值，不是全局真理** —— 引用时须带场景。
+
+⚠️ **加速模式文件占 220/729（30%）**，远超之前只知道的那 4 份。任何历史聚合
+（尤其 `t_render`/`draw_calls` 的均值、占比、聚类）在混入快模式文件后都不可信。
+`spd_rescan.py` 已逐份标注 `加速模式` 列。

@@ -101,7 +101,16 @@ static const char *fpStageName(unsigned int stage)
 		"t_logic", "t_net_wait", "t_render", "t_present", "t_postfx",
 		"t_fps_spin",
 		"t_logic_script", "t_logic_terrain", "t_logic_create",
-		"t_logic_ai", "t_logic_pathfind", "t_logic_destroy"
+		"t_logic_ai", "t_logic_pathfind", "t_logic_destroy",
+		// T11: must stay in lockstep with the FrameProbeStage enum in FrameProbe.h
+		"t_client_input", "t_client_window", "t_client_ghost",
+		"t_client_drawables", "t_client_terrain", "t_client_displupd",
+		"t_client_strmgr", "t_client_shell", "t_client_ingameui",
+		"t_draw_views", "t_draw_rttex",
+		// T12: must stay in lockstep with the FrameProbeStage enum in FrameProbe.h
+		"t_draw_rttex_water", "t_draw_rttex_shadow",
+		// T13: must stay in lockstep with the FrameProbeStage enum in FrameProbe.h
+		"t_postfx_ui", "t_postfx_debug", "t_postfx_misc"
 	};
 	if (stage >= FP_STAGE_COUNT)
 		return "?";
