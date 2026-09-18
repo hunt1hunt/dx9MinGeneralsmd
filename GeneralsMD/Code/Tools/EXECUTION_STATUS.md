@@ -4,7 +4,9 @@
 > ②桌面 `SagePerfDiag协作` 文件夹（本机快照）。以 GitHub 为准，桌面版每次会话结束刷新。
 > 协作者开工前先 `git pull` 并读此看板，认领任务后改状态并提交。
 
-## 当前状态（2026-09-17 晚 收工）：**T11 埋点落地 → 105ms 黑盒结案；退出期 AV 未复现未修复**
+## 当前状态（2026-09-18 收工）：**W3X 贴图路径缓存修复落地（t_total −12.7%）+ T11/T12/T13 探针；B2 待换平稳场景**
+
+> 本轮已提交推送：commit **`137426f0`**。下发"开工必读"含 exe 身份表、5 条优先级、方法论沉淀。
 
 > 本轮（晚）成果：T11 分段探针 **构建 → 部署 → grep 验证**全通；**第 1 条结案**（详见文末「T11 实测结果」）。
 > 同时产出 4 条勘误（A: 退出期 AV 归因方向 / B: 12 份基准不同质 / C: 加速模式判据 / D: AV 未复现）+ bat 校验 bug 真因。
@@ -102,45 +104,54 @@ GPU 队列更满，后续 HUD 绘制阻塞在等 GPU 上，这段等待被记进
 反复出现的 `t_postfx max≈1289/1712` 尖峰**整个来自 debug 叠加层**（`drawFPSStats()` 等），
 是极少数帧的事件，不影响总量。
 
-### 下会话开工必读（2026-09-18）
+### 下会话开工必读（2026-09-18 收工）
 
-**未提交改动（工作区脏）**
+**✅ 本轮成果已提交推送**：commit **`137426f0`**（`1745df3a..137426f0  main -> main`）。
+12 文件 **+988/−36**：缓存修复 + T11/T12/T13 探针 + SHX 面包屑 + 工具 + 看板 + settings。
+独立 code review 结果 **APPROVE**（0 CRITICAL / 0 HIGH / 0 MEDIUM，2 条 LOW 已按建议修正注释）。
 
-| 文件 | 内容 |
-|---|---|
-| `GameEngine/Include/Common/System/FrameProbe.h` | T11 追加 11 个 stage id |
-| `GameEngine/Source/Common/System/FrameProbe.cpp` | `fpStageName()` 名称表同步 |
-| `GameEngine/Source/GameClient/GameClient.cpp` | 补 include + 9 段埋点 |
-| `GameEngineDevice/.../W3DDisplay.cpp` | `t_draw_views` / `t_draw_rttex` |
-| `GameEngine/Source/GameClient/GUI/Shell/Shell.cpp` | `SHX:` 面包屑 |
-| `Tools/spd_analyzer.py` / `plan_generator.py` | `--drop-first` + T11 列同步 |
-| `Tools/spd_rescan.py` | **已 `git add -f`（A 状态），未提交** |
-| `Tools/EXECUTION_STATUS.md` | 看板本身 |
-| `.claude/settings.json` | 移除明文 `ANTHROPIC_AUTH_TOKEN`（已挪入 gitignore 的 `settings.local.json`）|
+**不在仓库内的环境侧改动**
+- 桌面 `③增量构建Internal.bat` 的 `findstr` 修复（已改好并**端到端验证**：本轮构建自动部署成功）
+- `.claude/settings.local.json`（含 `ANTHROPIC_AUTH_TOKEN`，已 gitignore）
+- `.claude/settings.json` 的 `permissions.deny` 移除了 `PowerShell(Copy-Item:*)`（其余 12 条保留）
 
-**exe 身份**（游戏目录，2026-09-17 18:2x 复核）
+**exe 身份**（游戏目录，2026-09-18 收工）
 
 | 文件 | MD5 | 身份 |
 |---|---|---|
-| `RTSI.exe` | `68bf5bcf…` | 本轮 T11 构建 + LAA，已部署 |
-| `RTSI.exe.bak` | `064045d3…` | 原版对照（与 `RTSI9月16日收工.exe` 同份）|
-| `RTSI.exe.bak20260917` | `896a9d2b…` | **产出 12 份存档基准 .spd 的基线，完好** |
+| `RTSI.exe` | `09593478…` | **T13 构建 + LAA**（含缓存修复），当前在用 |
+| `RTSI.exe.t13fix` | `09593478…` | 同上（A/B 换 exe 时的中转备份）|
+| `RTSI.exe.bak20260918` | `68bf5bcf…` | **改前**（有缓存 bug），A/B 对照组 |
+| `RTSI.exe.bak20260917` | `896a9d2b…` | 产出 12 份存档基准 .spd 的基线 |
+| `RTSI9月16日收工.exe` | `064045d3…` | 原版对照 |
+| `.bak20260908-prerestart` / `RTSI_旧版_0831备份.exe` | 见文件 | 更早存档 |
 
-> 勘误：本轮曾一度记录"基线 `896a9d2b` 已丢失、备份步骤未执行"——**该结论是错的**。
-> 实际备份存在，只是命名为 `RTSI.exe.bak20260917`（非标准 `.bak`）；当时的全目录枚举早于备份动作，
-> 之后未复核就下了结论。**教训：断言"文件丢失"前必须重新枚举一次，不能复用陈旧快照。**
+> 勘误（保留作教训）：曾记录"基线 `896a9d2b` 已丢失"——**是错的**。备份在 `RTSI.exe.bak20260917`，
+> 只是命名非标准 `.bak`；当时沿用了备份动作**之前**的目录枚举。**断言"文件丢失"前必须重新枚举。**
 
-**环境改动**：`.claude/settings.json` 的 `permissions.deny` 已移除 `PowerShell(Copy-Item:*)`
-（两份 settings.json 同步改，其余 12 条保留，实测放行），以便部署类操作自动化。
+**基准场景**：存档 **`00000037.sav`**（游戏内名 **`golden oasis54321`**，中局档）。
+⚠️ 它**太动态**：帧时在 594–1204ms 间持续漂移，轮间差 9–16%，**不适合 B2 重复性验收**。
 
 **下会话优先级**
 
-1. **B3 开刀 `t_draw_rttex`** —— 目前最大一块（占帧 67.5%）。把水面/投影阴影的 RT 更新
-   从「每帧无条件执行」改成「仅在本帧会渲染场景时执行」。改动局部、收益最大。
-2. **修 `spd_rescan.py` 加速模式判据** —— 改用帧指纹法替代「零渲染占比法」（勘误 C）。无需构建。
-3. **#3 复现跑** —— 需让 ScoreScreen 的弹出成为**退出前最后一个动作**（勘误 D）。
-4. **B2 三遍验收** —— 必须先确认**加速模式关闭**。
-5. ⚠️ 本轮跑批 86.9% 的帧未渲染场景 → render/帧时类结论**不可用**；仅 T11 分段有效。
+1. **B2 重复性验收** —— 需换**平稳场景**（原 `00000036.sav` / `Golden Oasis12345` 开局档，
+   实测 P95/中位 = 1.046，正因它静止），或把判据明确改为"取负载平稳子窗口"。
+2. **#3 退出期 AV** —— 连续三轮 `EXCEPTION DUMP = 0`，**未复现**。`SHX:` 面包屑已在位，
+   实测能分辨 `doPop` 是否调 `runInit`。复现要点：载入存档 → 打满 benchmark → 战报弹出 →
+   **让 ScoreScreen 的弹出成为退出前最后一个动作**。
+3. **postfx 归属迁移证实/证伪** —— 需 GPU 侧计时（T7 GPU Query 桩，默认关）。
+4. **B3 后续** —— `t_draw_rttex` 已探明 **100% 是水面**（阴影 0.001ms，光源缓存短路）。
+   再优化水面反射需动画质，而用户已表态"**只做安全项**"。
+5. ⚠️ `spd_rescan.py` 加速模式判据**无法区分"菜单/空图空闲"与 fastmode**（已知局限，未修，
+   仅在代码注释里记录；误判方向无害）。
+
+**方法论沉淀（本轮踩坑换来的）**
+- **A/B 必须对称采样**：两侧样本数相当、且都用 `-Runs 3` 连续多轮 —— 单轮会撞上"会话首轮偏高"
+  的系统漂移，导致假结论。（本轮差点因此误判 postfx。）
+- **同场景比较必须先对齐 `objects`**：中位数会被"载入早期窗口"拉低（291 vs 719），
+  要只取 `objects ≥ 700` 的完整场景帧。
+- **推翻了两个自己的假说**：① `do/while` 重入假说 —— 用 `draw_calls` 三轮一致（1657/1721/1658）
+  否掉；② 我的"勘误 C"本身是错的 —— 用一个未验证适用条件的检验去推翻有多重旁证的结论，顺序错了。
 
 ---
 
