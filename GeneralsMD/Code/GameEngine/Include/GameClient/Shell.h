@@ -176,6 +176,7 @@ protected:
 	Bool m_pendingPop;																			///< TRUE when a pop is pending
 	AsciiString m_pendingPushName;													///< layout name to be pushed
 	Bool m_isShellActive;																		///< TRUE when the shell is active
+	Bool m_isShuttingDown;																	///< TRUE while ~Shell drains the stack; suppresses runInit on the new top
 	Bool m_shellMapOn;																			///< TRUE when the shell map is on
 	AnimateWindowManager *m_animateWindowManager;						///< The animate Window Manager
 	ShellMenuSchemeManager *m_schemeManager;								///< The Shell Scheme Manager
