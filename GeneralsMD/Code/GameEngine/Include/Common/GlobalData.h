@@ -148,6 +148,7 @@ public:
 	Bool m_terrainVSRoute;	///< VF-1b: terrain vertex-shader route. DEATH 2026-09-18 (fan-2.0): even a MINIMAL position-only vs_2_0 over the terrain XYZDUV2 FVF stream misrenders (dragged vertices = fan) on this driver stack - matrix/constants/inputs/binary/declaration all verified correct (NUMCHK+DRAWTIME+fxc disasm). Keep No; all P1 features run on the FF/TSS route.
 	Bool m_terrainMRTDepth;	///< VF-1c: terrain MRT G-Buffer depth (RT1 oct-normal + RT2 NDC z during the G-Buffer pass). Dead as designed (needs vs_3_0); scene depth pivots to z-buffer-texture sampling (shadow-D24X8 precedent).
 	Bool m_useSampleableZBuffer;	///< VF-1c(new 2026-09-19): bind the main z-buffer as a D3DUSAGE_DEPTHSTENCIL TEXTURE (shadow-D24X8 creation pattern) so VF-2 can sample scene depth. Default FALSE (A/B against the auto DS).
+	Int m_sampleableZFormat;	///< VF-1c probe: 0=mirror current DS format (default), 1=force D24X8 (the shadow-precedent format; drops stencil, probe only), 2=force D24S8
 	Bool m_useVolumetricFog;	///< VF-2: raymarch height fog, depth-gated by the sampled main z-texture (default FALSE; requires UseSampleableZBuffer=Yes)
 	Real m_volFogDensity;		///< VF-2 INI FogDensity: extinction per world unit at ground level (default 0.006)
 	Real m_volFogHeightScale;	///< VF-2 INI FogVolumeHeight: density e-folding height in world units (default 12.5 = doubao 1/0.08)
