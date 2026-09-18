@@ -30,12 +30,28 @@ FIRST_ROW_CONTAM_RATIO = 1.5
 # 加速模式判定：渲染门（W3DDisplay.cpp:1894）只在 m_TiVOFastMode ON 且未暂停时
 # 退化成 frame % 30 == 1，即 ~29/30 的帧 t_render 为 0。低于该比例的文件不判。
 #
-# 已知局限：停在菜单/空图的窗口同样不渲染世界场景，t_render 与 draw_calls 也全为 0，
-# 会被一并判成"加速模式"。要把这两者分开需要时序特征（fastmode 的 t_render 呈 30 帧
-# 周期的高-低交替），单看零值占比做不到。实测过一次这种误判（把普通模式判成加速模式），
-# 但误判方向无害 —— 菜单/空图文件本就不该当基准。这里只作需人工复核的标记。
+# 原「已知局限」已修（2026-09-18）：只凭零渲染占比，会把【停在菜单/空图的窗口】一并
+# 判成加速模式——那里同样不渲染世界。区分点用稳态 objects：加速模式下世界是存在的，
+# 菜单/空图窗口 objects 恒为 0。在 1046 份历史 .spd 上实测：当前判据选出 241 份，
+# 其中 231 份 objects >= 100、10 份 objects == 0，而【0 < objects < 100 的样本数为 0】
+# ——两组之间没有灰带，切得很干净，所以这个判据是可靠的而不是拍脑袋定的阈值。
 FASTMODE_ZERO_RENDER_FRAC = 0.5
 FASTMODE_MIN_ROWS = 20
+
+
+def is_fastmode_recording(rows, zero_render):
+    """True if this window was recorded under m_TiVOFastMode.
+
+    rows 用原始行（不剔首行），zero_render 由调用方数好以免重复遍历。
+    需要同时满足：（a）不渲染的帧占比达标；（b）稳态 objects > 0，即世界确实存在。
+    只看 (a) 会把菜单/空图窗口误判进来。
+    """
+    n = len(rows)
+    if n < FASTMODE_MIN_ROWS:
+        return False
+    if zero_render / float(n) < FASTMODE_ZERO_RENDER_FRAC:
+        return False
+    return steady_state([r.get("objects", 0) for r in rows]) > 0
 
 # 2026-09-17 存档基准白名单（来自 _palace_handoff_20260917.json）。
 # 12 份是基准；另 5 份是空图验证轮（无 AI 无战斗），不属于基准数据。
@@ -116,8 +132,7 @@ def scan_file(path):
 
     zero_render = sum(1 for r in rows if r.get("t_render", 0.0) == 0.0
                       and r.get("draw_calls", 0) == 0)
-    fastmode = (n >= FASTMODE_MIN_ROWS
-                and zero_render / float(n) >= FASTMODE_ZERO_RENDER_FRAC)
+    fastmode = is_fastmode_recording(rows, zero_render)
 
     base = os.path.basename(path)
     stem = base.replace("frameprobe_", "").replace(".spd", "")
@@ -219,6 +234,7 @@ def main():
     L.append("> 目录: `%s`  匹配: `%s`  预算: %.1f ms" % (src, pattern, budget))
     L.append("> 检测规则: 首行 counters / 本文件稳态(非零值中位) > %.1f 判为累加污染并剔除；"
              "加速模式: t_render 与 draw_calls 同时为 0 的帧占比 >= %.0f%%（n>=%d）"
+             "**且稳态 objects > 0**（世界存在）——只凭占比会把菜单/空图窗口误判进来"
              % (FIRST_ROW_CONTAM_RATIO, FASTMODE_ZERO_RENDER_FRAC * 100, FASTMODE_MIN_ROWS))
     L.append("")
     L.append("## 总览")
