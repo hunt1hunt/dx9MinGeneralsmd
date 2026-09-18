@@ -2185,6 +2185,46 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 						if (p4) p4->Release();
 					}
 				}
+				// FAN-2.0 STATE SNAPSHOT probe bit8388608 (throttled 2s): dump
+				// the ACTUAL device state the terrain VS draw consumes — VS
+				// handle, VS constant c0 (the transposed ViewProj row 0),
+				// device VIEW/PROJ translations, viewport, and the current
+				// pixel shader. Run once in the broken config (deferred ON +
+				// VS route) and once clean (deferred OFF + VS route) and diff —
+				// the diverging field names the corrupted state directly.
+				if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 8388608)) {
+					static unsigned s_snapLast = 0;
+					unsigned snapMs = timeGetTime();
+					if (snapMs - s_snapLast >= 2000) {
+						s_snapLast = snapMs;
+						IDirect3DDevice9 *d9s = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+						if (d9s) {
+							IDirect3DVertexShader9 *snapVS = NULL;
+							IDirect3DPixelShader9 *snapPS = NULL;
+							float c0v[4] = {0,0,0,0};
+							D3DMATRIX snapView, snapProj;
+							D3DVIEWPORT9 snapVp;
+							d9s->GetVertexShader(&snapVS);
+							d9s->GetPixelShader(&snapPS);
+							d9s->GetVertexShaderConstantF(0, c0v, 1);
+							d9s->GetTransform(D3DTS_VIEW, &snapView);
+							d9s->GetTransform(D3DTS_PROJECTION, &snapProj);
+							d9s->GetViewport(&snapVp);
+							FILE *fs = fopen(GetPbrCompileLogPath(), "a");
+							if (fs) {
+								fprintf(fs, "[%u] SNAPSHOT gb=%d VS=%p PS=%p c0=(%.4f,%.4f,%.4f,%.4f) viewT=(%.2f,%.2f,%.2f) proj_33=%.4f proj_43=%.4f vp=%ux%u+%u+%u\n",
+									snapMs, g_gbufferActive ? 1 : 0, (void*)snapVS, (void*)snapPS,
+									c0v[0], c0v[1], c0v[2], c0v[3],
+									snapView._41, snapView._42, snapView._43,
+									snapProj._33, snapProj._43,
+									snapVp.Width, snapVp.Height, snapVp.X, snapVp.Y);
+								fclose(fs);
+							}
+							if (snapVS) snapVS->Release();
+							if (snapPS) snapPS->Release();
+						}
+					}
+				}
 			}
 		}
 
@@ -2200,6 +2240,43 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 					numVertex /= 4;
 				}
 				DX8Wrapper::Set_Vertex_Buffer(m_vertexBufferTiles[j*m_numVBTilesX+i]);
+				// FAN-2.0 DRAW-TIME constant probe (first tile, 2s throttle):
+				// compare the device's CURRENT c0-c3 against a FRESH device
+				// VIEW x PROJ concat computed HERE - after set(), after the
+				// buffer Apply, immediately before the Draw. If this diverges
+				// while the upload-time NUMCHK matched, something rewrites the
+				// VS constants between set() and the draw.
+				{
+					static unsigned s_dtLast = 0;
+					unsigned dtMs = timeGetTime();
+					if (j == 0 && i == 0 && dtMs - s_dtLast >= 2000) {
+						s_dtLast = dtMs;
+						IDirect3DDevice9 *dtd = DX8Wrapper::_Get_D3D_Device8();
+						if (dtd) {
+							D3DMATRIX dtV, dtP;
+							float dtC[4][4];
+							dtd->GetTransform(D3DTS_VIEW, &dtV);
+							dtd->GetTransform(D3DTS_PROJECTION, &dtP);
+							dtd->GetVertexShaderConstantF(0, (float*)dtC, 4);
+							D3DXMATRIX dtFF;
+							D3DXMatrixMultiply(&dtFF, (D3DXMATRIX*)&dtV, (D3DXMATRIX*)&dtP);
+							const float *ffa = (const float*)&dtFF;
+							float maxAbs = 0.0f;
+							int k;
+							for (k = 0; k < 16; k++) {
+								float d = ffa[k] - ((const float*)dtC)[k];
+								if (d < 0.0f) d = -d;
+								if (d > maxAbs) maxAbs = d;
+							}
+							FILE *dtf = fopen(GetPbrCompileLogPath(), "a");
+							if (dtf) {
+								fprintf(dtf, "[%u] DRAWTIME c0vsFF maxAbsDiff=%.6f c0=(%.4f,%.4f,%.4f,%.4f)\n",
+									dtMs, maxAbs, dtC[0][0], dtC[0][1], dtC[0][2], dtC[0][3]);
+								fclose(dtf);
+							}
+						}
+					}
+				}
 #ifdef PRE_TRANSFORM_VERTEX
 				if (m_xformedVertexBuffer && pass==0) {
 					// Note - m_xformedVertexBuffer should only be used for non T&L hardware.  jba.

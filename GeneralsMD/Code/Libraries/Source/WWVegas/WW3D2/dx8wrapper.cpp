@@ -2412,7 +2412,19 @@ void DX8Wrapper::Apply_Render_State_Changes()
 						// If the VB format is FVF, set the FVF as a vertex shader
 						unsigned fvf=render_state.vertex_buffers[i]->FVF_Info().Get_FVF();
 						if (fvf!=0) {
-							Set_FVF(fvf);
+							// FAN-2.0 (2026-09-18): while the terrain VS route
+							// is engaged with probe bit33554432, swap the FVF-set
+							// for the RA3-faithful EXPLICIT declaration (the W3X
+							// mesh path never uses FVF). Only intercepts the
+							// terrain's XYZDUV2 FVF.
+							extern bool g_terrainVSDeclWanted;
+							extern IDirect3DVertexDeclaration9 *g_terrainVSDecl;
+							if (g_terrainVSDeclWanted && g_terrainVSDecl
+								&& fvf == (unsigned)(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX2)) {
+								_Get_D3D_Device8()->SetVertexDeclaration(g_terrainVSDecl);
+							} else {
+								Set_FVF(fvf);
+							}
 						}
 					}
 					break;
