@@ -66,6 +66,7 @@ Shell::Shell( void )
 	m_pendingPop = FALSE;
 	m_pendingPushName.set( "" );
 	m_isShellActive = TRUE;
+	m_isShuttingDown = FALSE;
 	m_shellMapOn = FALSE;
 	m_background = NULL;
 	m_clearBackground = FALSE;
@@ -85,6 +86,19 @@ Shell::Shell( void )
 //-------------------------------------------------------------------------------------------------
 Shell::~Shell( void )
 {
+	// 2026-09-18 fix for the exit-time access violation.
+	// Engine shutdown deletes subsystems before the shell is destroyed -- and
+	// SubsystemInterfaceList::shutdownAll() does `delete sys` WITHOUT nulling the global
+	// pointers. So by the time this loop drains the screen stack, TheGameState is already
+	// freed but still reachable. Draining normally calls popImmediate() -> doPop() ->
+	// newTop->runInit(); for Menus/SaveLoad.wnd that is SaveLoadMenuInit, which calls
+	// TheGameState->populateSaveGameListbox() and walks m_snapshotBlockList[SNAPSHOT_SAVELOAD]
+	// -- a freed std::list whose sentinel _M_next is zeroed (access violation on 0x00000000,
+	// historically also 0xC7000008/0x80000008 when the memory had been reused).
+	// Nothing needs initialising while the shell is being destroyed, so suppress it.
+	m_isShuttingDown = TRUE;
+	DEBUG_LOG(("SHX: ~Shell draining %d screen(s), runInit suppressed\n", m_screenCount));
+
 	WindowLayout *newTop = top();
 	while(newTop)
 	{
@@ -666,9 +680,18 @@ void Shell::doPop( Bool impendingPush )
 	WindowLayout *newTop = top();
 	if( newTop && !impendingPush )
 	{
-		DEBUG_LOG(("SHX: doPop -> newTop->runInit\n"));
-		newTop->runInit( NULL );
-		DEBUG_LOG(("SHX: doPop <- newTop->runInit\n"));
+		// 2026-09-18: see the note in ~Shell. During teardown the globals this init would
+		// touch are already freed, so skip it -- it was the exit-time access violation.
+		if( m_isShuttingDown )
+		{
+			DEBUG_LOG(("SHX: doPop suppressing newTop->runInit (shell shutting down)\n"));
+		}
+		else
+		{
+			DEBUG_LOG(("SHX: doPop -> newTop->runInit\n"));
+			newTop->runInit( NULL );
+			DEBUG_LOG(("SHX: doPop <- newTop->runInit\n"));
+		}
 		//newTop->bringForward();
 	}
 
