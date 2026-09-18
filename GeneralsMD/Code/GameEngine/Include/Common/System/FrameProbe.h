@@ -104,6 +104,12 @@ typedef enum FrameProbeCounter
 	FP_CNT_GPU_BUSY_AT_POSTFX_END,
 	FP_CNT_GPU_BUSY_AT_PRESENT_END,
 	FP_CNT_GPU_QUERY_UNAVAILABLE,
+	// T7b (2026-09-18): poll the SAME query immediately on entry to the postfx
+	// block. Together with GPU_BUSY_AT_POSTFX_END this brackets where the GPU
+	// finished the scene block: busy at start + caught up at end means the GPU's
+	// scene work completed *inside* the block that is currently charged for it.
+	// Appended (not inserted) so existing CSV column order stays stable.
+	FP_CNT_GPU_BUSY_AT_POSTFX_START,
 	FP_CNT_COUNT
 } FrameProbeCounter;
 

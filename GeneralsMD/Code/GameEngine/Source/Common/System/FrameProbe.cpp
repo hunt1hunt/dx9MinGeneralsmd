@@ -128,7 +128,9 @@ static const char *fpCounterName(unsigned int c)
 		"cpu_postfx_misc_us", "cpu_postfx_debug_us", "cpu_present_us",
 		"cpu_rttex_us",
 		// T7: 1 = GPU had still not caught up at that point
-		"gpu_busy_postfx_end", "gpu_busy_present_end", "gpu_query_unavailable"
+		"gpu_busy_postfx_end", "gpu_busy_present_end", "gpu_query_unavailable",
+		// T7b (2026-09-18): must stay in lockstep with FrameProbeCounter in FrameProbe.h
+		"gpu_busy_postfx_start"
 	};
 	if (c >= FP_CNT_COUNT)
 		return "?";

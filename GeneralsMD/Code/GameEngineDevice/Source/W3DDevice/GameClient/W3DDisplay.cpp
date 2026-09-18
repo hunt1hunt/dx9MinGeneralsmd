@@ -2021,6 +2021,9 @@ AGAIN:
 				T7GpuIssueAfterScene();	// T7: GPU-side marker for "scene block submitted"
 
 				FP_BEGIN(POSTFX);	// SagePerfDiag: UI/overlay composition
+				// T7b: poll immediately on entry. Busy here + caught up at the end of
+				// this block brackets the GPU's scene completion inside the HUD block.
+				FP_COUNT(GPU_BUSY_AT_POSTFX_START, T7GpuStillBehind());
 				FP_CPU_MARK(POSTFX);	// T14
 				FP_BEGIN(POSTFX_UI);	// SagePerfDiag T13: the HUD
 				FP_CPU_MARK(POSTFX_UI);	// T14: the number that decides the +74% question
