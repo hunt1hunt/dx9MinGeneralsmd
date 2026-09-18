@@ -1618,6 +1618,7 @@ public:
 	IDirect3DPixelShader9*	m_dwPBRNoise12PixelShader;	///<ps_2_0 PBR + cloud + lightmap
 	IDirect3DVertexShader9* m_dwTerrainVS;			///<2026-09-09 RA3-faithful vs_3_0 terrain vertex shader (world pos + shadow UV)
 	IDirect3DVertexShader9* m_dwTerrainVS20;		///<VF-1a bisection: same VS math compiled vs_2_0 (pairs with ps_2_a twins - splits "VS math" vs "SM3 pairing")
+	IDirect3DVertexShader9* m_dwTerrainVSMin;	///<FAN-2.0 bisection: MINIMAL vs_2_0 - position+color+uv0/uv1 ONLY (no t2/t6/t7 writes, no c4-c11 reads). Clean-with-this => the poison is one of the EXTRA outputs; broken => ANY terrain vertex shader misexecutes on this driver and the route must be abandoned.
 	// 2026-09-12 P1d: ps_3_0 twins of the four terrain variants. The 09-09
 	// rollback bound vs_3_0 against these ps_2_a shaders - an ILLEGAL D3D9
 	// SM3 pairing (vs_3_0 requires ps_3_0), which is the likeliest real
@@ -2258,6 +2259,7 @@ Int TerrainShaderPBR::init( void )
 	m_dwPBRNoise12PixelShader = NULL;
 	m_dwTerrainVS = NULL;
 	m_dwTerrainVS20 = NULL;
+	m_dwTerrainVSMin = NULL;
 	m_dwPBRPixelShader30 = NULL;
 	m_dwPBRNoise1PixelShader30 = NULL;
 	m_dwPBRNoise2PixelShader30 = NULL;
@@ -2329,6 +2331,32 @@ Int TerrainShaderPBR::init( void )
 				vs2Compiled->Release();
 			}
 			if (vs2Errors) vs2Errors->Release();
+		}
+		// FAN-2.0 bisection bit67108864: MINIMAL vs_2_0 - position/color/uv0/uv1
+		// ONLY. Splits "any terrain VS misexecutes on this driver" (broken =>
+		// abandon the route) from "one of the EXTRA outputs poisons the draw"
+		// (clean => bisect t2/t6/t7 next).
+		{
+			const char* vsMinSrc =
+				"float4x4 VP : register(c0);\n"
+				"struct O { float4 p : POSITION; float4 d : COLOR0; float2 t0 : TEXCOORD0; float2 t1 : TEXCOORD1; };\n"
+				"O main(float3 pos : POSITION, float4 d : COLOR0, float2 uv0 : TEXCOORD0, float2 uv1 : TEXCOORD1) {\n"
+				"    O o;\n"
+				"    o.p = mul(float4(pos, 1.0), VP);\n"
+				"    o.d = d; o.t0 = uv0; o.t1 = uv1;\n"
+				"    return o;\n"
+				"}\n";
+			ID3DXBuffer* vsMCompiled = NULL; ID3DXBuffer* vsMErrors = NULL;
+			HRESULT vsMHr = D3DXCompileShader(vsMinSrc, (UINT)strlen(vsMinSrc), NULL, NULL, "main", "vs_2_0", 0, &vsMCompiled, &vsMErrors, NULL);
+			{ FILE* vf = fopen("E:\\pbr_compile.log", "a"); if (vf) {
+				fprintf(vf, "[%d] terrainVSMin (vs_2_0) compile hr=0x%08x\n", (int)timeGetTime(), (unsigned)vsMHr);
+				if (vsMErrors) fprintf(vf, "    ERR: %s\n", (const char*)vsMErrors->GetBufferPointer());
+				fclose(vf); } }
+			if (SUCCEEDED(vsMHr) && vsMCompiled) {
+				DX8Wrapper::_Get_D3D_Device8()->CreateVertexShader((const DWORD*)vsMCompiled->GetBufferPointer(), &m_dwTerrainVSMin);
+				vsMCompiled->Release();
+			}
+			if (vsMErrors) vsMErrors->Release();
 		}
 	}
 
@@ -2861,6 +2889,16 @@ Int TerrainShaderPBR::init( void )
 // P1d: true while the vs_3_0 terrain VS is bound for the current pass - the
 // PS-select switch then picks the ps_3_0 twins (D3D9 SM3 pairing).
 static bool s_terrainVsActive = false;
+// FAN-2.0 2026-09-18: explicit VERTEX DECLARATION for the XYZDUV2 terrain
+// layout (pos float3 / D3DCOLOR / tex0 / tex1 = 32 bytes). The W3X/RA3 mesh
+// path NEVER uses FVF - it renders through explicit declarations - while the
+// terrain route feeds the VS through the FVF-derived declaration. Probe bit
+// 33554432 swaps in this explicit declaration (dx8wrapper's Apply Set_FVF
+// branch consults g_terrainVSDeclWanted): if the FVF->declaration conversion
+// is where dgVoodoo mis-pairs the programmable VS, this is the RA3-faithful
+// fix; if equivalent, nothing changes.
+IDirect3DVertexDeclaration9 *g_terrainVSDecl = NULL;
+bool g_terrainVSDeclWanted = false;
 
 Int TerrainShaderPBR::set(Int pass)
 {
@@ -3141,64 +3179,118 @@ Int TerrainShaderPBR::set(Int pass)
 					// fan stays => VS math/vertex-declaration issue.
 					IDirect3DVertexShader9 *vsBind = NULL;
 					if (TheGlobalData && TheGlobalData->m_terrainVSRoute) {
-						vsBind = ((TheGlobalData->m_terrainProbeMode & 131072) && m_dwTerrainVS20) ? m_dwTerrainVS20 : m_dwTerrainVS;
+						// FAN-2.0 bisection bit67108864: the MINIMAL VS wins over
+						// everything (pairs with the ps_2_a twins via the
+						// s_terrainVsActive=false below).
+						if ((TheGlobalData->m_terrainProbeMode & 67108864) && m_dwTerrainVSMin) {
+							vsBind = m_dwTerrainVSMin;
+						} else {
+							vsBind = ((TheGlobalData->m_terrainProbeMode & 131072) && m_dwTerrainVS20) ? m_dwTerrainVS20 : m_dwTerrainVS;
+						}
 					}
-					// VF-1c 2026-09-14: also engage the terrain VS inside the
-					// G-Buffer pass when MRT depth is on (GameData
-					// TerrainMRTDepth) - the MRT twins are ps_3_0 and cannot
-					// pair with fixed-function vertices, so the vs_3_0 route
-					// must run in that pass too. Probe bit131072's vs_2_0档
-					// stays excluded (SM2 cannot write MRT).
-					bool mrtDepthPass = g_gbufferActive && TheGlobalData && TheGlobalData->m_terrainMRTDepth
-						&& (m_dwPBRPixelShaderMRTD != NULL)
-						&& !(TheGlobalData->m_terrainProbeMode & 131072);
-					if (vsBind && (!g_gbufferActive || mrtDepthPass)
+					// FAN-2.0 ROOT FIX 2026-09-15: VS-route PARITY in the G-Buffer
+					// pass. With the deferred pipeline on, terrain draws twice a
+					// frame over the SHARED main depth buffer - gbuffer pass +
+					// forward repaint. When the forward pass runs the terrain
+					// VS but the gbuffer pass stays fixed-function, the two
+					// pipelines compute clip-z through different numerical
+					// paths (driver FF chain vs our concatenated transposed
+					// VP); the ULP-level divergence makes the forward repaint's
+					// LEQUAL z-test fail across most of the terrain, so the
+					// deferred image (BLACK for terrain: its gbuffer RT2 depth
+					// was never written) bleeds through - the "black terrain +
+					// radial skirt fan". Proven by A/B: DeferredRendering=No +
+					// VS route = clean; =Yes + VS route = fan; =Yes + FF route
+					// = clean (both passes FF, bit-identical z). Engaging the
+					// SAME VS in both passes makes the z bit-identical again.
+					bool vsGBufferParity = g_gbufferActive && TheGlobalData && TheGlobalData->m_terrainVSRoute;
+					// VF-1c 2026-09-14: the MRT twins (selected in the PS switch
+					// below via TerrainMRTDepth) additionally require the ps_3_0
+					// route - probe bit131072's vs_2_0/ps_2_a档 cannot write MRT.
+					if (vsBind && (!g_gbufferActive || vsGBufferParity)
 						&& !ShaderClass::Is_Backface_Culling_Inverted()) {
 						s_terrainVsActive = (vsBind == m_dwTerrainVS);	// PS switch selects the ps_3_0 twins (bit131072 keeps ps_2_a)
-						Matrix4x4 projM;
-						DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, projM);
-						Matrix4x4 vp = Multiply(curView, projM);
-						Matrix4x4 biasM;
-						biasM.Make_Identity();
-						// 2026-09-10 V-FLIP: -0.5 matches the TSS bias above (cast RT is
-						// standard-rasterized; see the mBias comment for the full chain).
-						biasM[0] = Vector4(0.5f, 0.0f, 0.0f, 0.0f);        // was W3XRenderObj.cpp:1262-1268 (+0.5, mirrored)
-						biasM[1] = Vector4(0.0f, -0.5f, 0.0f, 0.0f);
-						biasM[2] = Vector4(0.0f, 0.0f, 1.0f, 0.0f);
-						biasM[3] = Vector4(0.5f, 0.5f, 0.0f, 1.0f);
-						Matrix4x4 shadowUVZm = Multiply(svp, biasM);  // VERBATIM W3XRenderObj.cpp:1268 (receive matrix)
-						// 2026-09-13 EXPERIMENT 4: TRANSPOSE both uploads. The engine
-						// Matrix4x4 memory is column-major; HLSL mul(v,M) wants the
-						// transform ROWS in registers, i.e. the transpose of what
-						// verbatim engine memory provides. D3DX effect SetMatrix does
-						// this transposition internally - raw constant uploads must
-						// do it by hand. Experiment 3 proved verbatim-upload wrong:
-						// terrain went all-black (roads/objects on their own paths
-						// stayed correct) - the classic misprojection signature.
+						// FAN-2.0 ROOT FIX 2026-09-18 (NUMCHK-convicted): upload the
+						// VP built from the DEVICE's own VIEW and PROJECTION via
+						// D3DX row-vector concatenation, VERBATIM (no engine
+						// Multiply, no transpose). The old path - engine
+						// Multiply(curView,projM) + D3DXMatrixTranspose - produced a
+						// matrix that is NEITHER the FF concat NOR its transpose
+						// (the engine Multiply interprets its inputs in Westwood
+						// convention); NUMCHK proved it diverges from the FF
+						// ground truth even at the origin (v=(0,0,0): w=-328 vs
+						// +335) and ~4x on the w-row at map corners - every
+						// "VS route" frame ever observed was this misprojection
+						// (the visible terrain was the deferred-pass FF copy).
+						// HLSL mul(v,M) with M's rows in c0..c3 is the SAME row-
+						// vector convention as D3DX v*M, so the FF concat uploads
+						// verbatim and the VS reproduces the FF pipeline exactly.
 						{
-							D3DXMATRIX vpT;
-							D3DXMatrixTranspose(&vpT, (D3DXMATRIX*)&vp);
-							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vpT, 4);
-							// VF-1c: the same transposed VP to PS c32-c35 - the MRT
+							D3DXMATRIX ffView, ffProj, vpFF;
+							DX8Wrapper::_Get_D3D_Device8()->GetTransform(D3DTS_VIEW, &ffView);
+							DX8Wrapper::_Get_D3D_Device8()->GetTransform(D3DTS_PROJECTION, &ffProj);
+							D3DXMatrixMultiply(&vpFF, &ffView, &ffProj);
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(0, (const float*)&vpFF, 4);
+							// VF-1c: the same FF-domain VP to PS c32-c35 - the MRT
 							// twins rebuild NDC z from worldPos via
-							// mul(float4(wp,1), camVP); identical convention to the
-							// VS c0 upload above. The plain twins never read c32+, so
-							// uploading on the forward pass too is harmless.
-							DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(32, (const float*)&vpT, 4);
-							// VF-1a probe bit5(32): upload ShadowUVZ VERBATIM (the W3X
-							// receive-matrix convention, W3XRenderObj.cpp:1268) instead
-							// of transposed. The exp.4 transpose fixed the POSITION
-							// (black terrain) but BOTH matrices share the same
-							// mul(float4(pos,1), M) VS convention - if the fan still
-							// shows with 16 but vanishes with 32, the shadow-side
-							// layout is the fan source. Candidate FIX, not just probe.
-							if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 32)) {
-								DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shadowUVZm, 4);
-							} else {
-								D3DXMATRIX shT;
-								D3DXMatrixTranspose(&shT, (D3DXMATRIX*)&shadowUVZm);
-								DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&shT, 4);
+							// mul(float4(wp,1), camVP). The plain twins never read
+							// c32+, so uploading on the forward pass too is harmless.
+							DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(32, (const float*)&vpFF, 4);
+							// FAN-2.0 NUMERIC SELF-CHECK probe bit16777216 (5s throttle):
+							// transform three test vertices BOTH ways - (a) the FF
+							// pipeline's ground truth (device VIEW x PROJ, D3DX
+							// row-vector math, what the clean FF route renders) and
+							// (b) exactly what the VS computes (mul(float4(v,1), M)
+							// with M's rows = the uploaded c0-c3, read back from the
+							// device). Divergence at the far vertices = the upload
+							// convention is the fan's root cause; match = the VS
+							// math is right and the hunt moves to the stream side.
+							if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 16777216)) {
+								static unsigned s_numChkLast = 0;
+								unsigned numChkMs = timeGetTime();
+								if (numChkMs - s_numChkLast >= 5000) {
+									s_numChkLast = numChkMs;
+									IDirect3DDevice9 *ncDev = DX8Wrapper::_Get_D3D_Device8();
+									D3DMATRIX ncView, ncProj;
+									float ncC[4][4];
+									ncDev->GetTransform(D3DTS_VIEW, &ncView);
+									ncDev->GetTransform(D3DTS_PROJECTION, &ncProj);
+									ncDev->GetVertexShaderConstantF(0, (float*)ncC, 4);
+								D3DXMATRIX ncFF;
+								D3DXMatrixMultiply(&ncFF, (D3DXMATRIX*)&ncView, (D3DXMATRIX*)&ncProj);
+									D3DXVECTOR3 ncVs[3];
+									ncVs[0] = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+									ncVs[1] = D3DXVECTOR3(3000.0f, 3000.0f, 0.0f);
+									ncVs[2] = D3DXVECTOR3(6000.0f, 6000.0f, 0.0f);
+									FILE *ncf = fopen(GetPbrCompileLogPath(), "a");
+									if (ncf) {
+										for (int nci = 0; nci < 3; nci++) {
+											D3DXVECTOR4 vnc(ncVs[nci].x, ncVs[nci].y, ncVs[nci].z, 1.0f);
+											D3DXVECTOR4 clipFFd;
+											D3DXVec4Transform(&clipFFd, &vnc, &ncFF);
+											// mul(v4, M): result.j = dot(v4, column j of M), M rows = c0..c3
+											float vsX = vnc.x*ncC[0][0] + vnc.y*ncC[1][0] + vnc.z*ncC[2][0] + vnc.w*ncC[3][0];
+											float vsY = vnc.x*ncC[0][1] + vnc.y*ncC[1][1] + vnc.z*ncC[2][1] + vnc.w*ncC[3][1];
+											float vsZ = vnc.x*ncC[0][2] + vnc.y*ncC[1][2] + vnc.z*ncC[2][2] + vnc.w*ncC[3][2];
+											float vsW = vnc.x*ncC[0][3] + vnc.y*ncC[1][3] + vnc.z*ncC[2][3] + vnc.w*ncC[3][3];
+											fprintf(ncf, "[%u] NUMCHK v=(%.0f,%.0f,%.0f) FF=(%.2f,%.2f,%.2f,%.2f) VS=(%.2f,%.2f,%.2f,%.2f)\n",
+												numChkMs, vnc.x, vnc.y, vnc.z,
+												clipFFd.x, clipFFd.y, clipFFd.z, clipFFd.w,
+												vsX, vsY, vsZ, vsW);
+										}
+										fclose(ncf);
+									}
+								}
 							}
+							// FAN-2.0 ROOT FIX (same NUMCHK conviction as c0-c3): the
+							// shader's t7 = mul(float4(pos,1), ShadowUVZ) needs the
+							// ROW-MATH matrix invView x sunVP x bias - which is exactly
+							// the D3DX-computed mShadowUVZ the TSS stage-7 setup builds
+							// above (TSS is row-vector convention too). Upload it
+							// VERBATIM; the old engine-Multiply+transpose pair (and the
+							// bit32 verbatim-of-the-wrong-matrix probe) both fed the
+							// shader a matrix in the wrong layout.
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(4, (const float*)&mShadowUVZ, 4);
 						}
 						// VF-1a FIX 2026-09-14: the Noise twins sample the cloud/
 						// lightmap texture at TEXCOORD2, which this VS never wrote
@@ -3209,12 +3301,14 @@ Int TerrainShaderPBR::set(Int pass)
 						// the current D3DTS_TEXTURE2, set above by the NOISE
 						// branches) as VS c8-c11, transposed for mul(v,M).
 						{
-							D3DXMATRIX noiseM, viewOrig, cloudM, cloudT;
+							D3DXMATRIX noiseM, viewOrig, cloudM;
 							DX8Wrapper::_Get_D3D_Device8()->GetTransform(D3DTS_TEXTURE2, &noiseM);
-							DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, *(Matrix4x4*)&viewOrig);
+							DX8Wrapper::_Get_D3D_Device8()->GetTransform(D3DTS_VIEW, &viewOrig);
+							// FAN-2.0 ROOT FIX: t2 = worldPos x view x noiseM - upload
+							// the ROW-MATH product VERBATIM (no transpose; see the
+							// c0-c3 NUMCHK conviction above).
 							D3DXMatrixMultiply(&cloudM, &viewOrig, &noiseM);
-							D3DXMatrixTranspose(&cloudT, &cloudM);
-							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(8, (const float*)&cloudT, 4);
+							DX8Wrapper::_Get_D3D_Device8()->SetVertexShaderConstantF(8, (const float*)&cloudM, 4);
 						}
 						// VF-1c: RAW device bind during the G-Buffer pass - the
 						// WRAPPER's Set_Vertex_Shader would substitute g_gbufferVS
@@ -3228,6 +3322,23 @@ Int TerrainShaderPBR::set(Int pass)
 							DX8Wrapper::_Get_D3D_Device8()->SetVertexShader(vsBind);
 						} else {
 							DX8Wrapper::Set_Vertex_Shader(vsBind);
+						}
+						// FAN-2.0 probe bit33554432: create the explicit XYZDUV2
+						// declaration once and ask dx8wrapper's Apply to use it
+						// instead of the FVF-derived one while this VS is bound.
+						g_terrainVSDeclWanted = false;
+						if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 33554432)) {
+							if (!g_terrainVSDecl) {
+								D3DVERTEXELEMENT9 elems[5];
+								ZeroMemory(elems, sizeof(elems));
+								elems[0].Stream = 0; elems[0].Offset = 0;  elems[0].Type = D3DDECLTYPE_FLOAT3;   elems[0].Method = D3DDECLMETHOD_DEFAULT; elems[0].Usage = D3DDECLUSAGE_POSITION;  elems[0].UsageIndex = 0;
+								elems[1].Stream = 0; elems[1].Offset = 12; elems[1].Type = D3DDECLTYPE_D3DCOLOR; elems[1].Method = D3DDECLMETHOD_DEFAULT; elems[1].Usage = D3DDECLUSAGE_COLOR;      elems[1].UsageIndex = 0;
+								elems[2].Stream = 0; elems[2].Offset = 16; elems[2].Type = D3DDECLTYPE_FLOAT2;   elems[2].Method = D3DDECLMETHOD_DEFAULT; elems[2].Usage = D3DDECLUSAGE_TEXCOORD;  elems[2].UsageIndex = 0;
+								elems[3].Stream = 0; elems[3].Offset = 24; elems[3].Type = D3DDECLTYPE_FLOAT2;   elems[3].Method = D3DDECLMETHOD_DEFAULT; elems[3].Usage = D3DDECLUSAGE_TEXCOORD;  elems[3].UsageIndex = 1;
+								elems[4].Stream = 0xFF; elems[4].Offset = 0; elems[4].Type = D3DDECLTYPE_UNUSED; elems[4].Method = 0; elems[4].Usage = 0; elems[4].UsageIndex = 0;
+								DX8Wrapper::_Get_D3D_Device8()->CreateVertexDeclaration(elems, &g_terrainVSDecl);
+							}
+							g_terrainVSDeclWanted = (g_terrainVSDecl != NULL);
 						}
 						{	// one-shot engagement proof -> pbr_compile.log
 							static bool s_vsEngaged = false;
@@ -3381,10 +3492,14 @@ Int TerrainShaderPBR::set(Int pass)
 	// VF-1c: during the G-Buffer pass prefer the MRT twins (RT1 oct-normal +
 	// RT2 NDC z) - they only exist on the vs_3_0 route, and the RAW bind here
 	// is what keeps the terrain's own PS under the wrapper's g_gbufferPS
-	// override (that override intercepts wrapper calls only).
+	// override (that override intercepts wrapper calls only). Fan-2.0 parity:
+	// the VS now also engages in the gbuffer pass whenever the VS route is on,
+	// so the MRT twins additionally require their own INI (TerrainMRTDepth).
+	{
+		bool mrtTwins = g_gbufferActive && TheGlobalData && TheGlobalData->m_terrainMRTDepth;
 	switch (curShader) {
 		case W3DShaderManager::ST_TERRAIN_PBR:
-			if (s_terrainVsActive && g_gbufferActive && m_dwPBRPixelShaderMRTD)
+			if (s_terrainVsActive && mrtTwins && m_dwPBRPixelShaderMRTD)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShaderMRTD);
 			else if (s_terrainVsActive && m_dwPBRPixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader30);
@@ -3392,7 +3507,7 @@ Int TerrainShaderPBR::set(Int pass)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE1:
-			if (s_terrainVsActive && g_gbufferActive && m_dwPBRNoise1PixelShaderMRTD)
+			if (s_terrainVsActive && mrtTwins && m_dwPBRNoise1PixelShaderMRTD)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShaderMRTD);
 			else if (s_terrainVsActive && m_dwPBRNoise1PixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise1PixelShader30);
@@ -3402,7 +3517,7 @@ Int TerrainShaderPBR::set(Int pass)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE2:
-			if (s_terrainVsActive && g_gbufferActive && m_dwPBRNoise2PixelShaderMRTD)
+			if (s_terrainVsActive && mrtTwins && m_dwPBRNoise2PixelShaderMRTD)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShaderMRTD);
 			else if (s_terrainVsActive && m_dwPBRNoise2PixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise2PixelShader30);
@@ -3412,7 +3527,7 @@ Int TerrainShaderPBR::set(Int pass)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
 		case W3DShaderManager::ST_TERRAIN_PBR_NOISE12:
-			if (s_terrainVsActive && g_gbufferActive && m_dwPBRNoise12PixelShaderMRTD)
+			if (s_terrainVsActive && mrtTwins && m_dwPBRNoise12PixelShaderMRTD)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShaderMRTD);
 			else if (s_terrainVsActive && m_dwPBRNoise12PixelShader30)
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRNoise12PixelShader30);
@@ -3421,6 +3536,7 @@ Int TerrainShaderPBR::set(Int pass)
 			else
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShader(m_dwPBRPixelShader);
 			break;
+	}
 	}
 	return TRUE;
 }
@@ -3436,6 +3552,7 @@ void TerrainShaderPBR::reset(void)
 		// TerrainVSRoute is on). Unbind ONLY if our own VS is still bound;
 		// another shader system's VS is left untouched.
 		IDirect3DDevice9 *leakDev = DX8Wrapper::_Get_D3D_Device8();
+		g_terrainVSDeclWanted = false;	// FAN-2.0: explicit-decl route off outside the VS pass
 		if (leakDev && (m_dwTerrainVS || m_dwTerrainVS20)) {
 			IDirect3DVertexShader9 *curVS = NULL;
 			leakDev->GetVertexShader(&curVS);
@@ -3460,7 +3577,12 @@ void TerrainShaderPBR::reset(void)
 	// 2026-09-09: unbind the terrain VS so other passes get fixed-function
 	// vertices. EXPERIMENT 2: go WRAPPER-VISIBLE so the wrapper's own state
 	// tracking (incl. its G-Buffer VS substitution) stays coherent.
+	g_terrainVSDeclWanted = false;	// FAN-2.0: explicit-decl route off outside the VS pass
 	DX8Wrapper::Set_Vertex_Shader((IDirect3DVertexShader9*)NULL);
+	// ...and drop the explicit declaration so FF draws get their FVF back
+	if (g_terrainVSDecl) {
+		DX8Wrapper::_Get_D3D_Device8()->SetVertexDeclaration(NULL);
+	}
 	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 7);
 	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);	// 2026-09-08: shadow receive stage (s4 - DEVENTRY proved s1 swapped by material replay)
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);

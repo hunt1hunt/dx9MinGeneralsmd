@@ -1210,6 +1210,14 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 				// constant-sample defect that killed the 09-06 attempt only
 				// affects the D24-sampling conversion route, not this one.
 				static const bool s_shadowRasterize = true;
+				// FAN-2.0 probe bit1048576: skip ONLY the shadow-pass object
+				// rasterization (the proven-safe s_shadowRasterize=false pattern -
+				// begin/end + visibility + state dance all preserved; gating the
+				// whole branch crashed historically). Splits "the shadow-pass
+				// mesh rasterization arms the VS-route terrain break" from the
+				// deferred middle (SSAO/lighting/tonemap, bit2097152).
+				bool shadowRast = s_shadowRasterize
+					&& !(TheGlobalData->m_terrainProbeMode & 1048576);
 				if (TheGlobalData->m_useShadowMap && g_theW3DDeferredRenderer->isShadowMapAvailable())
 				{
 					// Refresh the scene visibility flags BEFORE the shadow-map
@@ -1233,7 +1241,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						static bool s_objListOnce = false;	// DIAG: one-shot name list
 						static char s_objNames[64][128];	// 2026-09-08 CAST CENSUS: 15 -> 64 (first 15 cut off the W3X units)
 						static int s_objNamesN = 0;
-						if (s_shadowRasterize) {
+						if (shadowRast) {
 						for (si.First(); !si.Is_Done(); si.Next()) {
 						RenderObjClass *r=si.Peek_Obj();
 						if (r->Class_ID()==RenderObjClass::CLASSID_TILEMAP) continue;
@@ -1286,6 +1294,13 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					Visibility_Checked = false;
 				}
 				{
+					// FAN-2.0 probe bit4194304: skip the ENTIRE G-Buffer pass
+					// (begin/end mechanics + terrain draw + MRT binds). With
+					// 2097152 also skipping the deferred middle, bit4194304
+					// reduces the deferred frame to [shadow dance] -> [forward]
+					// - the last untested cut. Clean => the armer lives inside
+					// the gbuffer pass; broken => the shadow begin/end dance.
+					if (!(TheGlobalData->m_terrainProbeMode & 4194304)) {
 					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === G-Buffer Pass ===\n"));
 					LARGE_INTEGER gS,gE; QueryPerformanceCounter(&gS);
 					g_theW3DDeferredRenderer->beginGBufferPass();
@@ -1296,14 +1311,21 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					g_theW3DDeferredRenderer->endGBufferPass();
 					QueryPerformanceCounter(&gE);
 					if (s_pipeDiag) DIAG_LOG(("PIPELINE: G-Buffer Pass took %.2f ms\n",(float)(gE.QuadPart-gS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					}
 				}
-				if (TheGlobalData->m_useSSAO) {
-					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === SSAO Pass ===\n"));
-					LARGE_INTEGER aS,aE; QueryPerformanceCounter(&aS);
-					g_theW3DDeferredRenderer->computeAO();
-					QueryPerformanceCounter(&aE);
-					if (s_pipeDiag) DIAG_LOG(("PIPELINE: SSAO Pass took %.2f ms\n",(float)(aE.QuadPart-aS.QuadPart)*1000.0f/(float)pf.QuadPart));
-				}
+					// FAN-2.0 probe bit2097152: skip the deferred MIDDLE (SSAO +
+					// lighting + HDR/tonemap) so the frame goes gbuffer-pass ->
+					// forward directly. Splits "the middle's quad passes/RT
+					// binds arm the VS-route terrain break" from the shadow
+					// pass (bit1048576) and the gbuffer pass itself.
+					if (!(TheGlobalData->m_terrainProbeMode & 2097152)) {
+					if (TheGlobalData->m_useSSAO) {
+						if (s_pipeDiag) DIAG_LOG(("PIPELINE: === SSAO Pass ===\n"));
+						LARGE_INTEGER aS,aE; QueryPerformanceCounter(&aS);
+						g_theW3DDeferredRenderer->computeAO();
+						QueryPerformanceCounter(&aE);
+						if (s_pipeDiag) DIAG_LOG(("PIPELINE: SSAO Pass took %.2f ms\n",(float)(aE.QuadPart-aS.QuadPart)*1000.0f/(float)pf.QuadPart));
+					}
 				{
 					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Deferred Lighting Pass ===\n"));
 					LARGE_INTEGER lS,lE; QueryPerformanceCounter(&lS);
@@ -1329,7 +1351,8 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					}
 					QueryPerformanceCounter(&lE);
 					if (s_pipeDiag) DIAG_LOG(("PIPELINE: Lighting+Tonemap took %.2f ms\n",(float)(lE.QuadPart-lS.QuadPart)*1000.0f/(float)pf.QuadPart));
-				}
+					}
+					}	// !probe 2097152 (deferred middle: SSAO + lighting + tonemap)
 				{
 					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
 					LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
@@ -1596,6 +1619,16 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 		// only legacy W3D alpha objects are routed to the forward pass.
 		if (m_customPassMode == SCENE_PASS_GBUFFER
 			&& (robj->Is_Alpha() || robj->Is_Translucent() || robj->Is_Additive()))
+			continue;
+
+		// FAN-2.0 probe bit524288: skip ALL non-terrain objects in the
+		// G-Buffer pass (gbuffer becomes terrain-solo). Splits "the gbuffer
+		// W3X/mesh draws' state churn arms the later VS-route terrain break"
+		// from "the gbuffer terrain draw itself / MRT binds are the armer".
+		// Clean-with-bit => the mesh-churn theory is confirmed; still broken
+		// => the armer is the terrain's own gbuffer draw or the MRT binds.
+		if (m_customPassMode == SCENE_PASS_GBUFFER
+			&& TheGlobalData && (TheGlobalData->m_terrainProbeMode & 524288))
 			continue;
 
 		// DIAG: trace all non-terrain objects during G-Buffer pass
