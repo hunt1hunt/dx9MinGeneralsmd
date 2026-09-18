@@ -1712,8 +1712,12 @@ void W3DDeferredRenderer::releaseMainZTexture()
 bool W3DDeferredRenderer::createFogResources()
 {
 	m_fogAvailable = false;
-	if (!TheGlobalData || !TheGlobalData->m_useVolumetricFog) {
-		return false;	// INI off: nothing to own
+	if (!TheGlobalData) return false;
+	// The debug probe drives resource creation too - VolumetricFogDebug must
+	// be usable WITHOUT UseVolumetricFog (probe independence; the fog gate
+	// alone made Debug=1 a silent no-op in the 2026-09-19 field run).
+	if (!TheGlobalData->m_useVolumetricFog && TheGlobalData->m_volFogDebug <= 0) {
+		return false;	// fog off and no probe requested: nothing to own
 	}
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) return false;
@@ -1845,7 +1849,10 @@ void W3DDeferredRenderer::volumetricFogPass(
 	const Vector3 &sunDir,
 	const Vector3 &sunColor)
 {
-	if (!TheGlobalData || !TheGlobalData->m_useVolumetricFog) return;
+	if (!TheGlobalData) return;
+	// Probe independence: VolumetricFogDebug alone must drive the pass
+	// (fog-gating the debug path made Debug=1 invisible in the field).
+	if (!TheGlobalData->m_useVolumetricFog && TheGlobalData->m_volFogDebug <= 0) return;
 	if (!m_fogAvailable || !m_fogFX || !m_fogSceneRT || !m_quadVB || !m_quadIB) return;
 	if (!m_mainZAvailable || !m_mainZTex) {
 		static bool s_zWarn = false;
@@ -1858,6 +1865,42 @@ void W3DDeferredRenderer::volumetricFogPass(
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) return;
 	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+
+	// One-shot entry diagnostic (2026-09-19 white-screen hunt): is our z
+	// texture STILL the bound DS at frame end? If not, something rebound the
+	// auto DS mid-frame and the scene depth never landed in our texture
+	// (samples then legitimately read the creation-clear 1.0 = far = fog
+	// everywhere = white). curDS==ours=0 is the smoking gun for that cause.
+	{
+		static bool s_entryLogged = false;
+		if (!s_entryLogged) {
+			s_entryLogged = true;
+			IDirect3DSurface9 *curDS = NULL;
+			d9->GetDepthStencilSurface(&curDS);
+			DIAG_LOG(("VF-2 ENTRY: fog=%d debug=%d zAvail=%d curDS==ours=%d fx=%d rt=%d\n",
+				(int)(TheGlobalData->m_useVolumetricFog != FALSE),
+				(int)TheGlobalData->m_volFogDebug,
+				(int)m_mainZAvailable,
+				(curDS == m_mainZSurface) ? 1 : 0,
+				m_fogFX ? 1 : 0,
+				m_fogSceneRT ? 1 : 0));
+			if (curDS) curDS->Release();
+		}
+	}
+
+	// Debug mode 3: one-shot CONTENT dump of the main z through the PROVEN
+	// effect readback (dumpShadowTexToPPM machinery). Decides the white
+	// screen: PPM shows geometry => the texture holds real depth and the
+	// problem is OUR effect's in-frame sampling; PPM flat white => the
+	// texture never received the scene (write/bind cause). No fog draw.
+	if (TheGlobalData->m_volFogDebug == 3) {
+		static bool s_zDumped = false;
+		if (!s_zDumped) {
+			s_zDumped = true;
+			dumpShadowTexToPPM(m_mainZTex, "E:\\mainz_dump.ppm");
+		}
+		return;
+	}
 
 	// 0) resolve the backbuffer into the scene RT (bloom-proven route).
 	IDirect3DSurface9 *backSurf = NULL;
@@ -1924,7 +1967,15 @@ void W3DDeferredRenderer::volumetricFogPass(
 	{
 		UINT passes = 0;
 		m_fogFX->SetTechnique("T");
-		if (SUCCEEDED(m_fogFX->Begin(&passes, 0))) {
+		HRESULT bhr = m_fogFX->Begin(&passes, 0);
+		{
+			static bool s_beginLogged = false;
+			if (!s_beginLogged) {
+				s_beginLogged = true;
+				DIAG_LOG(("VF-2 DRAW: Begin hr=0x%08x passes=%u.\n", (int)bhr, passes));
+			}
+		}
+		if (SUCCEEDED(bhr)) {
 			for (UINT p = 0; p < passes; p++) {
 				m_fogFX->BeginPass(p);
 				dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
