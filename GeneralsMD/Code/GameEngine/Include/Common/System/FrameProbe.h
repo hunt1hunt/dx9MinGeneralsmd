@@ -82,8 +82,45 @@ typedef enum FrameProbeCounter
 	FP_CNT_OBJECTS,			// GameLogic object count
 	FP_CNT_DRAWABLES,		// client drawable count
 	FP_CNT_PARTICLES,		// active particles
+	// T14 (2026-09-18): thread CPU microseconds consumed inside each region, to be
+	// read next to the matching t_* wall-clock column. Wall time alone CANNOT tell
+	// "the CPU is doing work" from "the CPU is blocked waiting on the GPU" -- which
+	// is exactly the open t_postfx question: after the ResolveTextureDDS cache fix,
+	// t_render fell 29% and t_postfx rose 74% with identical draw_calls. If
+	// cpu_postfx_us << t_postfx*1000 the block is NOT HUD work and the time was
+	// merely relocated by an async ~submit pipeline; if they match it is real CPU.
+	FP_CNT_CPU_RENDER_US,
+	FP_CNT_CPU_POSTFX_US,
+	FP_CNT_CPU_POSTFX_UI_US,
+	FP_CNT_CPU_POSTFX_MISC_US,
+	FP_CNT_CPU_POSTFX_DEBUG_US,
+	FP_CNT_CPU_PRESENT_US,
+	FP_CNT_CPU_RTTEX_US,
+	// T7 (2026-09-18): GPU-side completion probe. Uses D3DQUERYTYPE_EVENT (the one
+	// query type a translation layer is guaranteed to support -- D3D9 timestamps
+	// exist but are optional): issue after the scene block, then poll WITHOUT
+	// D3DGETDATA_FLUSH at the end of the later blocks. 1 = the GPU had still not
+	// caught up at that point. Purely observational -- no flush, no spin.
+	FP_CNT_GPU_BUSY_AT_POSTFX_END,
+	FP_CNT_GPU_BUSY_AT_PRESENT_END,
+	FP_CNT_GPU_QUERY_UNAVAILABLE,
 	FP_CNT_COUNT
 } FrameProbeCounter;
+
+// T14: slots for thread-CPU-time intervals. Separate from FrameProbeStage because
+// these nest (POSTFX contains POSTFX_UI/MISC/DEBUG) and a single start-time slot
+// per stage is already taken by the QPC wall clock.
+typedef enum FrameProbeCpuSlot
+{
+	FP_CPU_RENDER = 0,
+	FP_CPU_POSTFX,
+	FP_CPU_POSTFX_UI,
+	FP_CPU_POSTFX_MISC,
+	FP_CPU_POSTFX_DEBUG,
+	FP_CPU_PRESENT,
+	FP_CPU_RTTEX,
+	FP_CPU_SLOT_COUNT
+} FrameProbeCpuSlot;
 
 #ifdef __cplusplus
 extern "C++" {
@@ -101,6 +138,14 @@ void FrameProbeEnd(unsigned int stage);
 
 // Add `add` to a per-frame counter (magnitude, not time).
 void FrameProbeCount(unsigned int counter, int add);
+
+// T14: thread CPU time (kernel+user) consumed since the mark, in MICROSECONDS.
+// This is deliberately not a wall clock -- its whole purpose is to be compared
+// against the matching t_* wall column, to separate "CPU did work" from "CPU was
+// blocked waiting on the GPU". Per-slot so nested regions don't clobber each
+// other. Returns 0 when the probe is off or no mark was taken yet.
+void FrameProbeCpuMark(unsigned int slot);
+int  FrameProbeCpuSinceMark(unsigned int slot);
 
 // Close the current frame record: commit ring slot, handle flush triggers
 // (ring full / interval timer). Call EXACTLY once per GameEngine::update.
@@ -120,10 +165,14 @@ void FrameProbeFlush(void);
 #define FP_BEGIN(stage)		FrameProbeBegin(FP_##stage)
 #define FP_END(stage)		FrameProbeEnd(FP_##stage)
 #define FP_COUNT(cnt, add)	FrameProbeCount(FP_CNT_##cnt, (add))
+#define FP_CPU_MARK(slot)	FrameProbeCpuMark(FP_CPU_##slot)
+#define FP_CPU_SINCE(slot)	FrameProbeCpuSinceMark(FP_CPU_##slot)
 #else
 #define FP_BEGIN(stage)		((void)0)
 #define FP_END(stage)		((void)0)
 #define FP_COUNT(cnt, add)	((void)0)
+#define FP_CPU_MARK(slot)	((void)0)
+#define FP_CPU_SINCE(slot)	(0)
 #endif
 
 #endif // __FRAMEPROBE_H

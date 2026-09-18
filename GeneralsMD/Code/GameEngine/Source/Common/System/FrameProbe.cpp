@@ -39,6 +39,7 @@ static int           g_enabled = 0;
 static int           g_flushIntervalSec = 30;
 
 static __int64       g_stageStart[FP_STAGE_COUNT];
+static __int64       g_cpuMark[FP_CPU_SLOT_COUNT];	// T14: thread CPU time marks
 static __int64       g_qpcFreq = 0;
 static __int64       g_qpcFreqInvMs = 0;		// avoid per-call division: ms = dt * 1000 / freq (kept simple)
 
@@ -63,6 +64,7 @@ void FrameProbeInit(int enable, int flushIntervalSec)
 		g_flushIntervalSec = 30;
 
 	memset(g_ring, 0, sizeof(g_ring));
+	memset(g_cpuMark, 0, sizeof(g_cpuMark));
 	g_ringHead = 0;
 	g_ringCount = 0;
 	g_frameOrdinal = 0;
@@ -120,7 +122,13 @@ static const char *fpStageName(unsigned int stage)
 static const char *fpCounterName(unsigned int c)
 {
 	static const char *names[FP_CNT_COUNT] = {
-		"draw_calls", "state_changes", "objects", "drawables", "particles"
+		"draw_calls", "state_changes", "objects", "drawables", "particles",
+		// T14: must stay in lockstep with FrameProbeCounter in FrameProbe.h
+		"cpu_render_us", "cpu_postfx_us", "cpu_postfx_ui_us",
+		"cpu_postfx_misc_us", "cpu_postfx_debug_us", "cpu_present_us",
+		"cpu_rttex_us",
+		// T7: 1 = GPU had still not caught up at that point
+		"gpu_busy_postfx_end", "gpu_busy_present_end", "gpu_query_unavailable"
 	};
 	if (c >= FP_CNT_COUNT)
 		return "?";
@@ -227,6 +235,48 @@ void FrameProbeCount(unsigned int counter, int add)
 	g_ring[g_ringHead].counter[counter] += add;
 }
 
+// ---------------------------------------------------------------------------
+// T14: thread CPU time (kernel + user). GetThreadTimes reports 100ns FILETIME
+// units; the kernel updates them on the scheduler tick (1ms when a high timer
+// resolution is active, 15.6ms otherwise). That quantisation is an order of
+// magnitude finer than the ~270ms region we are trying to classify, so it is fit
+// for the purpose -- and unlike a D3D query it cannot fail on dgVoodoo.
+static __int64 fpThreadCpu100ns(void)
+{
+	FILETIME creation, exitTime, kernel, user;
+	__int64 k, u;
+	if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user))
+		return 0;
+	k = ((__int64)kernel.dwHighDateTime << 32) | (__int64)kernel.dwLowDateTime;
+	u = ((__int64)user.dwHighDateTime << 32) | (__int64)user.dwLowDateTime;
+	return k + u;
+}
+
+void FrameProbeCpuMark(unsigned int slot)
+{
+	if (g_enabled == 0 || slot >= FP_CPU_SLOT_COUNT)
+		return;
+	g_cpuMark[slot] = fpThreadCpu100ns();
+}
+
+int FrameProbeCpuSinceMark(unsigned int slot)
+{
+	__int64 now, delta;
+	if (g_enabled == 0 || slot >= FP_CPU_SLOT_COUNT)
+		return 0;
+	if (g_cpuMark[slot] == 0)
+		return 0;
+	now = fpThreadCpu100ns();
+	if (now == 0)
+		return 0;
+	delta = (now - g_cpuMark[slot]) / 10;	// 100ns -> microseconds
+	if (delta < 0)
+		return 0;
+	if (delta > 2147483647)
+		delta = 2147483647;					// never wrap an int column
+	return (int)delta;
+}
+
 void FrameProbeEndFrame(void)
 {
 	unsigned nowTick;
@@ -274,6 +324,8 @@ void FrameProbeShutdown(void) {}
 void FrameProbeBegin(unsigned int stage) { (void)stage; }
 void FrameProbeEnd(unsigned int stage) { (void)stage; }
 void FrameProbeCount(unsigned int counter, int add) { (void)counter; (void)add; }
+void FrameProbeCpuMark(unsigned int slot) { (void)slot; }
+int  FrameProbeCpuSinceMark(unsigned int slot) { (void)slot; return 0; }
 void FrameProbeEndFrame(void) {}
 void FrameProbeFlush(void) {}
 

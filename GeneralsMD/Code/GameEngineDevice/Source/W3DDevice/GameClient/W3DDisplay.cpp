@@ -195,6 +195,78 @@ static const char *getCurrentTimeString(void)
 
 static Bool s_notFirstDump = FALSE;
 
+// ---------------------------------------------------------------------------
+// T7 (2026-09-18): GPU-side completion probe.
+//
+// NOTE ON THE API: despite the DX8Wrapper name, this tree drives D3D9 --
+// DX8Wrapper::_Get_D3D_Device8() returns a D3D9 device and CreateQuery wants an
+// IDirect3DQuery9. (Confirmed the hard way: a first cut typed as IDirect3DQuery8
+// failed to compile with C2664 "cannot convert ... to IDirect3DQuery9 **".)
+//
+// D3D9 does have D3DQUERYTYPE_TIMESTAMP, so the design doc's "timestamp either
+// side of Present" would be expressible here. Deliberately not used: timestamp
+// queries are optional and commonly unsupported under translation layers, and
+// this run goes through dgVoodoo. D3DQUERYTYPE_EVENT is the one query type that
+// is always available, so it is the one that will actually produce data: issue it
+// right after the scene block, then poll WITHOUT D3DGETDATA_FLUSH at the end of
+// the later blocks. Not-signalled means the GPU had still not reached the end of
+// the scene at that point -- i.e. the CPU was running ahead of the GPU.
+//
+// This is purely observational. Polling with D3DGETDATA_FLUSH, or spinning, would
+// itself serialize the pipeline and destroy the asynchrony being measured. If the
+// device refuses to create the query we disable quietly and count it once, per
+// the T7 design note.
+static IDirect3DQuery9 *s_t7GpuQuery = NULL;
+static Int s_t7GpuState = 0;	// 0 = untried, 1 = ready, -1 = unavailable/disabled
+
+static void T7GpuRelease(void)
+{
+	if (s_t7GpuQuery)
+	{
+		s_t7GpuQuery->Release();
+		s_t7GpuQuery = NULL;
+	}
+	s_t7GpuState = -1;
+}
+
+static void T7GpuIssueAfterScene(void)
+{
+	IDirect3DDevice8 *dev;
+	if (s_t7GpuState < 0)
+		return;
+	dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev == NULL)
+		return;
+	if (s_t7GpuState == 0)
+	{
+		if (FAILED(dev->CreateQuery(D3DQUERYTYPE_EVENT, &s_t7GpuQuery)) || s_t7GpuQuery == NULL)
+		{
+			s_t7GpuQuery = NULL;
+			s_t7GpuState = -1;
+			FrameProbeCount(FP_CNT_GPU_QUERY_UNAVAILABLE, 1);
+			DEBUG_LOG(("T7: GPU event query unavailable, GPU-side probe disabled\n"));
+			return;
+		}
+		s_t7GpuState = 1;
+	}
+	if (FAILED(s_t7GpuQuery->Issue(D3DISSUE_END)))
+		T7GpuRelease();		// device lost: stop probing rather than spam
+}
+
+static Int T7GpuStillBehind(void)
+{
+	HRESULT hr;
+	if (s_t7GpuState != 1 || s_t7GpuQuery == NULL)
+		return 0;
+	hr = s_t7GpuQuery->GetData(NULL, 0, 0);		// no D3DGETDATA_FLUSH: never perturb
+	if (hr == S_OK)
+		return 0;								// GPU has caught up
+	if (hr == D3DERR_WASSTILLDRAWING)
+		return 1;
+	T7GpuRelease();								// unexpected: stop probing
+	return 0;
+}
+
 void StatDumpClass::dumpStats( Bool brief, Bool flagSpikes )
 {
 	if( !m_fp )
@@ -1881,6 +1953,7 @@ AGAIN:
 				FP_END(DRAW_VIEWS);
 
 				FP_BEGIN(DRAW_RTTEX);	// SagePerfDiag T11: water + projected-shadow RT updates
+				FP_CPU_MARK(RTTEX);	// T14
 
 			// 2026-09-18: both of these render *into* offscreen textures that only the main
 			// render block consumes, so when that block is skipped the work is discarded.
@@ -1907,6 +1980,7 @@ AGAIN:
 			}
 
 				FP_END(DRAW_RTTEX);
+				FP_COUNT(CPU_RTTEX_US, FP_CPU_SINCE(RTTEX));
 		}
 
 		Debug_Statistics::End_Statistics();	//record number of polygons rendered in RenderTargetTextures.
@@ -1940,18 +2014,25 @@ AGAIN:
 
 				// draw all views of the world
 				FP_BEGIN(RENDER);	// SagePerfDiag: world scene (views, shadows, reflections)
+				FP_CPU_MARK(RENDER);	// T14: thread CPU consumed inside the scene block
 				drawViews();
 				FP_END(RENDER);
+				FP_COUNT(CPU_RENDER_US, FP_CPU_SINCE(RENDER));
+				T7GpuIssueAfterScene();	// T7: GPU-side marker for "scene block submitted"
 
 				FP_BEGIN(POSTFX);	// SagePerfDiag: UI/overlay composition
+				FP_CPU_MARK(POSTFX);	// T14
 				FP_BEGIN(POSTFX_UI);	// SagePerfDiag T13: the HUD
+				FP_CPU_MARK(POSTFX_UI);	// T14: the number that decides the +74% question
 				// draw the user interface
 				TheInGameUI->DRAW();
 				FP_END(POSTFX_UI);
+				FP_COUNT(CPU_POSTFX_UI_US, FP_CPU_SINCE(POSTFX_UI));
 
 				// end of video example code
 
 				FP_BEGIN(POSTFX_MISC);	// SagePerfDiag T13: mouse/video/copyright/letterbox/cinematic
+				FP_CPU_MARK(POSTFX_MISC);	// T14
 				// draw the mouse
 				if( TheMouse )
 					TheMouse->DRAW();
@@ -2000,8 +2081,10 @@ AGAIN:
 					m_cinematicTextFrames--;
 				}
 				FP_END(POSTFX_MISC);
+				FP_COUNT(CPU_POSTFX_MISC_US, FP_CPU_SINCE(POSTFX_MISC));
 
 				FP_BEGIN(POSTFX_DEBUG);	// SagePerfDiag T13: debug display + FPS stats + framerate bar
+				FP_CPU_MARK(POSTFX_DEBUG);	// T14
 				if ( m_debugDisplayCallback )
 				{
 					// draw the current debug display
@@ -2023,6 +2106,7 @@ AGAIN:
 				}
 #endif
 				FP_END(POSTFX_DEBUG);
+				FP_COUNT(CPU_POSTFX_DEBUG_US, FP_CPU_SINCE(POSTFX_DEBUG));
 
 #ifdef PERF_TIMERS
 				TheGraphDraw->render();
@@ -2030,9 +2114,15 @@ AGAIN:
 #endif
 				// render is all done!
 				FP_END(POSTFX);
+				FP_COUNT(CPU_POSTFX_US, FP_CPU_SINCE(POSTFX));
+				FP_COUNT(GPU_BUSY_AT_POSTFX_END, T7GpuStillBehind());	// T7: poll after the HUD
+
 				FP_BEGIN(PRESENT);	// SagePerfDiag: End_Render includes the flip/vsync wait
+				FP_CPU_MARK(PRESENT);	// T14
 				WW3D::End_Render();
 				FP_END(PRESENT);
+				FP_COUNT(CPU_PRESENT_US, FP_CPU_SINCE(PRESENT));
+				FP_COUNT(GPU_BUSY_AT_PRESENT_END, T7GpuStillBehind());	// T7: same query, later poll
 
 				// SagePerfDiag P1/T6: per-frame draw submission & state-change magnitudes
 				// (counters already maintained by DX8Wrapper; just harvest them)
