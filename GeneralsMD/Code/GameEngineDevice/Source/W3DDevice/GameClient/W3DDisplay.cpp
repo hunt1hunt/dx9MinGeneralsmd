@@ -127,6 +127,85 @@ static Real theLightYOffset = 0.07f;
 static Int theFlashCount = 0;
 #endif
 
+// ---------------------------------------------------------------------------
+// T7 (2026-09-18): GPU-side completion probe.
+//
+// Kept OUT of the "Statistical Dump" block below: that block is behind
+// `#ifdef DUMP_PERF_STATS` (Internal only), and putting probe code there made the
+// Release build fail to compile (C2065) while the call sites in draw() remained.
+//
+// NOTE ON THE API: despite the DX8Wrapper name, this tree drives D3D9 --
+// DX8Wrapper::_Get_D3D_Device8() returns a D3D9 device and CreateQuery wants an
+// IDirect3DQuery9. (Confirmed the hard way: a first cut typed as IDirect3DQuery8
+// failed to compile with C2664 "cannot convert ... to IDirect3DQuery9 **".)
+//
+// D3D9 does have D3DQUERYTYPE_TIMESTAMP, so the design doc's "timestamp either
+// side of Present" would be expressible here. Deliberately not used: timestamp
+// queries are optional and commonly unsupported under translation layers.
+// D3DQUERYTYPE_EVENT is the one query type that is always available, so it is the
+// one that will actually produce data: issue it right after the scene block, then
+// poll WITHOUT D3DGETDATA_FLUSH at the end of the later blocks. Not-signalled means
+// the GPU had still not reached the end of the scene at that point.
+//
+// This is purely observational. Polling with D3DGETDATA_FLUSH, or spinning, would
+// itself serialize the pipeline and destroy the asynchrony being measured. If the
+// device refuses to create the query we disable quietly and count it once, per
+// the T7 design note.
+static IDirect3DQuery9 *s_t7GpuQuery = NULL;
+static Int s_t7GpuState = 0;	// 0 = untried, 1 = ready, -1 = unavailable/disabled
+
+// T15: process-wide CPU sample taken when the postfx block starts, so its end can
+// report how much CPU -- across ALL threads -- was burned during the HUD.
+static Int s_t15PostfxPc0 = 0;
+
+static void T7GpuRelease(void)
+{
+	if (s_t7GpuQuery)
+	{
+		s_t7GpuQuery->Release();
+		s_t7GpuQuery = NULL;
+	}
+	s_t7GpuState = -1;
+}
+
+static void T7GpuIssueAfterScene(void)
+{
+	IDirect3DDevice8 *dev;
+	if (s_t7GpuState < 0)
+		return;
+	dev = DX8Wrapper::_Get_D3D_Device8();
+	if (dev == NULL)
+		return;
+	if (s_t7GpuState == 0)
+	{
+		if (FAILED(dev->CreateQuery(D3DQUERYTYPE_EVENT, &s_t7GpuQuery)) || s_t7GpuQuery == NULL)
+		{
+			s_t7GpuQuery = NULL;
+			s_t7GpuState = -1;
+			FrameProbeCount(FP_CNT_GPU_QUERY_UNAVAILABLE, 1);
+			DEBUG_LOG(("T7: GPU event query unavailable, GPU-side probe disabled\n"));
+			return;
+		}
+		s_t7GpuState = 1;
+	}
+	if (FAILED(s_t7GpuQuery->Issue(D3DISSUE_END)))
+		T7GpuRelease();		// device lost: stop probing rather than spam
+}
+
+static Int T7GpuStillBehind(void)
+{
+	HRESULT hr;
+	if (s_t7GpuState != 1 || s_t7GpuQuery == NULL)
+		return 0;
+	hr = s_t7GpuQuery->GetData(NULL, 0, 0);		// no D3DGETDATA_FLUSH: never perturb
+	if (hr == S_OK)
+		return 0;								// GPU has caught up
+	if (hr == D3DERR_WASSTILLDRAWING)
+		return 1;
+	T7GpuRelease();								// unexpected: stop probing
+	return 0;
+}
+
 //*****************************************************************************************
 //*****************************************************************************************
 //**** Start Statistical Dump *************************************************************
@@ -195,82 +274,15 @@ static const char *getCurrentTimeString(void)
 
 static Bool s_notFirstDump = FALSE;
 
-// ---------------------------------------------------------------------------
-// T7 (2026-09-18): GPU-side completion probe.
-//
-// NOTE ON THE API: despite the DX8Wrapper name, this tree drives D3D9 --
-// DX8Wrapper::_Get_D3D_Device8() returns a D3D9 device and CreateQuery wants an
-// IDirect3DQuery9. (Confirmed the hard way: a first cut typed as IDirect3DQuery8
-// failed to compile with C2664 "cannot convert ... to IDirect3DQuery9 **".)
-//
-// D3D9 does have D3DQUERYTYPE_TIMESTAMP, so the design doc's "timestamp either
-// side of Present" would be expressible here. Deliberately not used: timestamp
-// queries are optional and commonly unsupported under translation layers, and
-// this run goes through dgVoodoo. D3DQUERYTYPE_EVENT is the one query type that
-// is always available, so it is the one that will actually produce data: issue it
-// right after the scene block, then poll WITHOUT D3DGETDATA_FLUSH at the end of
-// the later blocks. Not-signalled means the GPU had still not reached the end of
-// the scene at that point -- i.e. the CPU was running ahead of the GPU.
-//
-// This is purely observational. Polling with D3DGETDATA_FLUSH, or spinning, would
-// itself serialize the pipeline and destroy the asynchrony being measured. If the
-// device refuses to create the query we disable quietly and count it once, per
-// the T7 design note.
-static IDirect3DQuery9 *s_t7GpuQuery = NULL;
-static Int s_t7GpuState = 0;	// 0 = untried, 1 = ready, -1 = unavailable/disabled
-
-// T15: process-wide CPU sample taken when the postfx block starts, so its end can
-// report how much CPU -- across ALL threads -- was burned during the HUD. A
-// near-zero value alongside ~280ms of wall time proves no thread was running.
-static Int s_t15PostfxPc0 = 0;
-
-static void T7GpuRelease(void)
-{
-	if (s_t7GpuQuery)
-	{
-		s_t7GpuQuery->Release();
-		s_t7GpuQuery = NULL;
-	}
-	s_t7GpuState = -1;
-}
-
-static void T7GpuIssueAfterScene(void)
-{
-	IDirect3DDevice8 *dev;
-	if (s_t7GpuState < 0)
-		return;
-	dev = DX8Wrapper::_Get_D3D_Device8();
-	if (dev == NULL)
-		return;
-	if (s_t7GpuState == 0)
-	{
-		if (FAILED(dev->CreateQuery(D3DQUERYTYPE_EVENT, &s_t7GpuQuery)) || s_t7GpuQuery == NULL)
-		{
-			s_t7GpuQuery = NULL;
-			s_t7GpuState = -1;
-			FrameProbeCount(FP_CNT_GPU_QUERY_UNAVAILABLE, 1);
-			DEBUG_LOG(("T7: GPU event query unavailable, GPU-side probe disabled\n"));
-			return;
-		}
-		s_t7GpuState = 1;
-	}
-	if (FAILED(s_t7GpuQuery->Issue(D3DISSUE_END)))
-		T7GpuRelease();		// device lost: stop probing rather than spam
-}
-
-static Int T7GpuStillBehind(void)
-{
-	HRESULT hr;
-	if (s_t7GpuState != 1 || s_t7GpuQuery == NULL)
-		return 0;
-	hr = s_t7GpuQuery->GetData(NULL, 0, 0);		// no D3DGETDATA_FLUSH: never perturb
-	if (hr == S_OK)
-		return 0;								// GPU has caught up
-	if (hr == D3DERR_WASSTILLDRAWING)
-		return 1;
-	T7GpuRelease();								// unexpected: stop probing
-	return 0;
-}
+// NOTE (2026-09-18): the T7/T15 probe helpers used to live HERE, which is inside
+// `#ifdef DUMP_PERF_STATS` -- a macro that is defined for Internal but NOT for
+// Release. So a Release build lost the definitions while their unconditional call
+// sites in draw() remained, and failed with C2065 'T7GpuIssueAfterScene' /
+// 's_t15PostfxPc0' undeclared. (Two call sites only, because the T7GpuStillBehind()
+// uses are arguments to FP_COUNT, which Release expands to ((void)0) -- the
+// argument therefore never gets compiled.)
+// They have been moved above the "Start Statistical Dump" banner, where they
+// belong: they are probe code, not part of the stat-dump feature.
 
 void StatDumpClass::dumpStats( Bool brief, Bool flagSpikes )
 {
