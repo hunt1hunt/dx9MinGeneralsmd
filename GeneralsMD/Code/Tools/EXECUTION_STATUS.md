@@ -4,7 +4,300 @@
 > ②桌面 `SagePerfDiag协作` 文件夹（本机快照）。以 GitHub 为准，桌面版每次会话结束刷新。
 > 协作者开工前先 `git pull` 并读此看板，认领任务后改状态并提交。
 
-## 当前状态（2026-09-18 收工）：**W3X 贴图路径缓存修复落地（t_total −12.7%）+ T11/T12/T13 探针；B2 待换平稳场景**
+## 2026-09-18（会话二）：**#3 退出期 AV 已根治（关机顺序）｜#1 B2 重复性验收通过（2.80%）**
+
+> **本轮两项均闭环**：① 退出期 AV —— 定位到 `SubsystemInterfaceList::shutdownAll()` 先删子系统、
+> `~Shell` 后弹栈导致在已释放的 `TheGameState` 上跑 `runInit`；修复后 AV **76 → 0**，已两次独立场景验证。
+> ② B2 —— `00000036.sav` × 3 轮，轮间极差 **2.80% < 5%**，P0 硬验收结案。
+> **exe `8a5c4015`**（Internal + LAA）。旧基线 `09593478` 保留在 `RTSI.exe.t13fix`。
+
+### A. 证据复活：两轮运行**各 76 次** EXCEPTION DUMP
+
+`E:\!!!!!!!QWCSB\DebugLogFileI.txt`（14:46）与 `DebugLogFilePrevI.txt`（14:39），命令行均为
+`-win -ignoreAsserts -benchmark 360`（即 `bench_capture.ps1 -ManualLoad`）。
+
+⚠️ **计数勘误（会话二自纠）**：先前记成"152 次"，是把 **`********** END EXCEPTION DUMP ********`
+结束标记也算进了 `grep -c "EXCEPTION DUMP"`**（每份 dump 贡献 2 行）。精确数法：
+`grep -c "^\*\*\*\*\*\*\*\*\*\*\* EXCEPTION DUMP"` 或数 `Access address` 行 → **76 次**。
+
+⇒ 上一轮"勘误 D：AV 未复现"**只在那一轮成立**。用 `-ManualLoad` 跑必然复现，**次数精确可重复（76/76）**，
+不是间歇性 use-after-free 的"被内存布局盖住"。**AV 只在退出路径触发**，所以诊断不需要打满 210 秒采集。
+
+### B. 崩溃点被 `SHX:` 面包屑钉死
+
+```
+SHX: doPop -> deleteInstance
+SHX: doPop <- deleteInstance
+SHX: doPop -> newTop->runInit      ← 打印了
+                                   ← 没有配对的 "<-"
+[152 次 AV，全部同一现场]
+SHX: doPop <- newTop->runInit      ← runInit 最终返回，之后一路正常退出
+```
+
+⇒ AV 在 `Shell::doPop` 对其弹出后**新栈顶**调 `runInit()` 的**内部**，且 152 次全在**这一次 runInit 调用内**。
+
+### C. 新栈顶 = `Menus/SaveLoad.wnd`，其 init 回调 = `SaveLoadMenuInit`
+
+从 `WindowZH.big` 提取（`LAYOUTBLOCK` 明文，未加密）：
+
+```
+STARTLAYOUTBLOCK
+  LAYOUTINIT = SaveLoadMenuInit;
+  LAYOUTUPDATE = [None];
+  LAYOUTSHUTDOWN = [None];
+ENDLAYOUTBLOCK
+WINDOW
+  ...
+  NAME = "PopupSaveLoad.wnd:SaveLoadMenu";     ← 布局文件名 SaveLoad.wnd，窗口名却是 PopupSaveLoad.wnd（原数据如此）
+```
+
+调用链：`SaveLoadMenuInit` → `TheGameState->populateSaveGameListbox()` →
+`iterateSaveFiles(addGameToAvailableList)` → `getSaveGameInfoFromFile()` → `findBlockInfoByToken()`
+→ **`blockInfo->blockName == token`**，即崩溃地址 `asciistring.h(589)` 的 `operator==`。
+
+### D. 数字线索
+
+- 存档目录 **38 个 .sav**；76 = 38 × 2。
+- 寄存器：`Ecx=2AA84E78` **恒定**（= `s2`，即 `token`；每次 getSaveGameInfoFromFile 新建的 token
+  在堆上落到同一地址，故恒定）；`Edx=Eax=0xC7000008 / 0x80000008`（= 坏的那个 `s1`）。
+- `str() = m_data + 8`（`_INTERNAL` 布局里 `AsciiStringData` 首字段是 `m_debugptr` 占 8 字节）
+  ⇒ 坏的是某个 `blockName` 的 **`m_data`**，值为非指针（已释放/池复用内存）。
+- **（已在会话二 E/F 段解出，见下）**——原先"4 次/文件与 idx 0 矛盾"的困惑，根因不在块表内容，
+  而在**块表所在对象已被 delete**：遍历的是已释放的 `std::list`，其内容随时序而变，
+  故每次运行表现不同（小整数 / NULL）。
+
+### E. 本轮已做：一次构建的全面埋点（纯 `DEBUG_LOG`，零逻辑改动）
+
+改动 2 文件 **+83 行 / −0 行**：
+
+| 文件 | 埋点 |
+|---|---|
+| `GameState.cpp` | `findBlockInfoByToken`（进入+**逐项先打索引再打名字**，名字本身炸也能定位到项）/ `populateSaveGameListbox`（进入+**整张 SAVELOAD 块表 dump**）/ `getSaveGameInfoFromFile`（进入/每 token/退出）/ `addGameToAvailableList`（每文件 + **catch 分支**）/ `init()`（检测重复 init）/ `~GameState()` |
+| `PopupSaveLoad.cpp` | `SaveLoadMenuInit` 分段（NAMEKEY 段 / 窗口查找段 / populate / updateMenuActions / 退出）|
+
+`catch` 分支的埋点是特意加的：`addGameToAvailableList` 用 `catch(...)` 吞掉一切，
+若 AV 在某处被转成 C++ 异常，**该埋点会点名是哪个文件**——这也能解释"为什么挨了 152 次还能正常返回"。
+
+构建 **`56106bdb`**（Internal，bat 自动部署 + 手工补打 LAA `0x010E→0x012E`）。
+旧基线 `09593478`(T13fix) 仍保留为 `RTSI.exe.t13fix`。标记字符串 4/4 命中（硬规则 #4）。
+
+### F. 旁证线索（**未证**，不作结论）
+
+`Xfer.cpp:191` 的 `Xfer::xferAsciiString`：
+
+```cpp
+xferImplementation( (void *)asciiStringData->str(), sizeof(Byte) * asciiStringData->getLength() );
+```
+
+丢掉 const 直接往引用计数字符串的**共享缓冲**里写。`AsciiString` 没有写时复制（只用 `m_refCount`
+共享 `AsciiStringData`），所以这是**潜在污染源**。是否与本案相关，待埋点判定（**结论：与本案无关**，见 F2）。
+
+### F2. 🔴【根因已定】关机顺序：子系统已 `delete`，`~Shell` 才弹栈
+
+**不是** use-after-free 某个 `AsciiString`，而是**引擎关机顺序**问题：
+
+```
+引擎退出
+  └─ SubsystemInterfaceList::shutdownAll()          ← SubsystemInterface.cpp:195
+        // must go in reverse order!
+        delete sys;                                 ← 删掉 TheGameState 等子系统
+        （【不把全局指针置空】→ 全部变成悬垂指针）
+  └─ 之后才轮到 ~Shell                                ← Shell.cpp:86
+        while(newTop) { popImmediate(); }           ← 逐个弹掉剩余屏幕
+              └─ doPop → newTop->runInit()
+                    └─ SaveLoadMenuInit
+                          └─ TheGameState->populateSaveGameListbox()   ← 用已释放的 TheGameState
+                                └─ m_snapshotBlockList[SAVELOAD].size()  ← 已释放的 std::list
+                                      _M_next == NULL → AV @ 0x00000000
+```
+
+**关键代码**（`SubsystemInterface.cpp:195`）：
+
+```cpp
+void SubsystemInterfaceList::shutdownAll()
+{
+	// must go in reverse order!
+	for (SubsystemList::reverse_iterator it = m_subsystems.rbegin(); it != m_subsystems.rend(); ++it)
+	{
+		SubsystemInterface* sys = *it;
+		delete sys;          // ← 只 delete，不置空 TheGameState / TheGameText / TheWindowManager 等
+	}
+	m_subsystems.clear();
+}
+```
+
+⇒ `~Shell` 运行时面对的是**一整片悬垂全局**，不止 `TheGameState` 一个。
+所以修复必须是**整体抑制 `runInit`**，而不是给 `TheGameState` 单独加判空。
+
+**埋点给出的硬证据**：
+
+| 观测 | 说明 |
+|---|---|
+| `GameState::init()` = **1 次** | 无重复初始化，排除"块表重复注册" |
+| `~GameState` = **39 次**，文件信息临时对象 = **38 次** | **多出的第 39 次孤立在退出瞬间**（日志 7144 行），恰在 ScoreScreen 弹出前 |
+| 全项目 `GameState` 只有 2 处实例（`TheGameState` + `getSaveGameInfoFromFile` 栈对象） | 第 39 次只能是 `TheGameState` 本体 |
+| 崩溃栈 = `stl/_list.h(92) _M_incr()`，`Access address:00000000` | 遍历已释放 list，哨兵 `_M_next` 被清零 |
+| `catch` 命中 = 0 | 排除"AV 被转成 C++ 异常吞掉"的假设 |
+| 启动时（日志 2118）块表 dump 干净（17 项名字全对） | 块表**内容**没问题，是**所在对象**没了 |
+
+同一根因也解释了 14:46 那次**另一种表现**（`0xC7000008`/`0x80000008`）——
+同一块内存**被复用后**的内容，所以时而是小整数、时而是 NULL。
+
+**修复**：`~Shell` 弹栈期间不再对新栈顶调 `runInit()`（销毁期初始化界面既无意义，又必然去碰已释放的全局）。
+
+- `Shell.h`：+1 成员 `Bool m_isShuttingDown;`
+- `Shell.cpp`：构造置 FALSE；`~Shell` 置 TRUE；`doPop` 中该标志为真时**跳过 `runInit`**
+  （`runShutdown` 照常执行，被弹屏幕的正确清理不受影响）
+
+**✅ 已验证**（exe `8a5c4015`，Internal + LAA，同命令复跑）：
+
+| 判据 | 修复前 | 修复后 |
+|---|---|---|
+| `EXCEPTION DUMP` | **76** | **0** |
+| `SHX: doPop suppressing newTop->runInit (shell shutting down)` | — | **命中 2 次** |
+| `SHX: ~Shell draining N screen(s)` | — | **3**（= MainMenu / SaveLoad / ScoreScreen）|
+
+判据 2 是**因果证明**而非"没崩了"：它点名的正是原先那个 `doPop → newTop->runInit`
+（对 SaveLoad.wnd 那次），即把 `TheGameState->populateSaveGameListbox()` 走进去的入口。
+退出序列现为：弹 3 屏 → 2 次"新栈顶暴露"被抑制（第 3 次弹到空栈，无新栈顶故无 runInit）→ 日志正常收尾。
+
+⚠️ **遗留**：`GameState.cpp` / `PopupSaveLoad.cpp` / `Shell.cpp` 里的 `SHXL:`/`SHX:` 埋点本轮**保留**——
+纯 `DEBUG_LOG`，且只在菜单切换/存档枚举时触发，不影响帧时。后续如要清理，按前缀 grep 即可。
+
+### G. 新增工具 `Tools/b2_repeat.py`（B2 验收器）+ 三条勘误
+
+B2 一直缺一个对口工具：`spd_analyzer.py` 是单/双文件口径，且中位数取全文件、不做 objects 对齐。
+新工具按**轮**聚合（按 `frameprobe_<tick>_<窗口序号>` 的序号回绕切分轮次）、只在稳态窗口取中位、
+按 `(max−min)/min` 判轮间极差 <5%。
+
+**已用已知答案校验**：对 12 份存档基准 `.spd` 复现出看板头条 —— 稳态 **128 帧**、`t_total` 中位
+**1095.82ms**、`t_render` **865.10**、`t_postfx` **110.22**、objects 651、draw_calls 1783（与看板 1095.3 / 865.4 / 110.2 吻合）。
+
+- **勘误 E**：看板「勘误 B」那张表把文件 0–7 的"228 行"写成了**每份**，**实为 8 份之和**
+  （29+39+33+21+21+28+28+29=228）；表里 8–11 才是每份行数。**结论本身（后 4 份是加速模式）成立**，
+  已由工具独立确认（零渲染占比 91–97%）。
+- **勘误 F**："对齐 objects"**不充分**：加速模式帧的 objects 与普通模式**完全一样**
+  （实测 654–683 vs 649–654）。必须**先按文件剔快模式、再算阈值**；顺序反了中位就被 1/30 渲染的帧拉走
+  （实测把 1095ms 拉成 140ms）。工具已按此实现。
+- **勘误 G**：加速模式热键 = **`F`**（`MetaEvent.cpp:757` 把 `MSG_META_TOGGLE_FAST_FORWARD_REPLAY` 绑到 F；
+  `CommandXlat.cpp:3316` 循环 Normal→2x→3x→Max 四档）。**B2 跑批时手别碰 F。**
+- 待核对：看板记 T12 构建为 `b56c9d6a`，实测 `RTSI.exe.t12fix` = **`dded8532`**。
+
+#### ⚠️ 工具自纠：`b2_repeat.py` 的轮次定序不能用 tick
+
+第一版按 `tick` 升序切轮，结果 `--last 3` 选中了**几天前旧会话**的文件，判定报出
+`❌ 2781%（第1轮中位 16ms / 第2轮仅 1 帧 21548ms）`——那个 21548ms 正是**旧构建 ring-slot-0 累加伪影**的指纹。
+
+**根因**：`tick` 是 `GetTickCount()`（开机毫秒），**系统重启会归零**。上一开机周期的文件
+tick（实测 9.2 亿）反而比本周期（9300 万）更大，按 tick 排序会把它们排到最新一轮**之后**。
+**已修**：改按**文件 mtime** 定序；并把「序号回绕」「tick 不增（跨重启）」「tick 跳变 > 5 分钟」
+都作为切轮条件。**教训：任何用 tick 做跨会话排序的地方都要先问"重启后还成立吗"。**
+
+### ✅ B2 重复性验收 —— **通过（2.80%）**，2026-09-18 结案
+
+**A/B 设计**：exe `8a5c4015`（含 AV 修复），存档 **`00000036.sav`**（游戏内名 `Golden Oasis12345`，
+**开局档**，静止），`-ManualLoad -WarmupSeconds 150 -Seconds 210 -Runs 3`。
+
+| 指标（`objects>=586` 稳态窗口）| 第 1 轮 | 第 2 轮 | 第 3 轮 |
+|---|---|---|---|
+| 稳态帧数 | 210 | 226 | 235 |
+| objects 中位 | 650 | 650 | 650 |
+| draw_calls 中位 | 1714 | 1716 | 1713 |
+| **t_total 中位 ms** | 1028.84 | 1002.63 | **1000.85** |
+| t_total P95 ms | 1536.73 | 1493.56 | 1674.92 |
+| t_render 中位 ms | 615.34 | 597.60 | 597.73 |
+| t_postfx 中位 ms | 296.27 | 274.32 | 272.69 |
+
+**判定：轮间极差 `(max−min)/min` = 2.80% < 5%** ✅（三轮均**普通模式**，无加速模式文件；
+场景一致性极好：objects 完全相同、draw_calls 波动 ±0.1%）。
+
+⇒ **P0「同场景 3 遍重复性 <5%」硬验收结案**（自 2026-09-17 挂账）。**基准场景从此定死为 `00000036.sav`**；
+`00000037.sav` 中局档动态性太强（轮间 9–16%），**不得用作重复性基准**。
+
+**⚠️ 副产物：`t_render`↓ / `t_postfx`↑ 的迁移在第二个场景独立复现**
+
+与旧基线（`896a9d2b`，同存档，12 份 .spd）对比：
+
+| 指标 | 旧基线 | 本轮 | 变化 |
+|---|---|---|---|
+| t_render 中位 | 865.10 | 597.60 | **−267.5 ms** |
+| t_postfx 中位 | 110.22 | 272.69 | **+162.5 ms** |
+| **t_total 中位** | 1095.82 | 1000.85 | **−95.0 ms** |
+
+⇒ 与 2026-09-18 在**中局档**上看到的模式同型（那次 −195 / +84 / 净 **−105ms**）。
+**两个互相独立的场景都出现"render 降、postfx 升、净收益被吃掉一截"** —— 这加强了
+"**时间被挪位置而非新增**"的解释（**已于同日 T14/T7 证实，见下节**）。
+
+### ✅ T14/T7 实测：`t_postfx` 是**阻塞**不是 CPU 工作 —— "时间挪位置"**证实**
+
+**手段**（一次构建，均为追加式、零逻辑改动）：
+
+- **T14 线程 CPU 时间**：`GetThreadTimes` 按 slot 计（支持嵌套区间），新增 7 个整数列
+  `cpu_render_us / cpu_postfx_us / cpu_postfx_ui_us / cpu_postfx_misc_us / cpu_postfx_debug_us /
+  cpu_present_us / cpu_rttex_us`。判据 = 与同名 `t_*` 墙钟列对比。
+  ⚠️ **量化粒度 15.625ms**（系统默认时钟节拍，实测所有值均为 15625 的整数倍）——判"数量级"够用，判"小差异"不够。
+- **T7 GPU 事件查询**：`D3DQUERYTYPE_EVENT`，RENDER 结束处 `Issue`，POSTFX/PRESENT 结束时**非阻塞轮询**
+  （**不加 `D3DGETDATA_FLUSH`、不 spin**——任何会 flush 或自旋的探测本身就把异步管线序列化，破坏要测的现象）。
+  新增 3 列 `gpu_busy_postfx_end / gpu_busy_present_end / gpu_query_unavailable`。
+  实测 **`gpu_query_unavailable = 0` ⇒ dgVoodoo 支持事件查询，T7 桩可用**。
+
+⚠️ **踩坑**：本引擎**实为 D3D9**（`DX8Wrapper` 只是历史名，`_Get_D3D_Device8()` 返回 D3D9 设备）。
+首版按 D3D8 写 `IDirect3DQuery8`，编译失败
+`C2664: cannot convert parameter 2 from 'int **' to 'struct IDirect3DQuery9 **'`，已改 `IDirect3DQuery9`。
+所以设计文档里"TIMESTAMP 包夹 Present"在 D3D9 下**本来可行**；此处仍选 EVENT，
+因为 TIMESTAMP 是可选能力、在翻译层上常不支持，而 EVENT 是唯一保证可用的。
+
+**实测**（`00000036.sav` 基准场景，120s+120s，**稳态窗口 137 帧**，objects 中位 650）：
+
+| 阶段 | 墙钟 ms | CPU ms | CPU 占比 | 非零帧 |
+|---|---|---|---|---|
+| `t_draw_rttex` | 83.0 | 62.50 | **75.3%** | 137/137 |
+| `t_render` | 583.5 | 187.50 | 32.1% | 137/137 |
+| **`t_postfx`** | **276.4** | **0.00** | **0.0%** | **31/137** |
+| `t_postfx_ui` | 275.5 | 0.00 | 0.0% | 27/137 |
+| `t_present` | 0.6 | 0.00 | 0% | 5/137 |
+| **`t_total`** | **937.8** | 合计 **265.6** | **26.7%** | — |
+
+（CPU 占比按**逐帧比值的中位**算，即 26.7% / 阻塞 73.3%；不是"中位数相加"，两者差 1.6 个百分点以内。
+逐帧 CPU 合计 P5 218.8 / 中位 265.6 / P95 328.1 ms —— 分布很紧。）
+
+**`gpu_busy_postfx_end` = 0 / 137，`gpu_busy_present_end` = 0 / 137。**
+
+**结论**：
+
+1. **`t_postfx` 的 276ms 不是 HUD 的 CPU 成本** —— 中位 **0** CPU，仅 31/137 帧有任何 CPU 消耗（最大 109ms）。
+   线程是在**等**，不是在算。⇒ **缓存修复带来的 postfx 上升不是新增成本，"时间挪位置"成立。**
+2. **机制**：`gpu_busy_postfx_end = 0` ⇒ CPU 进 HUD 后一直等到 GPU 把场景画完才继续。
+   即 **GPU 执行场景的真实耗时，是以"CPU 在紧随其后的块里阻塞"的形式浮现**——
+   `t_render` 记的是 CPU **提交**时间，GPU 的实际工作被记到了下一个块上。
+3. **完整解释 `+74.5%`**：缓存修复让**提交**变快（`t_render` −267ms），CPU 更早进入 postfx、于是**在那里等得更久**（+162ms）；
+   **真正净收益只有 −95ms，其余是同一笔等待换了个记账格子。**
+4. **附带的重要量化**：这帧 **73.3% 的时间 CPU 根本没在跑**（逐帧比值中位；约 672ms / 937.8ms）。
+   **整个渲染管线由 GPU/驱动主导** —— 这与"每次 draw call 0.485ms"的旧靶子是同一个事实的两面。
+
+**推论（未单独验证）**：既然 `t_postfx` 里是等待，**优化 HUD 的 CPU 代码不会有收益**；
+要动就得动 GPU 侧工作量（draw call 数 / 状态切换 / 阴影与水面 RT）。
+
+### H. CodeGraph 状况（2026-09-18）
+
+一次 `codegraph_explore` 返回"busy（排队 45s 后建议重试）"。排查结论：**daemon 存活、命名管道在、
+CPU 仅 25s（未在狂算）⇒ 是查询池（3 worker）被占满的瞬时排队，重试即通，不是索引损坏。**
+
+真实病灶（`.codegraph/daemon.log`）：两次 `Main thread unresponsive ... killing the wedged process (#850)`；
+`database is locked`；**多 daemon 抢锁**（"Another daemon (pid 9988) already holds the lock; exiting"）；
+一次 **142 秒同步 36 个文件**；库 **691 MB / 4259 文件**（117k 节点、376k 边，
+同时索引 `Generals/Code` 2023 个 + `GeneralsMD/Code` 2625 个源文件，两棵树**不是硬链接**）。
+
+`codegraph status` 明确告警 **"Index was built by an earlier version; re-index"**。
+**决定：不在会话内重建**（可能数小时），**收工后跑 `codegraph index`**。
+卡死时的应急恢复：`codegraph unlock` 清陈旧锁，或按 `.codegraph/daemon.pid` 杀 daemon（MCP shim 会自动重启）。
+
+⚠️ 遗留：`GeneralsMD/Code/.claude/worktrees/jovial-volhard-9272b7`（71MB、4208 源文件、相对 main **零提交**、
+仅一个未跟踪的 `.claude/checkpoints.log`）。已被 `GeneralsMD/Code/.gitignore:2` 忽略，**未进索引**，建议清理。
+
+---
+
+## （上一轮）2026-09-18 收工：**W3X 贴图路径缓存修复落地（t_total −12.7%）+ T11/T12/T13 探针；B2 待换平稳场景**
 
 > 本轮已提交推送：commit **`137426f0`**。下发"开工必读"含 exe 身份表、5 条优先级、方法论沉淀。
 
@@ -197,7 +490,7 @@ GPU 队列更满，后续 HUD 绘制阻塞在等 GPU 上，这段等待被记进
 | P0 | T3 主循环七段插桩 | zcode | ✅ | 落盘验证通过 | 30秒间隔自动产出.spd |
 | P0 | T8 spd_analyzer.py 最小版 | zcode | ✅ | 真实数据瀑布报告 | 合成+实测双验证 |
 | P0余项 | 探针开/关开销对比<1% | zcode | ✅ | 0.22%最保守上界 | 微基准验收(28µs/帧@12组QPC+ring写,含Python循环开销); 回放A/B被MOD exe轮换破坏回放CRC校验阻塞 |
-| P0余项 | 同场景3遍重复性<5% | zcode | 🔄 | 硬验收 | **2026-09-17 起可做**：存档局 P95/中位=1.046(抖动4.6%)，场景已足够稳 |
+| P0余项 | 同场景3遍重复性<5% | zcode | ✅ | **2.80% 通过** | 2026-09-18 结案：`00000036.sav` × 3 轮，轮间极差 2.80%；基准场景定死为开局档 |
 | P1 渲染归因 | T4 Present 拆分+渲染三段 | zcode | ✅ | 真实数据落盘 | commit 8386ae2d |
 | P1 | T6 wrapper 状态计数 | zcode | ✅ | draw_calls/state_changes列有数据 | DX8Wrapper现成getter接线 |
 | P1 | T10 bench_capture.ps1 采集脚本 | zcode | ✅ | 三种模式实测通过 | b79c433a: -Map/-ReplayPath/-ManualLoad + manifest |
