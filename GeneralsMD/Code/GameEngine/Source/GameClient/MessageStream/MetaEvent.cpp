@@ -775,14 +775,20 @@ MetaMapRec *MetaMap::getMetaMapRec(GameMessage::Type t)
 		}
 	}
 	{
-		// Is useful for Generals and Zero Hour. (ALT+B 自由建造，先绑定)
-		// Is useful for Generals and Zero Hour.
+		// 2026-09-19 REMOVED DUPLICATE BINDING: this DEBUG-era record bound
+		// MSG_META_DEMO_FREE_BUILD to the SAME ALT+B as the release-path
+		// MSG_CHEAT_FREE_BUILD below - one physical press fired BOTH records
+		// and the freebuild toggle executed twice (ON then OFF), so the cheat
+		// never stuck ("always charges"). The DEMO message has no handler
+		// anywhere (dead message); ALT+B belongs to MSG_CHEAT_FREE_BUILD only.
+		// (A 500ms debounce in the CommandXlat case guards residual echoes.)
 		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_DEMO_FREE_BUILD);
         //ASSERT(map && "getMetaMapRec failed for MSG_META_DEMO_FREE_BUILD");
 		//if (map->m_key == MK_NONE)
 		if (map && map->m_key == MK_NONE)
 		{
-			map->m_key = MK_B;
+			//map->m_key = MK_B;				// DO NOT BIND - ALT+B is owned by MSG_CHEAT_FREE_BUILD
+			map->m_key = MK_NONE;
 			map->m_transition = DOWN;
 			map->m_modState = ALT;
 			map->m_usableIn = COMMANDUSABLE_GAME;

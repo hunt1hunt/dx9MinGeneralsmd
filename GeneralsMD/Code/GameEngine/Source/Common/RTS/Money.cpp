@@ -65,6 +65,22 @@ UnsignedInt Money::withdraw(UnsignedInt amountToWithdraw, Bool playSound)
 	Player* freePlayer = ThePlayerList->getNthPlayer(m_playerIndex);
 	if (freePlayer != NULL && freePlayer->buildsForFree())
 		return 0;
+	// 2026-09-19 DIAG (field report: still charging after the fix): log the
+	// first withdraws so the flag/money-object/decision chain is observable.
+	{
+		static int s_wdn = 0;
+		if (s_wdn < 10) {
+			s_wdn++;
+			FILE *df = fopen("E:\\freebuild_diag.log", "a");
+			if (df) {
+				fprintf(df, "WITHDRAW idx=%d amt=%u free=%d playerType=%d\n",
+					m_playerIndex, amountToWithdraw,
+					(freePlayer && freePlayer->buildsForFree()) ? 1 : 0,
+					freePlayer ? (int)freePlayer->getPlayerType() : -1);
+				fclose(df);
+			}
+		}
+	}
 #endif //defined(_DEBUG) || defined(_INTERNAL)
 
     if (amountToWithdraw > m_money)
