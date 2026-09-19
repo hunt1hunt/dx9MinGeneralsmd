@@ -2441,9 +2441,12 @@ Int TerrainShaderPBR::init( void )
 			// constant file rides the 31-register ceiling, X5589 class) and
 			// the PBR-chain fallback took the W3X texture-shadow receive down
 			// with it. No new registers - this is a correctness fix.
-			"    float pxStep = max(length(duv1), length(duv2));\n"
-			"    float texelUV = 1.0 / 2048.0;\n"
-			"    float atten = saturate((texelUV * 2.5 + pxStep) / (texelUV * 2.0));\n"	// BISECT-3: +/- flipped => numerator >= 2.5*texelUV > denom => atten==1.0 always (value-neutral; identical instruction count)
+			// 2026-09-19 FINAL SAFE STATE: no conc modification of ANY kind.
+			// Field-proven today: conc untouched (here / 7dfa4c67 / B3) = W3X
+			// texture shadows alive; ANY spatial deviation (v1 gradient atten,
+			// 0.88/0.95 floors, slope-gate) = shadows dead, even with flats
+			// untouched. The conc path is closed for the stripe fix - pursue
+			// the mesh-side UV crop (CliffAtlasCrop) instead.
 			"    conc *= atten;\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
