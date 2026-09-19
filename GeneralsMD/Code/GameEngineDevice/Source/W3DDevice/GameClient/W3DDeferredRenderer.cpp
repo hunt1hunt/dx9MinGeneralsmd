@@ -1790,13 +1790,19 @@ bool W3DDeferredRenderer::createFogResources()
 	// in-scattering; composite in the additive-factored form.
 	static const char fxsrc[] =
 		"texture SceneTex;\n"
-		"sampler2D SceneSampler = sampler_state {\n"
+		"sampler2D SceneSampler : register(s0) = sampler_state {\n"
 		"    Texture = <SceneTex>;\n"
 		"    MinFilter = Point; MagFilter = Point; MipFilter = None;\n"
 		"    AddressU = Clamp; AddressV = Clamp;\n"
 		"};\n"
 		"texture ZTex;\n"
-		"sampler2D ZSampler = sampler_state {\n"
+		// 2026-09-19 INTZ round: pin ZSampler to s1 explicitly. The floating
+		// assignment + fx->SetTexture("ZTex") path leaves the stage reading
+		// 1.0 (unbound-sampler white) even with INTZ bound - the effect's
+		// texture application is bypassed entirely: after BeginPass the C++
+		// side binds the z texture with a DIRECT device SetTexture(1, ...)
+		// (the expert-verified route) right before the draw.
+		"sampler2D ZSampler : register(s1) = sampler_state {\n"
 		"    Texture = <ZTex>;\n"
 		"    MinFilter = Point; MagFilter = Point; MipFilter = None;\n"
 		"    AddressU = Clamp; AddressV = Clamp;\n"
@@ -2044,8 +2050,16 @@ void W3DDeferredRenderer::volumetricFogPass(
 		m_fogFX->SetVector("gInvRow1", &r1);
 		m_fogFX->SetVector("gInvRow2", &r2);
 		m_fogFX->SetVector("gInvRow3", &r3);
-		m_fogFX->SetTexture("SceneTex", m_fogSceneRT->Peek_D3D_Base_Texture());
-		m_fogFX->SetTexture("ZTex", m_mainZTex);
+		{
+			HRESULT hScene = m_fogFX->SetTexture("SceneTex", m_fogSceneRT->Peek_D3D_Base_Texture());
+			HRESULT hZ = m_fogFX->SetTexture("ZTex", m_mainZTex);
+			static bool s_stLogged = false;
+			if (!s_stLogged) {
+				s_stLogged = true;
+				DIAG_LOG(("VF-2 SETTEX: SceneTex hr=0x%08x ZTex hr=0x%08x (ZTex also bound directly at s1 after BeginPass).\n",
+					(int)hScene, (int)hZ));
+			}
+		}
 	}
 
 	// 4) draw onto the backbuffer (quad covers the gbuffer-sized viewport;
@@ -2064,6 +2078,17 @@ void W3DDeferredRenderer::volumetricFogPass(
 		if (SUCCEEDED(bhr)) {
 			for (UINT p = 0; p < passes; p++) {
 				m_fogFX->BeginPass(p);
+				// Direct device bind of the z texture at the PINNED s1 -
+				// applied AFTER BeginPass so it overrides whatever the
+				// effect did (or failed to do) with the ZTex parameter.
+				// Sampler states explicit: Point/Clamp/None (the proven
+				// depth-sampling declaration).
+				dev->SetTexture(1, m_mainZTex);
+				d9->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+				d9->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+				d9->SetSamplerState(1, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+				d9->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+				d9->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
 				dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
 				m_fogFX->EndPass();
 			}
