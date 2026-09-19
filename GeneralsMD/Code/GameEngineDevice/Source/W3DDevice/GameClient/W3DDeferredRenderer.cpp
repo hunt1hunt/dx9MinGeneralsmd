@@ -2194,6 +2194,13 @@ void W3DDeferredRenderer::volumetricFogPass(
 	}
 
 	// 5) restore.
+	// CRITICAL: unbind s1 (the INTZ). Leaving the depth texture bound
+	// leaks it into the next frame's draws that don't rebind s1 - they
+	// sample depth-as-color and paint camera-locked dark patches around
+	// near objects ("ground shadows that move with the camera", field
+	// report 2026-09-19). Precedent: endShadowMapPass/sunLightPass unbind
+	// their s4 for the same reason.
+	dev->SetTexture(1, NULL);
 	d9->SetDepthStencilSurface(oldDS);
 	if (oldDS) oldDS->Release();
 	dev->SetViewport(&vpMain);
