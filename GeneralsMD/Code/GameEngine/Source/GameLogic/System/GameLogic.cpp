@@ -433,6 +433,11 @@ void GameLogic::init( void )
 //-------------------------------------------------------------------------------------------------
 void GameLogic::reset( void )
 {
+	// 2026-09-19: per-game reset of the ALT+B power-cheat toggle
+	// (CommandXlat.cpp; decoupled from freebuild - see the case comment).
+	extern void resetCheatPowerBoostState(void);
+	resetCheatPowerBoostState();
+
 	m_thingTemplateBuildableOverrides.clear();
 	m_controlBarOverrides.clear();
 
