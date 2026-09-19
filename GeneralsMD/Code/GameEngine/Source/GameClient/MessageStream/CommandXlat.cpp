@@ -96,10 +96,6 @@
 //#include "Coord3D.h"       // Coord3D坐标类型的定义
 //#include "ThingFactory.h"  // 物体工厂相关
 class ObjectCreationList;
-// 2026-09-19: ALT+B 电量作弊开关状态（与 freebuild 解耦——本 build 开局即
-// freebuild=ON 是玩法设定；此状态由 GameLogic::reset 每局清零）。
-static Bool s_cheatPowerBoostOn = FALSE;
-void resetCheatPowerBoostState(void) { s_cheatPowerBoostOn = FALSE; }
 //class MouseIO;  
 //class Coord3D;
 
@@ -3554,15 +3550,12 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 		// Doesn't make a valid network message
 		// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
 		//
-		// 2026-09-19 DECOUPLED FROM FREEBUILD: this build intentionally starts
-		// with freebuild ON (Player ctor m_DEMO_freeBuild=TRUE, commit
-		// 47d9db16 - the freebuild gameplay). The old enable=!buildsForFree()
-		// toggle therefore made press1 silently DISABLE free build (and its
-		// withdraw no-op'd at 0 power), and only press2 re-enabled it (+1200)
-		// - the field-reported "first press doesn't add, second does". Now
-		// ALT+B is a PURE POWER toggle: freebuild state is never touched.
-		Bool enable = !s_cheatPowerBoostOn;
-		s_cheatPowerBoostOn = enable;
+		// 2026-09-19: COUPLED semantics per user spec - press1 simultaneously
+		// enables free build AND adds 1200 power; press2 disables both.
+		// The prerequisite is freebuild starting OFF (Player ctor
+		// m_DEMO_freeBuild=FALSE, changed from TRUE the same day - TRUE made
+		// press1 silently DISABLE freebuild while withdrawing nothing).
+		Bool enable = !ThePlayerList->getLocalPlayer()->buildsForFree();
 
 		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
 		{
@@ -3570,13 +3563,15 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 			if (player->getPlayerType() != PLAYER_HUMAN)
 				continue;
 
+			player->enableFreeBuild(enable);
+
 			if (enable)
 			{
-				player->getEnergy()->depositEnergy(1200, FALSE); // 开启：+1200
+				player->getEnergy()->depositEnergy(1200, FALSE); // 开启免费建：+1200
 			}
 			else
 			{
-				// 关闭：扣回最多 1200（withdrawEnergy 内部钳到非负）
+				// 关闭免费建：扣回最多 1200（withdrawEnergy 内部钳到非负）
 				player->getEnergy()->withdrawEnergy(1200, TRUE);
 			}
 		}
