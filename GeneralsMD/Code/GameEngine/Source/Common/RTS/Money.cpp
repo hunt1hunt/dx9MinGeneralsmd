@@ -64,19 +64,39 @@ UnsignedInt Money::withdraw(UnsignedInt amountToWithdraw, Bool playSound)
 	// player building for free pays nothing.)
 	Player* freePlayer = ThePlayerList->getNthPlayer(m_playerIndex);
 	if (freePlayer != NULL && freePlayer->buildsForFree())
+	{
+		// 2026-09-19 DIAG: the FREE path used to return SILENTLY, so "free
+		// build worked" and "player never built" were indistinguishable in
+		// the log (the 16:59 field session showed exactly that gap: human
+		// slots [2]/[4] freeNow=1 but zero withdraw evidence either way).
+		// Log the free return too - timestamped, first 50 per process.
+		{
+			static int s_wdfn = 0;
+			if (s_wdfn < 50) {
+				s_wdfn++;
+				FILE *df = fopen("E:\\freebuild_diag.log", "a");
+				if (df) {
+					fprintf(df, "WITHDRAW-FREE idx=%d amt=%u tick=%lu\n",
+						m_playerIndex, amountToWithdraw, GetTickCount());
+					fclose(df);
+				}
+			}
+		}
 		return 0;
+	}
 	// 2026-09-19 DIAG (field report: still charging after the fix): log the
 	// first withdraws so the flag/money-object/decision chain is observable.
 	{
 		static int s_wdn = 0;
-		if (s_wdn < 10) {
+		if (s_wdn < 50) {
 			s_wdn++;
 			FILE *df = fopen("E:\\freebuild_diag.log", "a");
 			if (df) {
-				fprintf(df, "WITHDRAW idx=%d amt=%u free=%d playerType=%d\n",
+				fprintf(df, "WITHDRAW idx=%d amt=%u free=%d playerType=%d tick=%lu\n",
 					m_playerIndex, amountToWithdraw,
 					(freePlayer && freePlayer->buildsForFree()) ? 1 : 0,
-					freePlayer ? (int)freePlayer->getPlayerType() : -1);
+					freePlayer ? (int)freePlayer->getPlayerType() : -1,
+					GetTickCount());
 				fclose(df);
 			}
 		}
