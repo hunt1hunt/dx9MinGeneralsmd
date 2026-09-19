@@ -2441,13 +2441,23 @@ Int TerrainShaderPBR::init( void )
 			// constant file rides the 31-register ceiling, X5589 class) and
 			// the PBR-chain fallback took the W3X texture-shadow receive down
 			// with it. No new registers - this is a correctness fix.
-			// 2026-09-19 FINAL SAFE STATE: no conc modification of ANY kind.
-			// Field-proven today: conc untouched (here / 7dfa4c67 / B3) = W3X
-			// texture shadows alive; ANY spatial deviation (v1 gradient atten,
-			// 0.88/0.95 floors, slope-gate) = shadows dead, even with flats
-			// untouched. The conc path is closed for the stripe fix - pursue
-			// the mesh-side UV crop (CliffAtlasCrop) instead.
-			"    conc *= atten;\n"
+			// 2026-09-19 PLAN-1 RETEST (shader now compiles - the first attempt
+			// died to the orphaned-line X3004, NOT to the gate itself). Kill
+			// the bump on steep faces ONLY: geoN.z<~0.35 (>69deg) => 0;
+			// geoN.z>~0.68 (<47deg) => 1. Flats keep FULL bump at every
+			// distance - all REAL shadow kills (v1/0.88/0.95) flattened far
+			// flats; the mesh-crop (cliff normals changed, flats bit-exact)
+			// ran with shadows alive, so cliff-only flattening is predicted
+			// safe by both the far-flat evidence and the experts' N.L-gate
+			// theories. No bump on cliffs = no atlas normals = no stripes AND
+			// no diamond tiling in one stroke.
+			// slope-gate line REMOVED (safe default): the VALID plan-1 retest
+			// (compiling shader, flats bit-exact, steep-only conc=0) STILL
+			// killed the W3X texture shadows - 4th valid conc-multiply kill.
+			// LAW (final): multiplying conc by <1 anywhere kills the W3X
+			// shadows; changing the sampled normal CONTENT (mesh UV crop) is
+			// proven safe. The ghost gate reads the bump TERM, not the
+			// resulting normal direction.
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
