@@ -121,6 +121,7 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "UseDetailTerrainTex",			INI::parseBool,				NULL,			offsetof( GlobalData, m_useDetailTerrainTex ) },
 	{ "MultiPassTerrain",					INI::parseBool,				NULL,			offsetof( GlobalData, m_multiPassTerrain ) },
 	{ "AdjustCliffTextures",			INI::parseBool,				NULL,			offsetof( GlobalData, m_adjustCliffTextures ) },
+	{ "CliffAtlasCrop",					INI::parseReal,				NULL,			offsetof( GlobalData, m_cliffAtlasCrop ) },
 	{ "Use3WayTerrainBlends",			INI::parseInt,				NULL,			offsetof( GlobalData, m_use3WayTerrainBlends ) },
 	{ "StretchTerrain",						INI::parseBool,				NULL,			offsetof( GlobalData, m_stretchTerrain ) },
 	{ "UseHalfHeightMap",					INI::parseBool,				NULL,			offsetof( GlobalData, m_useHalfHeightMap ) },
@@ -742,6 +743,7 @@ GlobalData::GlobalData()
 	m_useDetailTerrainTex = FALSE;
 	m_multiPassTerrain = FALSE;
 	m_adjustCliffTextures = FALSE;
+	m_cliffAtlasCrop = 0.0f;	// 2026-09-19 v2 cliff fix: 0=off (default), 0.25=recommended when enabled
 	m_stretchTerrain = FALSE;
 	m_useHalfHeightMap = FALSE;
 	m_terrainLOD = TERRAIN_LOD_AUTOMATIC;

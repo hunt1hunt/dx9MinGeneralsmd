@@ -1970,7 +1970,54 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 				U[i] -= adjU;
 				V[i] -= adjV;
 			}
-		}	
+
+			// 2026-09-19 CLIFF ATLAS CROP (stripe/diamond fix v2). This cell
+			// passed STRETCH_LIMIT above, i.e. it IS a stretched cliff cell:
+			// the normal atlas (and base) ride these UVs magnified 3-6x, so
+			// each atlas texel row spans several screen pixels (horizontal
+			// stripes) and the per-cell quadrant repeat tiles diamond blocks.
+			// v1 attenuated the bump in the pixel shader by the UV gradient,
+			// but that VALUE path (conc -> flat N) was proven by field A/B
+			// (2026-09-19 bisect) to kill the W3X texture shadow. v2 attacks
+			// the magnification itself, MESH-SIDE: remap this cell's UV
+			// bounding box to a crop*100% sub-rect with a deterministic
+			// per-cell jitter (pure function of ndx - lockstep safe), which
+			// (a) raises the atlas texel density ~1/crop x on the cliff face
+			// (stripes fall below one pixel) and (b) neighboring cells sample
+			// different crops, breaking the visible quadrant tiling. The
+			// pixel shader and the conc path stay byte-identical.
+			{
+				Real crop = (TheGlobalData && TheGlobalData->m_cliffAtlasCrop > 0.01f
+					&& TheGlobalData->m_cliffAtlasCrop < 1.0f)
+					? TheGlobalData->m_cliffAtlasCrop : 0.0f;
+				if (crop > 0.0f) {
+					Real uMin = U[0]; Real uMax = U[0];
+					Real vMin = V[0]; Real vMax = V[0];
+					Int q;
+					for (q=1; q<4; q++) {
+						if (U[q] < uMin) uMin = U[q];
+						if (U[q] > uMax) uMax = U[q];
+						if (V[q] < vMin) vMin = V[q];
+						if (V[q] > vMax) vMax = V[q];
+					}
+					Real uSpan = uMax - uMin; if (uSpan < 1e-20f) uSpan = 1e-20f;
+					Real vSpan = vMax - vMin; if (vSpan < 1e-20f) vSpan = 1e-20f;
+					Real uw = uSpan * crop;
+					Real vh = vSpan * crop;
+					UnsignedInt seed = (UnsignedInt)ndx * 2654435761u;	// Knuth multiplicative hash
+					Real jx = (Real)((seed >> 8) & 0xFF) / 255.0f;
+					Real jy = (Real)((seed >> 16) & 0xFF) / 255.0f;
+					Real u0 = uMin + (uSpan - uw) * jx;
+					Real v0 = vMin + (vSpan - vh) * jy;
+					for (q=0; q<4; q++) {
+						Real tu = (U[q] - uMin) / uSpan;
+						Real tv = (V[q] - vMin) / vSpan;
+						U[q] = u0 + tu * uw;
+						V[q] = v0 + tv * vh;
+					}
+				}
+			}
+		}
 		return true;
 // 
 #endif
