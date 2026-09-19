@@ -154,7 +154,7 @@ public:
 	Real m_volFogHeightScale;	///< VF-2 INI FogVolumeHeight: density e-folding height in world units (default 12.5 = doubao 1/0.08)
 	Real m_volFogGroundDensity;	///< VF-2 INI FogGroundDensity: ground density multiplier (default 1.0)
 	Real m_volFogSunScatter;	///< VF-2 INI SunScatterStrength: sun in-scattering gain (default 0.5)
-	Int m_volFogDebug;			///< VF-2 INI VolumetricFogDebug: 1 = raw sampled-z grayscale viz (depth-sampling probe), 2 = fog factor viz (default 0)
+	Int m_volFogDebug;			///< VF-2 INI VolumetricFogDebug: 1 = raw sampled-z grayscale viz, 2 = fog factor viz, 3 = one-shot PPM dumps of main z + shadow D24X8 (E:\mainz_dump.ppm / shadowd24_dump.ppm), 4 = scene-sampler passthrough viz (default 0)
 	Int m_terrainProbeMode;		///< VF-1a: terrain pass probe - 1=skip shroud pass, 2=skip tracks, 4=skip bridges, 8=force cloud map off (default 0 = normal)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
