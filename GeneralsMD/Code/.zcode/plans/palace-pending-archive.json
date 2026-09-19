@@ -1,0 +1,30 @@
+{
+  "session_name": "MinGenerals 扇面案临门一脚:mode26扇消→锁定alpha=base0.a,mode20定音刀已部署",
+  "agent": "ZCode",
+  "status": "completed",
+  "outcome": "partial",
+  "repo": "local E:/Source/repos/MinGeneralsfreebuild2ok",
+  "branch": "main",
+  "note": "palace ingest 403 (both gk_21dc/gk_beea rejected server-side at 2026-09-14 ~21:4x) - local fallback archive, retry when keys re-invited",
+  "built": [
+    "用户测PBRDebugMode=28(红指纹): 扇面消失+地表全红→扇面=twin像素实锤(楔形区域属瓦片光栅)",
+    "用户测mode26(仅反照率,alpha强制1.0): 扇面消失!对照2047(同管线但return alpha=base0.a保留)扇面仍在——唯一显著差异=输出alpha——机制锁定: twin把底图alpha当地形输出alpha,半透明区透出背后几何(边界裙边陡壁拉伸草地=放射楔形)",
+    "mode20定音刀: 四变体最终return前插入 dbg∈(19.5,20.5)→return float4(result/lit,1.0)——完整管线只强制不透明alpha;构建#14(21:3x)部署字节校验",
+    "调试mode族现状: 20=强制不透明(定音),21=UV网格viz,26=仅反照率,28=纯红指纹——结案后全部清理"
+  ],
+  "decisions": [
+    "为何只在VS路线扇: FF模式混合态由材质/管线管理(不透明);VS路线状态序列的混合态未被正确复位或D3D9On12对ps输出alpha写RT的行为差异——mode20确认后查混合态根源;alpha=1.0修复两路通杀",
+    "楔形=被透出背景(裙边/第二层地形)的形状而非alpha区域形状,解释'放射草地拉伸'与'侧看压线'"
+  ],
+  "next_steps": [
+    "用户一局: PBRDebugMode=20(其余正常值:VSRoute=Yes,ShadowMap=Yes,ProbeMode=0)→扇消=定案,转正alpha=1.0为twin默认+清调试mode+13文件一并提交;扇在=补mode22(仅跳NdotL)",
+    "结案→VS路线放行→VF-1c地形MRT深度→1d/1e→VF-2体积雾(配方三件套已备:豆包密度函数+pizi深度门控+KW raymarch)"
+  ],
+  "files": [
+    "GameEngineDevice/Source/W3DDevice/GameClient/W3DShaderManager.cpp(4变体mode20行+mode21/26/28行)"
+  ],
+  "blockers": ["palace keys both revoked - need re-invite from owner console"],
+  "conversation_context": "用户报mode26扇面消失。锁定输出alpha差异,部署mode20定音刀,等用户一局定音。",
+  "roster": [],
+  "metadata": {}
+}

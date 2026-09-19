@@ -6,6 +6,19 @@
 
 ---
 
+## 0. 工作最高原则（用户钦定 2026-09-19）
+
+**对标源码 + 疑问卡点清单 = 防止盲修瞎练的最佳武器。**
+
+1. **对标必须系统、认真、细致，每个步骤环节都不能遗漏**：先把任务分解成完整环节链，逐环节记录（对标对象 / 锚点 file:line / 结论），不许跳环节抽查。
+2. **分清对标适用性**：引擎自身源码=必须对标（权威）；RA3 参考源码=意图可学但行为不能照套（真机 D3D9 ≠ dgVoodoo 栈）；D3D9 规范外行为（厂商扩展/UB）在 dgVoodoo 上无源码可对标，禁止拿真机经验当依据；历史"已验证"断言跨版本引用前必须重验。
+3. **疑问卡点清单**：拿不准显式列编号清单（问题+实验设计+判读分支），不用猜测填空；打点一次只动一个变量且必须带已知内容对照组。
+4. **收敛判据**：打点两轮无收敛 = 方法错了，停下来出清单问专家/换路线。
+
+详见 `.zcode/skills/min-generals/SKILL.md` 第零步与 `.zcode/plans/` 下的咨询/交接文档。
+
+---
+
 ## 1. Project Overview
 
 **MinGenerals** is a community fork of *Command & Conquer Generals* and its expansion *Zero Hour* (referred to in code as **GeneralsMD**). This repository contains the complete **SAGE** (Strategy Action Game Engine) source code as it existed during development at EA Pacific, including the full engine, game logic, and tools required to build the RTS experience.
