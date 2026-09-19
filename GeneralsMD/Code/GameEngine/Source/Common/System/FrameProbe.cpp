@@ -39,6 +39,7 @@ static int           g_enabled = 0;
 static int           g_flushIntervalSec = 30;
 
 static __int64       g_stageStart[FP_STAGE_COUNT];
+static __int64       g_cpuMark[FP_CPU_SLOT_COUNT];	// T14: thread CPU time marks
 static __int64       g_qpcFreq = 0;
 static __int64       g_qpcFreqInvMs = 0;		// avoid per-call division: ms = dt * 1000 / freq (kept simple)
 
@@ -63,6 +64,7 @@ void FrameProbeInit(int enable, int flushIntervalSec)
 		g_flushIntervalSec = 30;
 
 	memset(g_ring, 0, sizeof(g_ring));
+	memset(g_cpuMark, 0, sizeof(g_cpuMark));
 	g_ringHead = 0;
 	g_ringCount = 0;
 	g_frameOrdinal = 0;
@@ -101,7 +103,16 @@ static const char *fpStageName(unsigned int stage)
 		"t_logic", "t_net_wait", "t_render", "t_present", "t_postfx",
 		"t_fps_spin",
 		"t_logic_script", "t_logic_terrain", "t_logic_create",
-		"t_logic_ai", "t_logic_pathfind", "t_logic_destroy"
+		"t_logic_ai", "t_logic_pathfind", "t_logic_destroy",
+		// T11: must stay in lockstep with the FrameProbeStage enum in FrameProbe.h
+		"t_client_input", "t_client_window", "t_client_ghost",
+		"t_client_drawables", "t_client_terrain", "t_client_displupd",
+		"t_client_strmgr", "t_client_shell", "t_client_ingameui",
+		"t_draw_views", "t_draw_rttex",
+		// T12: must stay in lockstep with the FrameProbeStage enum in FrameProbe.h
+		"t_draw_rttex_water", "t_draw_rttex_shadow",
+		// T13: must stay in lockstep with the FrameProbeStage enum in FrameProbe.h
+		"t_postfx_ui", "t_postfx_debug", "t_postfx_misc"
 	};
 	if (stage >= FP_STAGE_COUNT)
 		return "?";
@@ -111,7 +122,17 @@ static const char *fpStageName(unsigned int stage)
 static const char *fpCounterName(unsigned int c)
 {
 	static const char *names[FP_CNT_COUNT] = {
-		"draw_calls", "state_changes", "objects", "drawables", "particles"
+		"draw_calls", "state_changes", "objects", "drawables", "particles",
+		// T14: must stay in lockstep with FrameProbeCounter in FrameProbe.h
+		"cpu_render_us", "cpu_postfx_us", "cpu_postfx_ui_us",
+		"cpu_postfx_misc_us", "cpu_postfx_debug_us", "cpu_present_us",
+		"cpu_rttex_us",
+		// T7: 1 = GPU had still not caught up at that point
+		"gpu_busy_postfx_end", "gpu_busy_present_end", "gpu_query_unavailable",
+		// T7b (2026-09-18): must stay in lockstep with FrameProbeCounter in FrameProbe.h
+		"gpu_busy_postfx_start",
+		// T15 (2026-09-18): must stay in lockstep with FrameProbeCounter in FrameProbe.h
+		"vb_lock_us", "vb_lock_count", "postfx_pcpu_us"
 	};
 	if (c >= FP_CNT_COUNT)
 		return "?";
@@ -177,8 +198,17 @@ void FrameProbeFlush(void)
 		}
 	}
 
+	// 2026-09-17: rewinding g_ringHead to 0 WITHOUT clearing slot 0 made the first
+	// frame of every flush window accumulate on top of the previous window's first
+	// frame: FrameProbeCount/FrameProbeEnd only ever do "+=", and the per-frame
+	// zeroing in FrameProbeEndFrame targets the *next* slot (head+1), never slot 0.
+	// Observed symptom: the first row of each .spd carried the running sum of all
+	// earlier windows' first rows (objects 651 -> 1302 -> 1953 -> ...; identical
+	// growth in draw_calls and in every stage timer), which is what produced the
+	// bogus "450k draw_calls peak" headline. Clear the slot we are about to reuse.
 	g_ringCount = 0;
 	g_ringHead = 0;
+	memset(&g_ring[0], 0, sizeof(FPFrameRecord));
 	g_lastFlushTick = timeGetTime();
 }
 
@@ -207,6 +237,105 @@ void FrameProbeCount(unsigned int counter, int add)
 	if (g_enabled == 0 || counter >= FP_CNT_COUNT)
 		return;
 	g_ring[g_ringHead].counter[counter] += add;
+}
+
+// ---------------------------------------------------------------------------
+// T14: thread CPU time (kernel + user). GetThreadTimes reports 100ns FILETIME
+// units; the kernel updates them on the scheduler tick (1ms when a high timer
+// resolution is active, 15.6ms otherwise). That quantisation is an order of
+// magnitude finer than the ~270ms region we are trying to classify, so it is fit
+// for the purpose -- and unlike a D3D query it cannot fail on dgVoodoo.
+static __int64 fpThreadCpu100ns(void)
+{
+	FILETIME creation, exitTime, kernel, user;
+	__int64 k, u;
+	if (!GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernel, &user))
+		return 0;
+	k = ((__int64)kernel.dwHighDateTime << 32) | (__int64)kernel.dwLowDateTime;
+	u = ((__int64)user.dwHighDateTime << 32) | (__int64)user.dwLowDateTime;
+	return k + u;
+}
+
+void FrameProbeCpuMark(unsigned int slot)
+{
+	if (g_enabled == 0 || slot >= FP_CPU_SLOT_COUNT)
+		return;
+	g_cpuMark[slot] = fpThreadCpu100ns();
+}
+
+int FrameProbeCpuSinceMark(unsigned int slot)
+{
+	__int64 now, delta;
+	if (g_enabled == 0 || slot >= FP_CPU_SLOT_COUNT)
+		return 0;
+	if (g_cpuMark[slot] == 0)
+		return 0;
+	now = fpThreadCpu100ns();
+	if (now == 0)
+		return 0;
+	delta = (now - g_cpuMark[slot]) / 10;	// 100ns -> microseconds
+	if (delta < 0)
+		return 0;
+	if (delta > 2147483647)
+		delta = 2147483647;					// never wrap an int column
+	return (int)delta;
+}
+
+// ---------------------------------------------------------------------------
+// T15: same idea as above but for the whole PROCESS (kernel + user, all threads).
+// Comparing this against the per-thread number around one block answers "was any
+// thread at all running during this?" -- which separates "blocked on the GPU /
+// driver" from "blocked on a lock another thread is hogging".
+static __int64 fpProcessCpu100ns(void)
+{
+	FILETIME creation, exitTime, kernel, user;
+	__int64 k, u;
+	if (!GetProcessTimes(GetCurrentProcess(), &creation, &exitTime, &kernel, &user))
+		return 0;
+	k = ((__int64)kernel.dwHighDateTime << 32) | (__int64)kernel.dwLowDateTime;
+	u = ((__int64)user.dwHighDateTime << 32) | (__int64)user.dwLowDateTime;
+	return k + u;
+}
+
+int FrameProbeProcessCpuMs(void)
+{
+	__int64 t;
+	if (g_enabled == 0)
+		return 0;
+	t = fpProcessCpu100ns();
+	if (t <= 0)
+		return 0;
+	return (int)(t / 10000);				// 100ns -> ms
+}
+
+// ---------------------------------------------------------------------------
+// T15: time blocked inside a dynamic vertex/index buffer Lock.
+static __int64 g_lockMark = 0;
+
+void FrameProbeLockEnter(void)
+{
+	if (g_enabled == 0)
+		return;
+	QueryPerformanceCounter((LARGE_INTEGER *)&g_lockMark);
+}
+
+void FrameProbeLockLeave(void)
+{
+	__int64 now;
+	if (g_enabled == 0 || g_lockMark == 0)
+		return;
+	QueryPerformanceCounter((LARGE_INTEGER *)&now);
+	{
+		double us = fpDeltaMs(g_lockMark, now) * 1000.0;
+		if (us > 0.0)
+		{
+			if (us > 2147483647.0)
+				us = 2147483647.0;
+			FrameProbeCount(FP_CNT_VB_LOCK_US, (int)us);
+		}
+	}
+	FrameProbeCount(FP_CNT_VB_LOCK_COUNT, 1);
+	g_lockMark = 0;
 }
 
 void FrameProbeEndFrame(void)
@@ -256,6 +385,11 @@ void FrameProbeShutdown(void) {}
 void FrameProbeBegin(unsigned int stage) { (void)stage; }
 void FrameProbeEnd(unsigned int stage) { (void)stage; }
 void FrameProbeCount(unsigned int counter, int add) { (void)counter; (void)add; }
+void FrameProbeCpuMark(unsigned int slot) { (void)slot; }
+int  FrameProbeCpuSinceMark(unsigned int slot) { (void)slot; return 0; }
+void FrameProbeLockEnter(void) {}
+void FrameProbeLockLeave(void) {}
+int  FrameProbeProcessCpuMs(void) { return 0; }
 void FrameProbeEndFrame(void) {}
 void FrameProbeFlush(void) {}
 

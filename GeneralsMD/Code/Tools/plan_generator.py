@@ -28,7 +28,51 @@ STAGE_COLS = [
     # T5 逻辑细分（P2 上线后存在）
     "t_logic_ai", "t_logic_pathfind", "t_logic_script",
     "t_logic_terrain", "t_logic_create", "t_logic_destroy",
+    # T11 (2026-09-17): GameClient::update() 非 DRAW 余量 + W3DDisplay::draw()
+    # 预渲染段。旧 .spd 无这些列，col() 取不到自然跳过。
+    "t_client_input", "t_client_window", "t_client_ghost",
+    "t_client_drawables", "t_client_terrain", "t_client_displupd",
+    "t_client_strmgr", "t_client_shell", "t_client_ingameui",
+    "t_draw_views", "t_draw_rttex",
+    # T12 (2026-09-18): split of t_draw_rttex into water vs shadow
+    "t_draw_rttex_water", "t_draw_rttex_shadow",
+    # T13 (2026-09-18): split of t_postfx
+    "t_postfx_ui", "t_postfx_debug", "t_postfx_misc",
 ]
+
+# FrameProbe ring-slot-0 累加缺陷（2026-09-17 修复，见 FrameProbe.cpp:190）。
+# 旧构建写出的每份 .spd，其**首行**是本窗口首帧 + 之前所有窗口首帧的累加和，
+# 因而落在本文档稳态值的近似整数倍上（实测 0.00/0.98/1.98/2.98/3.97 = 累计窗口数）。
+# 做的是检测而非无脑丢弃 —— 修复后文件的合法首行不该被丢掉。
+FIRST_ROW_CONTAM_RATIO = 1.5
+
+
+def steady_state(vals):
+    """对「大部分行为 0」的文件（游戏长期停在菜单/载入态）依然稳健的稳态估计。
+    直接用中位数会在这种文件上得 0，从而漏判伪影 —— 实测 frameprobe_921168308_419
+    这类 1359 行、median=0 的文件首行同样是累加值（objects 610160 vs 真实 ~2335）。"""
+    pos = [v for v in vals if v > 0]
+    if len(pos) >= 2:
+        return st.median(pos)
+    return 0.0
+
+
+def detect_contaminated_first_row(rows):
+    """首行是否携带 ring-slot-0 累加伪影。只用 objects/draw_calls 两个有界稳态
+    计数器；t_total 刻意排除，否则干净文件首帧的真实载入尖峰会误报。比值接近 0
+    （菜单窗口，之前无任何窗口）不判污染 —— 正确，因为该行本就不含累加量。"""
+    if len(rows) < 3:
+        return False
+    for key in ("objects", "draw_calls"):
+        vals = [r[key] for r in rows[1:] if key in r]
+        if len(vals) < 2:
+            continue
+        base = steady_state(vals)
+        if base <= 0:
+            continue
+        if rows[0].get(key, 0) / base > FIRST_ROW_CONTAM_RATIO:
+            return True
+    return False
 
 COUNTER_COLS = ["objects", "drawables", "particles", "draw_calls", "state_changes"]
 
@@ -203,15 +247,29 @@ def build_evidence(rows, budget_ms):
     return e
 
 
-def generate_plan(path, budget_ms):
+def generate_plan(path, budget_ms, drop_first="auto"):
+    """drop_first: 'auto'（检测 ring-slot-0 伪影）/ 'always' / 'never'。"""
     rows = load(path)
+    n_raw = len(rows)
+    dropped = False
+    if rows and drop_first != "never":
+        dropped = True if drop_first == "always" else detect_contaminated_first_row(rows)
+        if dropped:
+            rows = rows[1:]
     e = build_evidence(rows, budget_ms)
+    e["first_row_dropped"] = dropped
+    e["n_raw"] = n_raw
 
     lines = []
     lines.append("# DIAG_PLAN %s" % datetime.date.today().isoformat())
     lines.append("")
     lines.append("> 自动生成: `python plan_generator.py %s`" % path)
     lines.append("> 设计文档: `Tools/PERF_DIAG_DESIGN.md` §5/§8")
+    if dropped:
+        lines.append("> ⚠️ 已剔除污染首帧（ring-slot-0 累加伪影）：计入 %d 帧 / 原始 %d 帧，"
+                     "max/峰值/卡顿聚类结论已不含该伪影。" % (len(rows), n_raw))
+    else:
+        lines.append("> 含首帧（未检出累加污染）：计入 %d 帧。" % len(rows))
     lines.append("")
     lines.append("## 1. 问题描述")
     lines.append("")
@@ -284,18 +342,24 @@ def main():
     path = args[0]
     budget = BUDGET_MS
     out = None
+    drop_first = "auto"
     i = 1
     while i < len(args):
         if args[i] == "--budget-ms" and i + 1 < len(args):
             budget = float(args[i + 1]); i += 2
+        elif args[i] == "--drop-first" and i + 1 < len(args):
+            drop_first = args[i + 1]; i += 2
         elif args[i] == "--out" and i + 1 < len(args):
             out = args[i + 1]; i += 2
         else:
             i += 1
+    if drop_first not in ("auto", "always", "never"):
+        print("--drop-first 取值非法: %r（应为 auto/always/never）" % drop_first)
+        return 2
     if not os.path.isfile(path):
         print("找不到 .spd 文件: %s" % path)
         return 1
-    md = generate_plan(path, budget)
+    md = generate_plan(path, budget, drop_first)
     if not out:
         out = "DIAG_PLAN_%s.md" % datetime.datetime.now().strftime("%Y%m%d_%H%M")
     with open(out, "w", encoding="utf-8") as f:

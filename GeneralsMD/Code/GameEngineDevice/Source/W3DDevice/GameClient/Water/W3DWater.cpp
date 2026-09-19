@@ -53,12 +53,30 @@
 #include "Common/GameState.h"
 #include "Common/GlobalData.h"
 #include "Common/PerfTimer.h"
+#include "Common/System/TerrainDiag.h"
 
 // === WATER DIAGNOSTIC LOGGING ===
+//
+// 2026-09-18: switched off by default, and the log moved off the E:\ root.
+//
+// It used to fopen/fprintf/fclose on EVERY call against a hardcoded
+// "E:\\water_diag.log": 74 call sites in this file, and on the live render path
+// that works out to ~3.7 lines per frame (889 lines over ~240 frames, measured)
+// of synchronous file I/O on the main thread -- plus the same off-drive habit
+// the TerrainDiag header was created to kill.
+//
+// At today's ~1 frame/second that is sub-millisecond and is NOT the current
+// bottleneck, but it is latent: at 30 FPS it becomes ~110 fopen/sec. Hence a
+// runtime switch rather than deletion -- set g_waterDiagEnabled to TRUE (in the
+// debugger, or temporarily in source) to get the full trace back.
+Bool g_waterDiagEnabled = FALSE;
 static Bool g_waterDiagInit = FALSE;
 static void WaterDiag(const char *msg)
 {
-	FILE *f = fopen("E:\\water_diag.log", g_waterDiagInit ? "a" : "w");
+	FILE *f;
+	if (!g_waterDiagEnabled)
+		return;
+	f = fopen(GetWaterDiagLogPath(), g_waterDiagInit ? "a" : "w");
 	if (f) {
 		if (!g_waterDiagInit) g_waterDiagInit = TRUE;
 		fprintf(f, "[%d] %s\n", timeGetTime(), msg);
