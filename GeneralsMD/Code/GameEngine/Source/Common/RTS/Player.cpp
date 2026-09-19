@@ -475,6 +475,17 @@ void Player::init(const PlayerTemplate* pt)
       {
   			m_money = TheGlobalData->m_defaultStartingCash;
       }
+      // 2026-09-19 ROOT FIX ("first ALT+B still charges"): the wholesale
+      // assignments above replace the Money OBJECT, whose ctor defaults
+      // m_playerIndex to 0 - wiping the correct index set at :464 above.
+      // Every normal game (template money 0 -> starting cash from
+      // GameInfo/GlobalData) hit this, so ALL players' Money carried
+      // playerIndex 0 and the free-build check in Money::withdraw
+      // consulted PLAYER 0 (an AI: free=0) instead of the owner -> free
+      // build charged anyway. Vanilla never noticed: upstream withdraw
+      // has no buildsForFree() check (the index only fed the money
+      // sound). Re-assert the index after the overwrite.
+      m_money.setPlayerIndex(getPlayerIndex());
 		}
 
 		m_playerDisplayName.clear();
