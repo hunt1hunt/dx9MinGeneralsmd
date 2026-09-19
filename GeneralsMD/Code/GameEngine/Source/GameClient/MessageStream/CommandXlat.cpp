@@ -3547,6 +3547,21 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
     }
 	case GameMessage::MSG_CHEAT_FREE_BUILD:
 {
+		// 2026-09-19 DEBOUNCE: the diag log caught ONE physical ALT+B press
+		// executing this case TWICE (ALTB enable=1 ... then enable=0 back-to-
+		// back) - the toggle self-inverted and freebuild never stuck ("always
+		// charges"). Swallow repeat triggers within 500ms regardless of the
+		// duplicate's origin (key double-translation / down+up echo).
+		{
+			static DWORD s_lastAltBTick = 0;
+			DWORD nowTick = GetTickCount();
+			if (s_lastAltBTick != 0 && nowTick - s_lastAltBTick < 500) {
+				disp = DESTROY_MESSAGE;
+				break;
+			}
+			s_lastAltBTick = nowTick;
+		}
+
 		// Doesn't make a valid network message
 		// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
 		//
@@ -3564,6 +3579,19 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 				continue;
 
 			player->enableFreeBuild(enable);
+
+			// 2026-09-19 DIAG: confirm the flag landed (freebuild "never
+			// works" field report - see Money.cpp withdraw diag).
+			{
+				FILE *df = fopen("E:\\freebuild_diag.log", "a");
+				if (df) {
+					fprintf(df, "ALTB enable=%d player[%d] type=%d freeNow=%d\n",
+						(int)enable, player->getPlayerIndex(),
+						(int)player->getPlayerType(),
+						(int)player->buildsForFree());
+					fclose(df);
+				}
+			}
 
 			if (enable)
 			{
