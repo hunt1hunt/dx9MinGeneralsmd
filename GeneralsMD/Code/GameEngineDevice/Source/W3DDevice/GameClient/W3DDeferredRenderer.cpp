@@ -1623,17 +1623,32 @@ void W3DDeferredRenderer::releaseShadowResources()
 // ============================================================================
 // W3DDeferredRenderer::createMainZTexture  (VF-1c new, 2026-09-19)
 // ============================================================================
-// Re-binds the main z-buffer from the auto depth stencil to a
-// D3DUSAGE_DEPTHSTENCIL TEXTURE - the exact creation pattern of the shadow
-// D24X8 (proven on this stack). Nothing downstream changes behavior: the
-// wrapper and every pass save/restore the DS via Get/SetDepthStencilSurface,
-// so our surface simply becomes the "default" they cache and restore.
-// Sampling constraint: under dgVoodoo2 a depth texture is ONLY reliably
-// sampleable through a D3DX Effect sampler_state (Point/Clamp) - the
-// 2026-09-05 dump finding; a standalone PS + SetTexture reads 1.0. VF-2
-// therefore runs as an effect (see volumetricFogPass).
-// INI: UseSampleableZBuffer (default No - this reroutes the WHOLE frame's
-// depth; A/B against the auto DS before trusting).
+// Re-binds the main z-buffer from the auto depth stencil to a sampleable
+// DEPTHSTENCIL TEXTURE.
+//
+// EXPERT VERDICT (2026-09-19, see .zcode/plans/vf2-expert-consultation.md):
+// D24S8/D24X8 depth textures get NO shader-resource view in dgVoodoo - the
+// 1.0 (unbound-sampler) and 0.0 (empty-SRV) reads were two failure modes of
+// the same root cause, NOT timing/binding bugs. D3DFMT_INTZ is the supported
+// sampleable-depth FOURCC here: creatable with D3DUSAGE_DEPTHSTENCIL,
+// bindable via SetDepthStencilSurface (test/write/clear all normal) AND
+// sampleable (.x/.r = 0..1 depth). Auto mode therefore tries INTZ FIRST and
+// falls back to mirroring the current DS (unsampleable, fog disabled).
+//
+// INTZ has NO stencil bits. Stencil users in the production config
+// (audited 2026-09-19: W3DScene behind-building markers, default ON;
+// deferred point-light volume culling on night maps; UseShadowVolumes is
+// INI-off) DEGRADE but do not crash, and DX8Wrapper::Clear queries the
+// bound DS format at runtime before adding D3DCLEAR_STENCIL (dx8wrapper.cpp
+// Clear), so frame clears stay legal. UseSampleableZBuffer=No restores the
+// D24S8 auto DS one-key.
+//
+// INI: UseSampleableZBuffer (default No). SampleableZFormat: 0=auto
+// (INTZ first), 1=D24X8, 2=D24S8 (both unsampleable per verdict, A/B
+// fossils), 3=force INTZ.
+#ifndef D3DFMT_INTZ
+#define D3DFMT_INTZ ((D3DFORMAT)MAKEFOURCC('I','N','T','Z'))
+#endif
 bool W3DDeferredRenderer::createMainZTexture()
 {
 	m_mainZAvailable = false;
@@ -1644,16 +1659,15 @@ bool W3DDeferredRenderer::createMainZTexture()
 	if (!dev) return false;
 	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 
-	// Mirror the CURRENT depth-stencil (size + format = whatever the engine
-	// picked for this display mode; D24S8 is preferred first because the
-	// volumetric-shadow / point-light volumes need the stencil bits).
+	// Mirror the CURRENT depth-stencil for size, and keep its format as the
+	// fallback (D24S8 preferred by the engine's mode chain - keeps stencil).
 	UINT zw = 0, zh = 0;
-	D3DFORMAT zfmt = D3DFMT_D24S8;
+	D3DFORMAT dsFmt = D3DFMT_D24S8;
 	IDirect3DSurface9 *curDS = NULL;
 	if (SUCCEEDED(d9->GetDepthStencilSurface(&curDS)) && curDS) {
 		D3DSURFACE_DESC dsd;
 		if (SUCCEEDED(curDS->GetDesc(&dsd))) {
-			zw = dsd.Width; zh = dsd.Height; zfmt = dsd.Format;
+			zw = dsd.Width; zh = dsd.Height; dsFmt = dsd.Format;
 		}
 		curDS->Release();
 	}
@@ -1666,20 +1680,27 @@ bool W3DDeferredRenderer::createMainZTexture()
 		}
 	}
 	if (zw == 0 || zh == 0) { zw = (UINT)m_gbufferWidth; zh = (UINT)m_gbufferHeight; }
-	// 2026-09-19 white-screen hunt: the fog effect reads the D24S8 texture
-	// as its creation-clear 1.0 (SRV seemingly never exposes the DSV
-	// writes), while the shadow precedent that DID sample visibly is D24X8.
-	// SampleableZFormat lets the INI force the precedent format as an A/B
-	// (1=D24X8 - drops stencil, volumetric shadows degrade, PROBE ONLY;
-	// 2=D24S8 explicit; 0=mirror the current DS format).
-	if (TheGlobalData->m_sampleableZFormat == 1) zfmt = D3DFMT_D24X8;
-	else if (TheGlobalData->m_sampleableZFormat == 2) zfmt = D3DFMT_D24S8;
+
+	D3DFORMAT wantFmt = D3DFMT_INTZ;	// auto = the only sampleable format
+	if (TheGlobalData->m_sampleableZFormat == 1) wantFmt = D3DFMT_D24X8;
+	else if (TheGlobalData->m_sampleableZFormat == 2) wantFmt = D3DFMT_D24S8;
+	else if (TheGlobalData->m_sampleableZFormat == 3) wantFmt = D3DFMT_INTZ;
 
 	if (m_mainZSurface) { m_mainZSurface->Release(); m_mainZSurface = NULL; }
 	if (m_mainZTex) { m_mainZTex->Release(); m_mainZTex = NULL; }
 
 	HRESULT hr = d9->CreateTexture(zw, zh, 1,
-		D3DUSAGE_DEPTHSTENCIL, zfmt, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
+		D3DUSAGE_DEPTHSTENCIL, wantFmt, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
+	D3DFORMAT zfmt = wantFmt;
+	if ((FAILED(hr) || !m_mainZTex) && TheGlobalData->m_sampleableZFormat == 0) {
+		// Auto fallback: unsampleable mirror of the engine's DS format.
+		// Fog will log-and-skip; the depth route itself still works.
+		DIAG_LOG(("W3DDeferredRenderer: INTZ create FAILED hr=0x%08x, falling back to DS mirror (%d).\n",
+			(int)hr, (int)dsFmt));
+		hr = d9->CreateTexture(zw, zh, 1,
+			D3DUSAGE_DEPTHSTENCIL, dsFmt, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
+		zfmt = dsFmt;
+	}
 	if (FAILED(hr) || !m_mainZTex) {
 		DIAG_LOG(("W3DDeferredRenderer: main z texture create FAILED hr=0x%08x (%ux%u fmt=%d) - staying on auto DS.\n",
 			(int)hr, zw, zh, (int)zfmt));
@@ -1691,11 +1712,28 @@ bool W3DDeferredRenderer::createMainZTexture()
 		return false;
 	}
 	d9->SetDepthStencilSurface(m_mainZSurface);
-	// Clear once so the very first frame's samples read far (1.0), not garbage.
-	d9->Clear(0, NULL, D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1.0f, 0);
+	// Clear once so the very first frame's samples read far (1.0), not
+	// garbage. Stencil flag ONLY when the landed format has stencil bits
+	// (Clear is all-or-nothing - a stray STENCIL flag on INTZ would fail
+	// the whole call; the frame-clear path already does the same check).
+	{
+		DWORD clearFlags = D3DCLEAR_ZBUFFER;
+		if (zfmt == D3DFMT_D24S8 || zfmt == D3DFMT_D24X4S4 || zfmt == D3DFMT_D15S1) {
+			clearFlags |= D3DCLEAR_STENCIL;
+		}
+		d9->Clear(0, NULL, clearFlags, 0, 1.0f, 0);
+	}
 	m_mainZAvailable = true;
-	DIAG_LOG(("W3DDeferredRenderer: main z re-bound as sampleable DEPTHSTENCIL texture (%ux%u, fmt=%d).\n",
-		zw, zh, (int)zfmt));
+	DIAG_LOG(("W3DDeferredRenderer: main z re-bound as sampleable DEPTHSTENCIL texture (%ux%u, fmt=%d%s).\n",
+		zw, zh, (int)zfmt, (zfmt == D3DFMT_INTZ) ? " INTZ" : ""));
+	if (zfmt == D3DFMT_INTZ) {
+		static bool s_intzWarned = false;
+		if (!s_intzWarned) {
+			s_intzWarned = true;
+			DIAG_LOG(("W3DDeferredRenderer: INTZ main z = NO stencil bits. Degraded: behind-building markers, "
+				"deferred point-light volume culling (shadow volumes are INI-off). UseSampleableZBuffer=No restores D24S8.\n"));
+		}
+	}
 	return true;
 }
 
