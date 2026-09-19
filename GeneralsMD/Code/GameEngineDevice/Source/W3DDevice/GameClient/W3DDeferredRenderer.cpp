@@ -1817,7 +1817,7 @@ bool W3DDeferredRenderer::createFogResources()
 		"float4 gInvRow2;\n"
 		"float4 gInvRow3;\n"
 		"float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
-		"    if (gFogParams.w >= 4.0) return float4(tex2D(SceneSampler, uv).rgb, 1.0);\n"		// debug 4: scene-sampler health (s0 + resolve chain)
+		"    if (gFogParams.w >= 4.0 && gFogParams.w < 5.0) return float4(tex2D(SceneSampler, uv).rgb, 1.0);\n"		// debug 4 ONLY: scene-sampler health (the old >=4.0 swallowed mode 5)
 		"    float zw = tex2D(ZSampler, uv).x;\n"
 		"    if (gFogParams.w >= 1.0) return float4(zw, zw, zw, 1.0);\n"		// debug 1: raw sampled z
 		"    float3 scene = tex2D(SceneSampler, uv).rgb;\n"
