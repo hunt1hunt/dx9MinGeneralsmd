@@ -125,8 +125,13 @@ public:
 	void endHDRPass();
 
 	/// Full-screen quad tone-mapping pass: HDR RT -> back buffer.
-	/// Applies Reinhard tone mapping + gamma correction.
+	/// Applies Reinhard tone-mapping + gamma correction.
 	void toneMapPass();
+
+	/// VF-2 write-route hunt: one-shot log of whether the CURRENT device DS
+	/// is our sampleable z texture, tagged by call site. The first tag that
+	/// reports "not ours" is where the frame's depth writes get diverted.
+	void debugLogDSIdentity(const char *tag);
 
 	// ---- SSAO pass lifecycle ----
 	void computeAO();

@@ -1353,11 +1353,14 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 					if (s_pipeDiag) DIAG_LOG(("PIPELINE: Lighting+Tonemap took %.2f ms\n",(float)(lE.QuadPart-lS.QuadPart)*1000.0f/(float)pf.QuadPart));
 					}
 					}	// !probe 2097152 (deferred middle: SSAO + lighting + tonemap)
-				{
-					if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
-					LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
-				g_gbufferActive=false; ShaderClass::Invalidate();
-					Customized_Render(rinfo); Flush(rinfo);
+					{
+						if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
+						LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
+					g_gbufferActive=false; ShaderClass::Invalidate();
+						// VF-2 write-route hunt: DS identity at the forward
+						// pass start (transparents render with this DS).
+						if (g_theW3DDeferredRenderer) g_theW3DDeferredRenderer->debugLogDSIdentity("forward_begin");
+						Customized_Render(rinfo); Flush(rinfo);
 						QueryPerformanceCounter(&fE);
 						if (s_pipeDiag) DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
 						// VF-2: raymarch height fog, depth-gated by the sampled
