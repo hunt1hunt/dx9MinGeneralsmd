@@ -155,8 +155,6 @@ public:
 	Real m_volFogGroundDensity;	///< VF-2 INI FogGroundDensity: ground density multiplier (default 1.0)
 	Real m_volFogSunScatter;	///< VF-2 INI SunScatterStrength: sun in-scattering gain (default 0.5)
 	Int m_volFogDebug;			///< VF-2 INI VolumetricFogDebug: 1 = raw sampled-z grayscale viz, 2 = fog factor viz, 3 = one-shot PPM dumps of main z + shadow D24X8 (E:\mainz_dump.ppm / shadowd24_dump.ppm), 4 = scene-sampler passthrough viz (default 0)
-	Real m_terrainBumpStrength;	///< 2026-09-19: terrain normal-map bump gain (INI TerrainBumpStrength, default 1.0; 0=off, 0.5=half). Feeds the terrain PBR c2.x/normalWeight.
-	Bool m_terrainBumpCliffFix;	///< 2026-09-19: kill the bump where the normal atlas is MAGNIFIED (stretched cliff UVs -> horizontal stripes + diamond blocks, field report 2026-09-19). INI TerrainBumpCliffFix, default Yes (No = old behavior, A/B).
 	Int m_terrainProbeMode;		///< VF-1a: terrain pass probe - 1=skip shroud pass, 2=skip tracks, 4=skip bridges, 8=force cloud map off (default 0 = normal)
 	Int m_terrainLODTargetTimeMS;
 	Bool m_useAlternateMouse;
