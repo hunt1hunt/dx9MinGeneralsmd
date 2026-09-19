@@ -1887,6 +1887,13 @@ void W3DDeferredRenderer::releaseFogResources()
 	m_fogAvailable = false;
 }
 
+// VF-2 debug-5 scratch self-test INTZ (file-scope so the draw block can
+// display it; NOT device-reset-safe - debug probe only).
+static IDirect3DTexture9 *s_fogZTestTex = NULL;
+static IDirect3DSurface9 *s_fogZTestSurf = NULL;
+static bool s_fogZTestWritten = false;
+static IDirect3DTexture9 *s_fogZTestTexPeek() { return s_fogZTestTex; }
+
 // ============================================================================
 // W3DDeferredRenderer::volumetricFogPass  (VF-2)
 // ============================================================================
@@ -1939,6 +1946,71 @@ void W3DDeferredRenderer::volumetricFogPass(
 				m_fogSceneRT ? 1 : 0));
 			if (curDS) curDS->Release();
 		}
+	}
+
+	// Debug mode 5: INTZ self-test (the expert's minimal verification loop,
+	// verbatim): a scratch INTZ bound as DS gets ONE known-depth quad drawn
+	// into it (color writes off, z-write on - the shadow-pass pattern),
+	// is unbound, and the normal debug-1 viz then SAMPLES THE SCRATCH
+	// instead of the main z. Black (= the quad's RHW z=0) => INTZ
+	// write+sample chain WORKS on this stack, and the main-z white is a
+	// frame-level issue (where do scene writes really land). White (1.0) =>
+	// INTZ sampling itself is dead here - expert mismatch, take the logs
+	// back. NOTE: probe statics are NOT reset-safe; re-enter the map if the
+	// device resets mid-probe.
+	if (TheGlobalData->m_volFogDebug == 5) {
+		if (!s_fogZTestTex) {
+			HRESULT thr = d9->CreateTexture(256, 256, 1,
+				D3DUSAGE_DEPTHSTENCIL, D3DFMT_INTZ, D3DPOOL_DEFAULT, &s_fogZTestTex, NULL);
+			if (SUCCEEDED(thr) && s_fogZTestTex) {
+				s_fogZTestTex->GetSurfaceLevel(0, &s_fogZTestSurf);
+				DIAG_LOG(("VF-2 ZTEST: scratch INTZ 256x256 created hr=0x%08x.\n", (int)thr));
+			} else {
+				DIAG_LOG(("VF-2 ZTEST: scratch INTZ create FAILED hr=0x%08x.\n", (int)thr));
+			}
+		}
+		if (s_fogZTestSurf && !s_fogZTestWritten) {
+			s_fogZTestWritten = true;
+			IDirect3DSurface9 *rtSave = NULL;
+			IDirect3DSurface9 *dsSave = NULL;
+			D3DVIEWPORT9 vpSave;
+			DWORD cwSave, zeSave, zwSave;
+			d9->GetRenderTarget(0, &rtSave);
+			d9->GetDepthStencilSurface(&dsSave);
+			d9->GetViewport(&vpSave);
+			dev->GetRenderState(D3DRS_COLORWRITEENABLE, &cwSave);
+			dev->GetRenderState(D3DRS_ZENABLE, &zeSave);
+			dev->GetRenderState(D3DRS_ZWRITEENABLE, &zwSave);
+			{
+				IDirect3DSurface9 *scratch = m_fogSceneRT->Get_D3D_Surface_Level();
+				d9->SetRenderTarget(0, scratch);
+				scratch->Release();
+			}
+			d9->SetDepthStencilSurface(s_fogZTestSurf);
+			D3DVIEWPORT9 vpT = { 0, 0, 256, 256, 0.0f, 1.0f };
+			d9->SetViewport(&vpT);
+			d9->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, 1.0f, 0);
+			dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+			dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+			dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+			dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+			dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+			dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+			dev->SetStreamSource(0, m_quadVB, 0, sizeof(float) * 6);
+			dev->SetIndices(m_quadIB);
+			dev->SetPixelShader(NULL);
+			dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+			DIAG_LOG(("VF-2 ZTEST: z=0 quad drawn into scratch INTZ (color writes off).\n"));
+			d9->SetDepthStencilSurface(dsSave);
+			if (dsSave) dsSave->Release();
+			if (rtSave) { d9->SetRenderTarget(0, rtSave); rtSave->Release(); }
+			d9->SetViewport(&vpSave);
+			dev->SetRenderState(D3DRS_COLORWRITEENABLE, cwSave);
+			dev->SetRenderState(D3DRS_ZENABLE, zeSave);
+			dev->SetRenderState(D3DRS_ZWRITEENABLE, zwSave);
+		}
+		// fall through: the draw below displays the SCRATCH texture
+		// (debug>=1 path shows the s1 sample) instead of the main z.
 	}
 
 	// 0) resolve the backbuffer into the scene RT (bloom-proven route).
@@ -2081,9 +2153,21 @@ void W3DDeferredRenderer::volumetricFogPass(
 				// Direct device bind of the z texture at the PINNED s1 -
 				// applied AFTER BeginPass so it overrides whatever the
 				// effect did (or failed to do) with the ZTex parameter.
-				// Sampler states explicit: Point/Clamp/None (the proven
-				// depth-sampling declaration).
-				dev->SetTexture(1, m_mainZTex);
+				// Debug 5 displays the scratch self-test INTZ instead.
+				{
+					IDirect3DTexture9 *zShow = m_mainZTex;
+					if (TheGlobalData->m_volFogDebug == 5) {
+						// the scratch from the self-test block above
+						IDirect3DTexture9 *zTest = NULL;
+						// same static as the self-test block: fetch via a
+						// level-0 query on the cached static through a
+						// helper - simplest: re-grab via GetSurfaceLevel on
+						// the static texture pointer stored file-scope.
+						zTest = s_fogZTestTexPeek();
+						if (zTest) zShow = zTest;
+					}
+					dev->SetTexture(1, zShow);
+				}
 				d9->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_POINT);
 				d9->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
 				d9->SetSamplerState(1, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
