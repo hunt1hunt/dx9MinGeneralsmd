@@ -56,20 +56,17 @@
 UnsignedInt Money::withdraw(UnsignedInt amountToWithdraw, Bool playSound)
 {
 #if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
-	//Player* player = ThePlayerList->getNthPlayer(m_playerIndex);
-	//if (player != NULL && player->buildsForFree())
-	Bool enable = !ThePlayerList->getLocalPlayer()->buildsForFree();
-	//for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
-	//		{
-	//			Player* player = ThePlayerList->getNthPlayer(n);
-	//			if (player->getPlayerType() == PLAYER_HUMAN)
-	//				player->enableFreeBuild(enable);
-	//		}
-	if (enable)
-	//if ThePlayerList->getLocalPlayer()->buildsForFree();
+	// 2026-09-19: restored the ORIGINAL free-build check (the migration-era
+	// rewrite "enable = !buildsForFree(); if (enable) return 0;" was exactly
+	// INVERTED: everything was FREE while freebuild was OFF, and building
+	// charged normally right after ALT+B turned freebuild ON - the
+	// field-reported "free build never works". Correct semantics: the OWNING
+	// player building for free pays nothing.)
+	Player* freePlayer = ThePlayerList->getNthPlayer(m_playerIndex);
+	if (freePlayer != NULL && freePlayer->buildsForFree())
 		return 0;
-	else
-#endif //defined(_DEBUG) || defined(_INTERNAL)	
+#endif //defined(_DEBUG) || defined(_INTERNAL)
+
     if (amountToWithdraw > m_money)
 		amountToWithdraw = m_money;
 
