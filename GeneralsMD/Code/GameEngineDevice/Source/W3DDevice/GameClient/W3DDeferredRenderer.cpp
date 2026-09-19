@@ -1873,15 +1873,21 @@ bool W3DDeferredRenderer::createFogResources()
 		// intro cinematic: the rings slid across the ship's static shadow).
 		// 48 steps + a per-pixel dithered march start break the remaining
 		// transmittance banding into sub-pixel noise.
-		"    float dt = marchLen / 48.0;\n"
+		// 2026-09-19 FogStart: the march begins FogStart units out (gCamPos.w)
+		// - a clean zero-fog near band; rays shorter than that get no fog.
+		"    float startDist = max(gCamPos.w, 0.0);\n"
+		"    float span = marchLen - startDist;\n"
+		"    float dt = span / 48.0;\n"
 		"    float jitter = frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);\n"
 		"    float trans = 1.0;\n"
+		"    if (span > 0.0) {\n"
 		"    for (int i = 0; i < 48; i++) {\n"
-		"        float t = ((float)i + jitter) * dt;\n"
+		"        float t = startDist + ((float)i + jitter) * dt;\n"
 		"        float3 p = gCamPos.xyz + rd * t;\n"
 		"        float d = gFogParams.x * exp(-max(p.z, 0.0) * gFogParams.y);\n"
 		"        trans *= exp(-d * dt);\n"
 		"        if (trans < 0.01) break;\n"
+		"    }\n"
 		"    }\n"
 		"    if (gFogParams.w >= 2.0) return float4(1.0 - trans, 1.0 - trans, 1.0 - trans, 1.0);\n"	// debug 2: fog factor viz
 		"    float3 fogCol = gFogColor.rgb * (1.0 - trans);\n"
@@ -2141,7 +2147,12 @@ void W3DDeferredRenderer::volumetricFogPass(
 		D3DXVECTOR4 r1(inv[1][0], inv[1][1], inv[1][2], inv[1][3]);
 		D3DXVECTOR4 r2(inv[2][0], inv[2][1], inv[2][2], inv[2][3]);
 		D3DXVECTOR4 r3(inv[3][0], inv[3][1], inv[3][2], inv[3][3]);
-		D3DXVECTOR4 vCam(cameraPos.X, cameraPos.Y, cameraPos.Z, 0.0f);
+		// w = FogStart (INI, P4 key): the march's start distance - a clean
+		// zero-fog near band ("雾开始位置"). Clamp to [0, FogEnd) for sanity.
+		float fs = TheGlobalData->m_fogStart;
+		if (fs < 0.0f) fs = 0.0f;
+		if (fs >= TheGlobalData->m_fogEnd) fs = TheGlobalData->m_fogEnd * 0.9f;
+		D3DXVECTOR4 vCam(cameraPos.X, cameraPos.Y, cameraPos.Z, fs);
 		D3DXVECTOR4 vSun(sunDir.X, sunDir.Y, sunDir.Z, TheGlobalData->m_volFogSunScatter);
 		D3DXVECTOR4 vSunCol(sunColor.X, sunColor.Y, sunColor.Z, 0.0f);
 		D3DXVECTOR4 vFog(TheGlobalData->m_fogColorR, TheGlobalData->m_fogColorG, TheGlobalData->m_fogColorB, 0.0f);
