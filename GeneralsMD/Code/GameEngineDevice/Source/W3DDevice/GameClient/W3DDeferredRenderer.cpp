@@ -1946,10 +1946,14 @@ void W3DDeferredRenderer::volumetricFogPass(
 			s_entryLogged = true;
 			IDirect3DSurface9 *curDS = NULL;
 			d9->GetDepthStencilSurface(&curDS);
-			DIAG_LOG(("VF-2 ENTRY: fog=%d debug=%d zAvail=%d curDS==ours=%d fx=%d rt=%d\n",
+			D3DSURFACE_DESC mzd;
+			DWORD mzFmt = 0;
+			if (m_mainZTex && SUCCEEDED(m_mainZTex->GetLevelDesc(0, &mzd))) mzFmt = (DWORD)mzd.Format;
+			DIAG_LOG(("VF-2 ENTRY: fog=%d debug=%d zAvail=%d zFmt=%u(75=D24S8,77=D24X8,INTZ=1515474505) curDS==ours=%d fx=%d rt=%d\n",
 				(int)(TheGlobalData->m_useVolumetricFog != FALSE),
 				(int)TheGlobalData->m_volFogDebug,
 				(int)m_mainZAvailable,
+				mzFmt,
 				(curDS == m_mainZSurface) ? 1 : 0,
 				m_fogFX ? 1 : 0,
 				m_fogSceneRT ? 1 : 0));
