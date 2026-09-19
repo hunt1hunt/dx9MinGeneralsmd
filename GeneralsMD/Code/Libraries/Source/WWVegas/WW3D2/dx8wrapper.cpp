@@ -3494,6 +3494,15 @@ void DX8Wrapper::Create_Render_Target
  * New overload for MRT support. Index 0 delegates to the existing single-RT path.
  * Indices 1-3 call IDirect3DDevice9::SetRenderTarget directly.
  */
+void DX8Wrapper::Set_Default_Depth_Buffer (IDirect3DSurface8 *depth_buffer)
+{
+	// 2026-09-19 SPLIT-DEPTH (VF-2): exchange the cached default depth
+	// buffer taking over its owned reference.
+	if (depth_buffer) depth_buffer->AddRef();
+	if (DefaultDepthBuffer) DefaultDepthBuffer->Release();
+	DefaultDepthBuffer = depth_buffer;
+}
+
 void DX8Wrapper::Set_Render_Target(int index, IDirect3DSurface8 *render_target)
 {
 	DX8_THREAD_ASSERT();

@@ -133,6 +133,16 @@ public:
 	/// reports "not ours" is where the frame's depth writes get diverted.
 	void debugLogDSIdentity(const char *tag);
 
+	// ---- SPLIT-DEPTH frame wiring (2026-09-19 final) ----
+	// The frame runs INTZ as DS (fog's sampleable depth) EXCEPT the forward
+	// pass, which runs on the auto D24S8 so every stencil system (volumetric
+	// soft shadows, markers, point-light volumes) keeps production behavior.
+	// Both helpers also flip DX8Wrapper's DefaultDepthBuffer cache (with
+	// proper refcounting) so nested custom-RT restores during each phase
+	// re-bind the CORRECT surface.
+	void splitDepthBindAutoForForward();
+	void splitDepthBindINTZAfterForward();
+
 	// ---- SSAO pass lifecycle ----
 	void computeAO();
 
@@ -166,8 +176,9 @@ public:
 	bool createMainZTexture();
 	void releaseMainZTexture();
 	bool isMainZAvailable() const { return m_mainZAvailable; }
-	IDirect3DTexture9 *m_mainZTex;			///< main z as a sampleable DEPTHSTENCIL texture
-	IDirect3DSurface9 *m_mainZSurface;	///< its level-0 surface (bound as the device DS)
+	IDirect3DTexture9 *m_mainZTex;			///< sampleable INTZ depth for the fog (bound as DS during the G-Buffer pass ONLY)
+	IDirect3DSurface9 *m_mainZSurface;	///< its level-0 surface
+	IDirect3DSurface9 *m_mainZAutoDS;	///< the device's auto D24S8 (AddRef'd; the frame's DS outside the G-Buffer pass - keeps stencil for the volumetric soft shadows / markers / point lights)
 	bool m_mainZAvailable;
 
 	// ---- VF-2: raymarch height fog, depth-gated by the sampled main z ----

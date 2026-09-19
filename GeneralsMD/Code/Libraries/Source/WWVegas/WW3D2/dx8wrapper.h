@@ -517,6 +517,12 @@ public:
 	static void					Set_Render_Target (IDirect3DSurface8* render_target, IDirect3DSurface8* dpeth_buffer);
 	static void					Set_Render_Target (int index, IDirect3DSurface8 *render_target);
 
+	// 2026-09-19 SPLIT-DEPTH (VF-2): swap the cached DefaultDepthBuffer with
+	// refcounting, so nested custom-RT restores re-bind the desired DS per
+	// frame phase (INTZ during the G-Buffer phase, auto D24S8 during the
+	// forward pass for the stencil shadow systems).
+	static void					Set_Default_Depth_Buffer (IDirect3DSurface8 *depth_buffer);
+
 	static void					Set_Render_Target (IDirect3DSwapChain8 *swap_chain);
 	static bool					Is_Render_To_Texture(void) { return IsRenderToTexture; }
 
