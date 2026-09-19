@@ -62,7 +62,7 @@ python "E:\Source\repos\MinGeneralsfreebuild2ok\GeneralsMD\Code\Tools\apply_laa.
 
 - 链接器产物不带 LARGE_ADDRESS_AWARE（0x010F），不打补丁的 32 位 exe 只能寻址 2GB。
 - 最省事顺序：构建 → **先给 `GeneralsMD\Run\RTS.exe` 打 LAA** → 再拷贝部署（部署件自动带标志）；部署后对目标再跑一次脚本校验亦幂等。
-- 游戏目录有两个：`D:\!!!!!!!QWCSB\!!!!!!!QWCSB\`（本机部署目标）与 `E:\!!!!!!!QWCSB\`（另一环境，历来已带 LAA）。
+- 游戏目录有两个：`D:\!!!!!!!QWCSB\!!!!!!!QWCSB\` 与 `E:\!!!!!!!QWCSB\`。**2026-09-19 实锤：用户日常从 E: 盘启动游戏**——EXE 与资源文件一样双目录部署（E: 同名先时间戳备份）；只部署 D: 会让用户测到旧 exe（已发生一次：9-16 旧版被当成修复失败）。
 
 **资源文件双目录同步铁律（用户钦定 2026-09-19）：**
 
