@@ -2443,7 +2443,7 @@ Int TerrainShaderPBR::init( void )
 			// with it. No new registers - this is a correctness fix.
 			"    float pxStep = max(length(duv1), length(duv2));\n"
 			"    float texelUV = 1.0 / 2048.0;\n"
-			"    float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
+			"    float atten = saturate((texelUV * 2.5 + pxStep) / (texelUV * 2.0));\n"	// BISECT-3: +/- flipped => numerator >= 2.5*texelUV > denom => atten==1.0 always (value-neutral; identical instruction count)
 			"    conc *= atten;\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
@@ -2643,10 +2643,6 @@ Int TerrainShaderPBR::init( void )
 			// constant file rides the 31-register ceiling, X5589 class) and
 			// the PBR-chain fallback took the W3X texture-shadow receive down
 			// with it. No new registers - this is a correctness fix.
-			"    float pxStep = max(length(duv1), length(duv2));\n"
-			"    float texelUV = 1.0 / 2048.0;\n"
-			"    float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
-			"    conc *= atten;\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -2768,10 +2764,6 @@ Int TerrainShaderPBR::init( void )
 			// constant file rides the 31-register ceiling, X5589 class) and
 			// the PBR-chain fallback took the W3X texture-shadow receive down
 			// with it. No new registers - this is a correctness fix.
-			"    float pxStep = max(length(duv1), length(duv2));\n"
-			"    float texelUV = 1.0 / 2048.0;\n"
-			"    float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
-			"    conc *= atten;\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -2895,10 +2887,6 @@ Int TerrainShaderPBR::init( void )
 			// constant file rides the 31-register ceiling, X5589 class) and
 			// the PBR-chain fallback took the W3X texture-shadow receive down
 			// with it. No new registers - this is a correctness fix.
-			"    float pxStep = max(length(duv1), length(duv2));\n"
-			"    float texelUV = 1.0 / 2048.0;\n"
-			"    float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
-			"    conc *= atten;\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -3111,12 +3099,9 @@ Int TerrainShaderPBR::set(Int pass)
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 			normalWeight = 1.0f;
-			// 2026-09-19: INI gain (TerrainBumpStrength, default 1.0 = unchanged
-			// taste per user verdict; flat-terrain look must NOT change).
-			if (TheGlobalData) {
-				normalWeight *= TheGlobalData->m_terrainBumpStrength;
-				if (normalWeight < 0.0f) normalWeight = 0.0f;
-			}
+			// BISECT-1 (2026-09-19): Block B (INI knob) REMOVED for isolation -
+			// testing Block A (shader attenuation) alone. The GlobalData fields
+			// are absent in this reverted tree, the knob cannot compile anyway.
 		}
 		// c2 = { normalWeight, terrainRoughness, bumpSignX, bumpSignY }
 		//   x: detail-normal blend strength (1.0 when a normal atlas is bound, else 0.0 = geo only).
@@ -3194,7 +3179,7 @@ Int TerrainShaderPBR::set(Int pass)
 				// (W3DDeferredRenderer createShadowResources), so the depth bias
 				// returns to 0.005 exactly per the pairing contract above.
 				float invSmTexel = 1.0f / (float)((g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getShadowMapSize() >= 256) ? g_theW3DDeferredRenderer->getShadowMapSize() : 2048);
-				float sc7[4] = { invSmTexel, invSmTexel, 0.005f, 1.0f };
+				float sc7[4] = { invSmTexel, invSmTexel, 0.001f, 1.0f };
 				DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(3, sc3, 1);
 				// 2026-09-09 RA3-FAITHFUL TSS STAGE 7: the fixed-function 'VS' computes
 				// shadow UV+depth per-vertex, exactly like RA3 Terrain.fx does in its VS:
