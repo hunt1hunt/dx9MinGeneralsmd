@@ -1897,6 +1897,19 @@ void W3DDeferredRenderer::volumetricFogPass(
 		}
 	}
 
+	// 0) resolve the backbuffer into the scene RT (bloom-proven route).
+	// Runs BEFORE the mode-3 dump block so the fogscene control dump holds
+	// THIS frame's resolved image, not creation garbage.
+	IDirect3DSurface9 *backSurf0 = NULL;
+	if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backSurf0)) || !backSurf0) return;
+	{
+		IDirect3DSurface9 *fogSurf0 = m_fogSceneRT->Get_D3D_Surface_Level();
+		HRESULT sr0 = dev->StretchRect(backSurf0, NULL, fogSurf0, NULL, D3DTEXF_NONE);
+		fogSurf0->Release();
+		backSurf0->Release();
+		if (FAILED(sr0)) { DIAG_LOG(("W3DDeferredRenderer: fog StretchRect FAILED hr=0x%08X.\n", (int)sr0)); return; }
+	}
+
 	// Debug mode 3: one-shot CONTENT dump of the main z through the PROVEN
 	// effect readback (dumpShadowTexToPPM machinery). 2026-09-19 second
 	// round: UNBIND the DS first - the first dump sampled the z texture
@@ -1914,15 +1927,30 @@ void W3DDeferredRenderer::volumetricFogPass(
 			d9->GetDepthStencilSurface(&dsSave);
 			d9->SetDepthStencilSurface(NULL);
 			dumpShadowTexToPPM(m_mainZTex, "E:\\mainz_dump.ppm");
-			// CONTROL: dump the shadow's OWN D24X8 (the historical precedent
+			// CONTROL 1: dump the shadow's OWN D24X8 (the historical precedent
 			// texture, never the bound DS at this point) with the SAME
-			// machinery. Geometry here => machinery + precedent validated,
-			// mainz result trustworthy; flat here => effect-sampling of depth
-			// textures is dead on this stack, full stop - pivot to the COLOR
-			// RT depth-encode fallback.
+			// machinery. 2026-09-19 shot-1 read: BOTH depth dumps flat 0 -
+			// so add CONTROLS 2+3, known-content COLOR textures through the
+			// identical path, to close the last confound (draw-half of the
+			// machinery itself):
+			//   shadowsampler = the every-frame StretchRect'd A8R8G8B8 copy
+			//     (production-sampled by the terrain receive, known content)
+			//   fogscene = the fog pass's own backbuffer resolve (known =
+			//     the visible frame). Both black => the dump DRAW is broken
+			//     and every depth verdict so far is void; content in both =>
+			//     machinery healthy and DEPTH-TEXTURE EFFECT SAMPLING IS DEAD
+			//     on this stack (both formats) - pivot to COLOR RT encode.
 			if (m_shadowDepthStencilTex) {
 				dumpShadowTexToPPM((IDirect3DBaseTexture9*)m_shadowDepthStencilTex,
 					"E:\\shadowd24_dump.ppm");
+			}
+			if (m_shadowDepthSampler) {
+				dumpShadowTexToPPM((IDirect3DBaseTexture9*)m_shadowDepthSampler,
+					"E:\\shadowsampler_dump.ppm");
+			}
+			if (m_fogSceneRT) {
+				dumpShadowTexToPPM((IDirect3DBaseTexture9*)m_fogSceneRT->Peek_D3D_Texture(),
+					"E:\\fogscene_dump.ppm");
 			}
 			d9->SetDepthStencilSurface(dsSave);
 			if (dsSave) dsSave->Release();
@@ -1930,15 +1958,6 @@ void W3DDeferredRenderer::volumetricFogPass(
 		}
 		return;
 	}
-
-	// 0) resolve the backbuffer into the scene RT (bloom-proven route).
-	IDirect3DSurface9 *backSurf = NULL;
-	if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backSurf)) || !backSurf) return;
-	IDirect3DSurface9 *fogSurf = m_fogSceneRT->Get_D3D_Surface_Level();
-	HRESULT sr = dev->StretchRect(backSurf, NULL, fogSurf, NULL, D3DTEXF_NONE);
-	fogSurf->Release();
-	backSurf->Release();
-	if (FAILED(sr)) { DIAG_LOG(("W3DDeferredRenderer: fog StretchRect FAILED hr=0x%08X.\n", (int)sr)); return; }
 
 	// 1) save the state we override.
 	D3DVIEWPORT9 vpMain;
