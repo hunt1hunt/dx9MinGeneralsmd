@@ -1740,12 +1740,45 @@ Bool WorldHeightMap::getUVData(Int xIndex, Int yIndex, float U[4], float V[4], B
 // shader and the conc path stay byte-identical. First deploy (v2) only hooked
 // the DO_OLD_UV exit - map-authored cliffs (cliffInfo data) leave through the
 // early return at the info.flip exit and never saw the crop; v2b hooks BOTH.
-static void ApplyCliffAtlasCrop(Int ndx, float U[4], float V[4])
+// 2026-09-19 v2e: smooth value noise for the crop offset. The v2d wide WHITE
+// noise made neighboring cells sample wildly different atlas spots - stripe
+// period fine, but the CONTENT jump at every cell edge read as a visible
+// diamond grid (field + image analysis: the diamonds ARE the cliff cells'
+// perspective quads, outlined by per-edge brightness/content discontinuity).
+// A low-frequency offset field (bilinear value noise over the cell grid)
+// makes adjacent cells sample NEARBY atlas positions: edges transition
+// smoothly, the diamond outline dissolves, and the class-region travel still
+// decorrelates distant cells (no macro repetition).
+static Real CliffCropNoise(Int gx, Int gy, UnsignedInt salt)
 {
-	// DIAG (2026-09-19 v2c): v2b's field test showed "no visual change" -
-	// never got diagnosed whether the crop never RAN (wrong hook path) or ran
-	// but was visually insufficient. Count calls/crops; dump once after the
-	// mesh build settles (8192 calls in) so the next field run is decisive.
+	UnsignedInt h = (UnsignedInt)gx * 374761393u + (UnsignedInt)gy * 668265263u + salt;
+	h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
+	return (Real)(h & 0xFFFF) / 65535.0f;
+}
+static Real CliffCropSmoothJitter(Int cx, Int cy, UnsignedInt salt)
+{
+	const Int PERIOD = 7;	// offset field wavelength in cells
+	Int gx = cx / PERIOD; Int gy = cy / PERIOD;
+	Int mx = cx % PERIOD; Int my = cy % PERIOD;
+	if (mx < 0) { mx += PERIOD; gx--; }
+	if (my < 0) { my += PERIOD; gy--; }
+	Real fx = (Real)mx / (Real)PERIOD;
+	Real fy = (Real)my / (Real)PERIOD;
+	Real sx = fx * fx * (3.0f - 2.0f * fx);
+	Real sy = fy * fy * (3.0f - 2.0f * fy);
+	Real n00 = CliffCropNoise(gx, gy, salt);
+	Real n10 = CliffCropNoise(gx + 1, gy, salt);
+	Real n01 = CliffCropNoise(gx, gy + 1, salt);
+	Real n11 = CliffCropNoise(gx + 1, gy + 1, salt);
+	Real a = n00 + (n10 - n00) * sx;
+	Real b = n01 + (n11 - n01) * sx;
+	return a + (b - a) * sy;
+}
+
+static void ApplyCliffAtlasCrop(Int ndx, Int cellX, Int cellY, float U[4], float V[4],
+	Real uLo, Real uHi, Real vLo, Real vHi)
+{
+	// DIAG (2026-09-19 v2c): counts + one-shot dump (E:\cliffcrop_diag.log).
 	{
 		static UnsignedInt s_calls = 0;
 		static UnsignedInt s_cropped = 0;
@@ -1759,7 +1792,7 @@ static void ApplyCliffAtlasCrop(Int ndx, float U[4], float V[4])
 			s_dumped = TRUE;
 			FILE *df = fopen("E:\\cliffcrop_diag.log", "a");
 			if (df) {
-				fprintf(df, "[cliffcrop] calls=%u cropped=%u crop=%.2f (0 cropped = hook path never taken; big cropped = ran, tune crop value)\n",
+				fprintf(df, "[cliffcrop] calls=%u cropped=%u crop=%.2f\n",
 					s_calls, s_cropped,
 					TheGlobalData ? TheGlobalData->m_cliffAtlasCrop : -1.0f);
 				fclose(df);
@@ -1782,11 +1815,31 @@ static void ApplyCliffAtlasCrop(Int ndx, float U[4], float V[4])
 	Real vSpan = vMax - vMin; if (vSpan < 1e-20f) vSpan = 1e-20f;
 	Real uw = uSpan * crop;
 	Real vh = vSpan * crop;
-	UnsignedInt seed = (UnsignedInt)ndx * 2654435761u;	// Knuth multiplicative hash
-	Real jx = (Real)((seed >> 8) & 0xFF) / 255.0f;
-	Real jy = (Real)((seed >> 16) & 0xFF) / 255.0f;
-	Real u0 = uMin + (uSpan - uw) * jx;
-	Real v0 = vMin + (vSpan - vh) * jy;
+	// 2026-09-19 v2d WIDE JITTER: v2c's field test kept stripes gone but the
+	// DIAMOND tiling stayed visible - jittering inside the CELL's own bbox
+	// (span*(1-crop) ~ 3/4 of one small quadrant) made neighbors sample
+	// nearly the same crop, so the per-cell repetition still read as blocks.
+	// Jitter the crop rect across the WHOLE texture-class region instead:
+	// adjacent cells then show different variant tiles of the same material
+	// (the atlas ships numTiles variants per class precisely to be mixed),
+	// which is the standard tiling-breaker. Guards: the rect must fit inside
+	// the class region; a bad/short region falls back to v2c behavior.
+	Real jxLo = uMin; Real jxHi = uMax - uw;
+	Real jyLo = vMin; Real jyHi = vMax - vh;
+	if (uHi > uLo + 1e-9f && vHi > vLo + 1e-9f
+		&& (uHi - uLo) > uw && (vHi - vLo) > vh) {
+		jxLo = uLo; jxHi = uHi - uw;
+		jyLo = vLo; jyHi = vHi - vh;
+		if (jxHi < jxLo) jxHi = jxLo;
+		if (jyHi < jyLo) jyHi = jyLo;
+	}
+	// v2e: smooth low-frequency offsets (see CliffCropSmoothJitter) - v2d's
+	// per-cell white noise made every cell edge a content/brightness jump
+	// that outlined the diamond cell grid; smooth travel removes the edges.
+	Real jx = CliffCropSmoothJitter(cellX, cellY, 0x9E3779B9u);
+	Real jy = CliffCropSmoothJitter(cellX, cellY, 0x85EBCA6Bu);
+	Real u0 = jxLo + (jxHi - jxLo) * jx;
+	Real v0 = jyLo + (jyHi - jyLo) * jy;
 	for (q=0; q<4; q++) {
 		Real tu = (U[q] - uMin) / uSpan;
 		Real tv = (V[q] - vMin) / vSpan;
@@ -1842,7 +1895,16 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 				V[1] = info.v1*vFactor+maxV;
 				V[2] = info.v2*vFactor+maxV;
 				V[3] = info.v3*vFactor+maxV;
-				ApplyCliffAtlasCrop(ndx, U, V);	// v2b: authored-cliff exit also crops
+				// v2d: authored-cliff exit crops with WIDE jitter across the
+				// whole texture-class region (variant tiles get mixed).
+				{
+					Real clsU0 = m_textureClasses[i].positionInTexture.x / (Real)TEXTURE_WIDTH;
+					Real clsU1 = (m_textureClasses[i].positionInTexture.x
+						+ m_textureClasses[i].width*(Real)TILE_PIXEL_EXTENT) / (Real)TEXTURE_WIDTH;
+					Real clsV1 = maxV;
+					Real clsV0 = m_textureClasses[i].positionInTexture.y / (Real)m_terrainTexHeight;
+					ApplyCliffAtlasCrop(ndx, ndx % m_width, ndx / m_width, U, V, clsU0, clsU1, clsV0, clsV1);
+				}
 				return info.flip;
 			}
 		}
@@ -2040,8 +2102,9 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 			}
 
 			// 2026-09-19 v2b: stretch-qualified exit - shared crop helper (see
-			// ApplyCliffAtlasCrop above for the full rationale).
-			ApplyCliffAtlasCrop(ndx, U, V);
+			// ApplyCliffAtlasCrop above for the full rationale). v2d: wide
+			// jitter across this texture class's region (nUb..xUb, nVb..xVb).
+			ApplyCliffAtlasCrop(ndx, ndx % m_width, ndx / m_width, U, V, nUb, xUb, nVb, xVb);
 		}
 		return true;
 // 
