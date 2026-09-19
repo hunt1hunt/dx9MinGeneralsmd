@@ -52,6 +52,20 @@ argument-hint: "[分析/修改/编译/架构/模块/网络/渲染/调试/地图]
 
 ---
 
+## 构建与部署铁律（用户钦定 2026-09-19）
+
+**每次编译构建并部署到游戏目录后，必须立即打 LAA 补丁（幂等，已带则跳过）：**
+
+```
+python "E:\Source\repos\MinGeneralsfreebuild2ok\GeneralsMD\Code\Tools\apply_laa.py" "D:\!!!!!!!QWCSB\!!!!!!!QWCSB\RTS.EXE"
+```
+
+- 链接器产物不带 LARGE_ADDRESS_AWARE（0x010F），不打补丁的 32 位 exe 只能寻址 2GB。
+- 最省事顺序：构建 → **先给 `GeneralsMD\Run\RTS.exe` 打 LAA** → 再拷贝部署（部署件自动带标志）；部署后对目标再跑一次脚本校验亦幂等。
+- 游戏目录有两个：`D:\!!!!!!!QWCSB\!!!!!!!QWCSB\`（本机部署目标）与 `E:\!!!!!!!QWCSB\`（另一环境，历来已带 LAA）。
+
+---
+
 ## 核心架构速查
 
 ### 引擎引导流程
