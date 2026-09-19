@@ -91,10 +91,10 @@
 #include "GameClient/Mouse.h"
 #include "GameClient/View.h"
 #include "GameLogic/TerrainLogic.h"
-// 1. å…ˆåŒ…å«å¿…è¦çš„å¤´æ–‡ä»¶ï¼ˆæ ¹æ®Generalså¼•æ“ä»£ç é£æ ¼è¡¥å……ï¼Œç¡®ä¿ç±»å‹å®šä¹‰å¯è§ï¼‰
-//#include "Team.h"          // Teamç±»çš„å®šä¹‰ï¼ˆdefaultTeamçš„ç±»å‹ï¼‰
-//#include "Coord3D.h"       // Coord3Dåæ ‡ç±»å‹çš„å®šä¹‰
-//#include "ThingFactory.h"  // ç‰©ä½“å·¥å‚ç›¸å…³
+// 1. ÏÈ°üº¬±ØÒªµÄÍ·ÎÄ¼ş£¨¸ù¾İGeneralsÒıÇæ´úÂë·ç¸ñ²¹³ä£¬È·±£ÀàĞÍ¶¨Òå¿É¼û£©
+//#include "Team.h"          // TeamÀàµÄ¶¨Òå£¨defaultTeamµÄÀàĞÍ£©
+//#include "Coord3D.h"       // Coord3D×ø±êÀàĞÍµÄ¶¨Òå
+//#include "ThingFactory.h"  // ÎïÌå¹¤³§Ïà¹Ø
 class ObjectCreationList;  
 //class MouseIO;  
 //class Coord3D;
@@ -3420,10 +3420,10 @@ case GameMessage::MSG_CHEAT_UNLIMITED_AMMO:
 			if (player->getPlayerType() == PLAYER_HUMAN)
 				player->enableUnlimitedAmmo(enable);
        if (enable)
-				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOn", L"æ ¸å‹•åŠ›å…¨çƒæ™ºèƒ½æ‰“æ“Šç³»çµ±å¼€ ON"));"UNLIMITED_AMMO OFF"
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOn", L"ºË„ÓÁ¦È«ÇòÖÇÄÜ´ò“ôÏµ½y¿ª ON"));"UNLIMITED_AMMO OFF"
 TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb ON" ));
 			else
-				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOff", L"æ ¸å‹•åŠ›å…¨çƒæ™ºèƒ½æ‰“æ“Šç³»çµ±å…³ OFF"));
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOff", L"ºË„ÓÁ¦È«ÇòÖÇÄÜ´ò“ôÏµ½y¹Ø OFF"));
 TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb OFF" ));
 
 			disp = DESTROY_MESSAGE;
@@ -3536,10 +3536,10 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 			}
 
 			if (enable)
-				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOn", L"Ignore Prerequisitesæ— æ¡ä»¶å»º is ON") );
+				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOn", L"Ignore PrerequisitesÎŞÌõ¼ş½¨ is ON") );
 			TheInGameUI->message( UnicodeString( L"Ignore Prerequisites\x53bb\x524d\x63d0\x5efa is ON!" ));
 			else
-				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOff", L"Ignore Prerequisitesæ— æ¡ä»¶å»º is OFF") );
+				//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugIgnorePrereqOff", L"Ignore PrerequisitesÎŞÌõ¼ş½¨ is OFF") );
 			TheInGameUI->message( UnicodeString( L"Ignore Prerequisites\x53bb\x524d\x63d0\x5efa is OFF!" ));
 
 			disp = DESTROY_MESSAGE;
@@ -3557,24 +3557,24 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 			if (player->getPlayerType() == PLAYER_HUMAN)
 				player->enableFreeBuild(enable);
 
-			// å¦‚æœå¯ç”¨ freebuildï¼Œç»™ç©å®¶å¢åŠ  1200 å•ä½ç”µé‡
+			// Èç¹ûÆôÓÃ freebuild£¬¸øÍæ¼ÒÔö¼Ó 1200 µ¥Î»µçÁ¿
 			if (enable)
 			{
-				player->getEnergy()->depositEnergy(1200, FALSE); // å¼€å¯ï¼š+1200
+				player->getEnergy()->depositEnergy(1200, FALSE); // ¿ªÆô£º+1200
 			}
 			else
 			{
-			// å…³é—­ freebuild æ—¶ï¼Œæ‰£å›æœ€å¤š 1200ï¼ˆwithdrawEnergy å†…éƒ¨é’³åˆ°éè´Ÿï¼‰
+			// ¹Ø±Õ freebuild Ê±£¬¿Û»Ø×î¶à 1200£¨withdrawEnergy ÄÚ²¿Ç¯µ½·Ç¸º£©
 				player->getEnergy()->withdrawEnergy(1200, TRUE);
 			}
 		}
 
 		if (enable)
-			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free Buildå…è´¹å»º+æ»¡ç”µé‡ is ON") );
-		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is off!" ));
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free BuildÃâ·Ñ½¨+ÂúµçÁ¿ is ON") );
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is ON!" ));
 		else
-			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free Buildå…è´¹å»º+æ»¡ç”µé‡ is OFF") );
-		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is On!" ));
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free BuildÃâ·Ñ½¨+ÂúµçÁ¿ is OFF") );
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is OFF!" ));
 
 		disp = DESTROY_MESSAGE;
 		break;
@@ -3592,17 +3592,17 @@ case GameMessage::MSG_CHEAT_qingwaGOD_MODE:
 		}
 
 		if (enable)
-			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOn", L"Godé’è›™æ— æ•Œæ¨¡å¼ Mode is ON"));
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOn", L"GodÇàÍÜÎŞµĞÄ£Ê½ Mode is ON"));
 		TheInGameUI->message( UnicodeString( L"\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is ON!" ));
 		else
-			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOff", L"Godé’è›™æ— æ•Œæ¨¡å¼ Mode is OFF"));
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOff", L"GodÇàÍÜÎŞµĞÄ£Ê½ Mode is OFF"));
 		TheInGameUI->message( UnicodeString( L"\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is OFF!" ));
 
 		disp = DESTROY_MESSAGE;
 		break;
 }
 
-// ä»è¿™é‡Œå¼€å§‹æ˜¯ä½ çš„caseåˆ†æ”¯ï¼ˆå¯¹åº”ä½ æ–‡ä»¶çš„3586è¡Œå·¦å³ï¼‰
+// ´ÓÕâÀï¿ªÊ¼ÊÇÄãµÄcase·ÖÖ§£¨¶ÔÓ¦ÄãÎÄ¼şµÄ3586ĞĞ×óÓÒ£©
 case GameMessage::MSG_CHEAT_SPAWN_DOZER:  
 {  
     Coord3D worldPos; 
@@ -3613,38 +3613,38 @@ case GameMessage::MSG_CHEAT_SPAWN_DOZER:
     FindPositionOptions fpOptions;     
     Coord3D adjustedPos;               
     Player* localPlayer = NULL;
-	 // ========== è¡¥å……ç¼ºå¤±çš„å˜é‡å£°æ˜ ==========
-// å£°æ˜defaultTeamï¼ˆæ ¹æ®Generalså¼•æ“é£æ ¼ï¼ŒTeam*æ˜¯å›¢é˜ŸæŒ‡é’ˆç±»å‹ï¼‰
-//Team* defaultTeam = ThePlayerManager->getLocalPlayer()->getTeam(); // ç¤ºä¾‹ï¼šè·å–æœ¬åœ°ç©å®¶çš„å›¢é˜Ÿï¼ˆéœ€æ ¹æ®å®é™…é€»è¾‘è°ƒæ•´ï¼‰
-// å£°æ˜å¹¶åˆå§‹åŒ–targetCoordï¼ˆç›®æ ‡åæ ‡ï¼Œéœ€æ ¹æ®ä½ çš„ä¸šåŠ¡é€»è¾‘è®¾ç½®å…·ä½“å€¼ï¼‰
+	 // ========== ²¹³äÈ±Ê§µÄ±äÁ¿ÉùÃ÷ ==========
+// ÉùÃ÷defaultTeam£¨¸ù¾İGeneralsÒıÇæ·ç¸ñ£¬Team*ÊÇÍÅ¶ÓÖ¸ÕëÀàĞÍ£©
+//Team* defaultTeam = ThePlayerManager->getLocalPlayer()->getTeam(); // Ê¾Àı£º»ñÈ¡±¾µØÍæ¼ÒµÄÍÅ¶Ó£¨Ğè¸ù¾İÊµ¼ÊÂß¼­µ÷Õû£©
+// ÉùÃ÷²¢³õÊ¼»¯targetCoord£¨Ä¿±ê×ø±ê£¬Ğè¸ù¾İÄãµÄÒµÎñÂß¼­ÉèÖÃ¾ßÌåÖµ£©
 Coord3D dropCenter; 
 Coord3D targetCoord;
-targetCoord.x = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Xåæ ‡
-targetCoord.y = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Yåæ ‡
-targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡       
+targetCoord.x = 0.0f;  // Ê¾ÀıÖµ£¬ÄãĞèÌæ»»ÎªÊµ¼ÊÄ¿±êX×ø±ê
+targetCoord.y = 0.0f;  // Ê¾ÀıÖµ£¬ÄãĞèÌæ»»ÎªÊµ¼ÊÄ¿±êY×ø±ê
+targetCoord.z = 0.0f;  // Ê¾ÀıÖµ£¬ÄãĞèÌæ»»ÎªÊµ¼ÊÄ¿±êZ×ø±ê       
    // const MouseIO* mouseIO = NULL;     
    // const ObjectCreationList* ocl = NULL;
 
-    // ä»…å•äººæ¸¸æˆç”Ÿæ•ˆ
-	//ä»¥ä¸‹å››è¡Œä»£ç é€ æˆæ— å•ä½æŠ•æ”¾
-	//if (!TheGameLogic || !TheGameLogic->isInMultiplayerGame())  // æ–°å¢ï¼šæ£€æŸ¥TheGameLogicéç©º
+    // ½öµ¥ÈËÓÎÏ·ÉúĞ§
+	//ÒÔÏÂËÄĞĞ´úÂëÔì³ÉÎŞµ¥Î»Í¶·Å
+	//if (!TheGameLogic || !TheGameLogic->isInMultiplayerGame())  // ĞÂÔö£º¼ì²éTheGameLogic·Ç¿Õ
    // {  
   //      break;
   //  }
     if (!TheGameLogic->isInMultiplayerGame())  
     {  
         
-		// 1. æ£€æŸ¥æ ¸å¿ƒå…¨å±€æŒ‡é’ˆéç©ºï¼ˆé¿å…è®¿é—®NULL->å‡½æ•°ï¼‰
-		//ä¸‹é¢è¿™è¡Œä»£ç æ”¹ä¸ºç¬¬äºŒè¡Œåæ¸¸æˆä¸­ä¸å‘ç”Ÿè·³å‡ºæ•…éšœ!TheMouse || 
+		// 1. ¼ì²éºËĞÄÈ«¾ÖÖ¸Õë·Ç¿Õ£¨±ÜÃâ·ÃÎÊNULL->º¯Êı£©
+		//ÏÂÃæÕâĞĞ´úÂë¸ÄÎªµÚ¶şĞĞºóÓÎÏ·ÖĞ²»·¢ÉúÌø³ö¹ÊÕÏ!TheMouse || 
     //if (!TheMouse || !TheTacticalView || !ThePlayerList || !TheThingFactory || !ThePartitionManager || !TheObjectCreationListStore || !TheInGameUI)
 	if (!TheMouse ||!TheTacticalView || !TheThingFactory || !ThePartitionManager || !TheObjectCreationListStore || !TheInGameUI ||!TheTerrainLogic)
     {
         break;
     }
-		// 1. è·å–é¼ æ ‡çŠ¶æ€
+		// 1. »ñÈ¡Êó±ê×´Ì¬
         //mouseIO = TheMouse->getMouseStatus(); 
 		const MouseIO *mouseIO = TheMouse->getMouseStatus(); 
-		// 2. å±å¹•åæ ‡è½¬ä¸–ç•Œåæ ‡ï¼ˆworldPoså·²å£°æ˜ï¼‰
+		// 2. ÆÁÄ»×ø±ê×ªÊÀ½ç×ø±ê£¨worldPosÒÑÉùÃ÷£©
         TheTacticalView->screenToTerrain(&mouseIO->pos, &worldPos);  
         if (!mouseIO) {
             TheInGameUI->message(UnicodeString(L"Failed to get mouse status!"));
@@ -3654,7 +3654,7 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
         TheTacticalView->screenToTerrain(&mouseIO->pos, &dropCenter);  
         
 
-        // 3. è·å–æœ¬åœ°ç©å®¶ï¼ˆlocalPlayerå·²å£°æ˜ï¼‰
+        // 3. »ñÈ¡±¾µØÍæ¼Ò£¨localPlayerÒÑÉùÃ÷£©
         localPlayer = ThePlayerList->getLocalPlayer();  
         if (!localPlayer) {
             TheInGameUI->message(UnicodeString(L"Failed to get local player!"));
@@ -3671,7 +3671,7 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
                 const ThingTemplate *soldierTempl  = TheThingFactory->findTemplate("AmericaInfantryMissileDefender", FALSE);  
                 const ThingTemplate *vehicleTempl  = TheThingFactory->findTemplate("AmericaVehicleDozer", FALSE); 
 				
-                // æ¨¡æ¿ä¸å­˜åœ¨æ—¶æç¤º
+                // Ä£°å²»´æÔÚÊ±ÌáÊ¾
     if (!chuteTempl) {
       TheInGameUI->message(UnicodeString(L"AmericaParachute template not found!"));
 	  break;
@@ -3689,27 +3689,27 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
 				//chuteTempl   = TheThingFactory->findTemplate("AmericaParachute");
 			  //soldierTempl  = TheThingFactory->findTemplate("AmericaInfantryMissileDefender");
 			  //vehicleTempl  = TheThingFactory->findTemplate("AmericaVehicleDozer");    
-                const Real DROP_HEIGHT = 300.0f;  // ç©ºæŠ•é«˜åº¦ï¼ˆåœ°é¢ä»¥ä¸Šï¼‰  
+                const Real DROP_HEIGHT = 300.0f;  // ¿ÕÍ¶¸ß¶È£¨µØÃæÒÔÉÏ£©  
                 const Int  NUM_SOLDIERS = 4;  
   
-                // 3. æŠ•æ”¾æ­¥å…µï¼šæ¯åæ­¥å…µ â†’ è£…å…¥ä¸€ä¸ªé™è½ä¼å®¹å™¨ â†’ è‡ªåŠ¨ä¸‹é™  
+                // 3. Í¶·Å²½±ø£ºÃ¿Ãû²½±ø ¡ú ×°ÈëÒ»¸ö½µÂäÉ¡ÈİÆ÷ ¡ú ×Ô¶¯ÏÂ½µ  
                 if (chuteTempl && soldierTempl)  
                 {  
                     for (Int i = 0; i < NUM_SOLDIERS; ++i)  
                     {  
                         Coord3D pos = dropCenter;  
-                        pos.x += (i - (NUM_SOLDIERS - 1) * 0.5f) * 25.0f; // æ¨ªå‘æ•£å¼€  
+                        pos.x += (i - (NUM_SOLDIERS - 1) * 0.5f) * 25.0f; // ºáÏòÉ¢¿ª  
                         pos.z = TheTerrainLogic->getGroundHeight(pos.x, pos.y) + DROP_HEIGHT;  
   
-                        // åˆ›å»ºæ­¥å…µ  
+                        // ´´½¨²½±ø  
                         Object *soldier = TheThingFactory->newObject(soldierTempl, playerTeam);  
                         soldier->setPosition(&pos);  
   
-                        // åˆ›å»ºé™è½ä¼å®¹å™¨ï¼ˆæ„é€ å‡½æ•°è‡ªåŠ¨è®¾ç½® OBJECT_STATUS_PARACHUTINGï¼‰  
+                        // ´´½¨½µÂäÉ¡ÈİÆ÷£¨¹¹Ôìº¯Êı×Ô¶¯ÉèÖÃ OBJECT_STATUS_PARACHUTING£©  
                         Object *chute = TheThingFactory->newObject(chuteTempl, playerTeam);  
                         chute->setPosition(&pos);  
   
-                        // å°†æ­¥å…µè£…å…¥é™è½ä¼ï¼ˆè§¦å‘ onContainingï¼šrider->setDisabled(DISABLED_HELD)ï¼‰  
+                        // ½«²½±ø×°Èë½µÂäÉ¡£¨´¥·¢ onContaining£ºrider->setDisabled(DISABLED_HELD)£©  
                         ContainModuleInterface *contain = chute->getContain();  
                         if (contain && contain->isValidContainerFor(soldier, true))  
                         {  
@@ -3718,7 +3718,7 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
                     }  
                 }  
   
-                // 4. åœ¨ç›®æ ‡ä½ç½®ç›´æ¥ç”Ÿæˆè½¦è¾†ï¼ˆHumvee æ—  KINDOF_PARACHUTABLEï¼Œç›´æ¥è½åœ°ï¼‰  
+                // 4. ÔÚÄ¿±êÎ»ÖÃÖ±½ÓÉú³É³µÁ¾£¨Humvee ÎŞ KINDOF_PARACHUTABLE£¬Ö±½ÓÂäµØ£©  
                 if (chuteTempl && vehicleTempl)  
                 {  
                     Coord3D vehPos = dropCenter;  
@@ -3726,11 +3726,11 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
                     vehPos.z = TheTerrainLogic->getGroundHeight(vehPos.x, vehPos.y) + DROP_HEIGHT;  
                     Object *vehicle = TheThingFactory->newObject(vehicleTempl, playerTeam);  
                     vehicle->setPosition(&vehPos); 
-					 // åˆ›å»ºé™è½ä¼å®¹å™¨ï¼ˆæ„é€ å‡½æ•°è‡ªåŠ¨è®¾ç½® OBJECT_STATUS_PARACHUTINGï¼‰  
+					 // ´´½¨½µÂäÉ¡ÈİÆ÷£¨¹¹Ôìº¯Êı×Ô¶¯ÉèÖÃ OBJECT_STATUS_PARACHUTING£©  
                         Object *chute = TheThingFactory->newObject(chuteTempl, playerTeam);  
                         //chute->setPosition(&pos);  
                         chute->setPosition(&vehPos);
-                        // å°†è½¦è¾†è£…å…¥é™è½ä¼ï¼ˆè§¦å‘ onContainingï¼šrider->setDisabled(DISABLED_HELD)ï¼‰  
+                        // ½«³µÁ¾×°Èë½µÂäÉ¡£¨´¥·¢ onContaining£ºrider->setDisabled(DISABLED_HELD)£©  
                         ContainModuleInterface *contain = chute->getContain();  
                         if (contain && contain->isValidContainerFor(vehicle, true))  
                         {  
@@ -3738,7 +3738,7 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
                         }   
                 }
                 
-        // 4. æŸ¥æ‰¾æ¨åœŸæœºæ¨¡æ¿ï¼ˆtmplå·²å£°æ˜ï¼Œç±»å‹åŒ¹é…ï¼‰
+        // 4. ²éÕÒÍÆÍÁ»úÄ£°å£¨tmplÒÑÉùÃ÷£¬ÀàĞÍÆ¥Åä£©
         //tmpl = TheThingFactory->findTemplate("ChinaVehicleDozer"); ChinaVehicleDozer GLAVehicleRocketBuggy
 		//const ThingTemplate *tmpl = TheThingFactory->findTemplate("ChinaVehicleDozer");  // Use the correct template name  GLAVehicleRocketBuggy AmericaVehicleDozer ChinaVehicleDozer 
         tmpl = TheThingFactory->findTemplate("ChinaVehicleDozer");
@@ -3750,7 +3750,7 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
             TheInGameUI->message(UnicodeString(L"Failed to find template: ChinaVehicleDozer!"));
             break;
         }
-       //const Real DROP_HEIGHT = 300.0f;  // ç©ºæŠ•é«˜åº¦ï¼ˆåœ°é¢ä»¥ä¸Šï¼‰
+       //const Real DROP_HEIGHT = 300.0f;  // ¿ÕÍ¶¸ß¶È£¨µØÃæÒÔÉÏ£©
 
 	   //if ( chuteTempl && primaryObj) {
                     Coord3D vehPos = dropCenter;  
@@ -3758,7 +3758,7 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
                     vehPos.z = TheTerrainLogic->getGroundHeight(vehPos.x, vehPos.y) + DROP_HEIGHT;
 
 		primaryObj = TheThingFactory->newObject(tmpl, playerTeam);
-		primaryObj->setPosition(&vehPos); // è®¾ç½®åˆ°é¼ æ ‡ä½ç½® Dozer spawned at mouse position
+		primaryObj->setPosition(&vehPos); // ÉèÖÃµ½Êó±êÎ»ÖÃ Dozer spawned at mouse position
 		TheInGameUI->message(UnicodeString(L"\x65a9\x9996\x884c\x52a8 !"));
 
 	//	if (!primaryObj) {
@@ -3767,9 +3767,9 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
                 //primaryObj = TheThingFactory->newObject(dozerTemplate, playerTeam);
 				//primaryObj = TheThingFactory->newObject("OCL_CheatSpawnBuilding", playerTeam);
 				
-				//primaryObj->setPosition(&worldPos); // è®¾ç½®åˆ°é¼ æ ‡ä½ç½®
-				//primaryObj->setPosition(&vehPos); // è®¾ç½®åˆ°é¼ æ ‡ä½ç½®
-        // 5. åˆ›å»ºæ¨åœŸæœºå¯¹è±¡ï¼ˆplayerTeam/primaryObjå·²å£°æ˜ï¼‰
+				//primaryObj->setPosition(&worldPos); // ÉèÖÃµ½Êó±êÎ»ÖÃ
+				//primaryObj->setPosition(&vehPos); // ÉèÖÃµ½Êó±êÎ»ÖÃ
+        // 5. ´´½¨ÍÆÍÁ»ú¶ÔÏó£¨playerTeam/primaryObjÒÑÉùÃ÷£©
         //playerTeam = localPlayer->getDefaultTeam();
         //if (playerTeam) {
        //     primaryObj = TheThingFactory->newObject(tmpl, playerTeam);  
@@ -3780,28 +3780,28 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
         }
         
 		
-        // 6. é…ç½®é¿éšœå‚æ•°ï¼ˆfpOptionså·²å£°æ˜ï¼Œæˆå‘˜å¯è®¿é—®ï¼‰
+        // 6. ÅäÖÃ±ÜÕÏ²ÎÊı£¨fpOptionsÒÑÉùÃ÷£¬³ÉÔ±¿É·ÃÎÊ£©
        
 		// fpOptions.flags = FPF_CLEAR_CELLS_ONLY;  
-       // fpOptions.maxRadius = 500;  // .maxRadiusæ­£å¸¸è®¿é—®
+       // fpOptions.maxRadius = 500;  // .maxRadiusÕı³£·ÃÎÊ
         
-	   //adjustedPos = worldPos;     // adjustedPoså·²å£°æ˜
+	   //adjustedPos = worldPos;     // adjustedPosÒÑÉùÃ÷
 
-        //adjustedPos = vehPos;     // adjustedPoså·²å£°æ˜
-        // 7. æŸ¥æ‰¾å¯é€šè¡Œä½ç½® + è®¾ç½®æ¨åœŸæœºä½ç½®
+        //adjustedPos = vehPos;     // adjustedPosÒÑÉùÃ÷
+        // 7. ²éÕÒ¿ÉÍ¨ĞĞÎ»ÖÃ + ÉèÖÃÍÆÍÁ»úÎ»ÖÃ
 
        // ThePartitionManager->findPositionAround(&worldPos, &fpOptions, &adjustedPos);  
-        //primaryObj->setPosition(&adjustedPos);  // primaryObjæ˜¯åˆæ³•æŒ‡é’ˆ
+        //primaryObj->setPosition(&adjustedPos);  // primaryObjÊÇºÏ·¨Ö¸Õë
      if ( chuteTempl && primaryObj) {
 
         //primaryObj->setPosition(&adjustedPos); 
-		//primaryObj->setPosition(&worldPos); // è®¾ç½®åˆ°é¼ æ ‡ä½ç½® 
+		//primaryObj->setPosition(&worldPos); // ÉèÖÃµ½Êó±êÎ»ÖÃ 
 
-		                 // åˆ›å»ºé™è½ä¼å®¹å™¨ï¼ˆæ„é€ å‡½æ•°è‡ªåŠ¨è®¾ç½® OBJECT_STATUS_PARACHUTINGï¼‰  
+		                 // ´´½¨½µÂäÉ¡ÈİÆ÷£¨¹¹Ôìº¯Êı×Ô¶¯ÉèÖÃ OBJECT_STATUS_PARACHUTING£©  
                         Object *chute = TheThingFactory->newObject(chuteTempl, playerTeam);  
                         chute->setPosition(&vehPos);  
   
-                        // å°†è½¦è¾†è£…å…¥é™è½ä¼ï¼ˆè§¦å‘ onContainingï¼šrider->setDisabled(DISABLED_HELD)ï¼‰  
+                        // ½«³µÁ¾×°Èë½µÂäÉ¡£¨´¥·¢ onContaining£ºrider->setDisabled(DISABLED_HELD)£©  
                         ContainModuleInterface *contain = chute->getContain();  
                         if (contain && contain->isValidContainerFor(primaryObj, true))  
                         {  
@@ -3811,15 +3811,15 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
     }
        
 	              
-	 // 6. é…ç½®é¿éšœå‚æ•°ï¼ˆfpOptionså·²å£°æ˜ï¼Œæˆå‘˜å¯è®¿é—®ï¼‰
+	 // 6. ÅäÖÃ±ÜÕÏ²ÎÊı£¨fpOptionsÒÑÉùÃ÷£¬³ÉÔ±¿É·ÃÎÊ£©
        
 		 fpOptions.flags = FPF_CLEAR_CELLS_ONLY;  
-        fpOptions.maxRadius = 500;  // .maxRadiusæ­£å¸¸è®¿é—®
+        fpOptions.maxRadius = 500;  // .maxRadiusÕı³£·ÃÎÊ
         
-	   adjustedPos = worldPos;     // adjustedPoså·²å£°æ˜
+	   adjustedPos = worldPos;     // adjustedPosÒÑÉùÃ÷
 
-        //adjustedPos = vehPos;     // adjustedPoså·²å£°æ˜
-        // 7. æŸ¥æ‰¾å¯é€šè¡Œä½ç½® + è®¾ç½®æ¨åœŸæœºä½ç½®
+        //adjustedPos = vehPos;     // adjustedPosÒÑÉùÃ÷
+        // 7. ²éÕÒ¿ÉÍ¨ĞĞÎ»ÖÃ + ÉèÖÃÍÆÍÁ»úÎ»ÖÃ
 
 	
 	
@@ -3829,20 +3829,20 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
 		//	//TheInGameUI->message(UnicodeString(L"Failed to find any owned object for the player's team!"));
 		//	//break;
 		//}
-	// ========== 10. æŸ¥æ‰¾OCLï¼šä»…èµ‹å€¼ä¸€æ¬¡ï¼Œåˆ¤ç©ºåä½¿ç”¨ï¼ˆè§£å†³é‡å¤å£°æ˜ï¼‰ ==========
+	// ========== 10. ²éÕÒOCL£º½ö¸³ÖµÒ»´Î£¬ÅĞ¿ÕºóÊ¹ÓÃ£¨½â¾öÖØ¸´ÉùÃ÷£© ==========
         //ObjectCreationList* ocl = TheObjectCreationListStore->findObjectCreationList("OCL_CheatSpawnBuilding");
 		const ObjectCreationList* ocl = TheObjectCreationListStore->findObjectCreationList("OCL_CheatSpawnqingwaBuilding");
 		//ObjectCreationList* ocl = TheObjectCreationListStore->findObjectCreationList("OCL_CheatSpawnBuilding");
 		
 		//ObjectCreationList::create(ocl, primaryObj, &worldPos, NULL, 0.0f, 0);
         
-		//(void)ocl; // æ¶ˆé™¤C4189
-        if (ocl) { // OCLå­˜åœ¨æ‰åˆ›å»º
-			 // Step 4: ä»åœ°å›¾æœ€è¿œè§’é«˜ç©ºå‡ºå‘ï¼ˆæ¨¡ä»¿ CREATE_AT_EDGE_FARTHEST_FROM_TARGETï¼‰  
+		//(void)ocl; // Ïû³ıC4189
+        if (ocl) { // OCL´æÔÚ²Å´´½¨
+			 // Step 4: ´ÓµØÍ¼×îÔ¶½Ç¸ß¿Õ³ö·¢£¨Ä£·Â CREATE_AT_EDGE_FARTHEST_FROM_TARGET£©  
                        // Coord3D creationCoord = TheTerrainLogic->findFarthestEdgePoint( &targetCoord );  
 					   Coord3D creationCoord = TheTerrainLogic->findFarthestEdgePoint( &targetCoord ); 
                         creationCoord.z += 300; // CREATE_ABOVE_LOCATION_HEIGHT 
-						// Step 5: è§¦å‘ DeliverPayloadNuggetï¼Œåˆ›å»ºè¿è¾“æœºå¹¶ç©ºæŠ•  
+						// Step 5: ´¥·¢ DeliverPayloadNugget£¬´´½¨ÔËÊä»ú²¢¿ÕÍ¶  
                         //ObjectCreationList::create( ocl, anyOwnedObj, &creationCoord, &targetCoord, INVALID_ANGLE );   
 						//ObjectCreationList::create( ocl, primaryObj, &worldPos, &worldPos, INVALID_ANGLE );
 						//  ObjectCreationList::create( ocl, primaryObj, &worldPos, &adjustedPos, INVALID_ANGLE );
@@ -3851,13 +3851,13 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
 
 			//ObjectCreationList::create(ocl, primaryObj, &worldPos, NULL, 0.0f, 0);
 
-			// é€šè¿‡ OCL åˆ›å»ºä¸­æ€§å»ºç­‘ è½¦è¾†äººå‘˜ 
+			// Í¨¹ı OCL ´´½¨ÖĞĞÔ½¨Öş ³µÁ¾ÈËÔ± 
            //ObjectCreationList::create(ocl, &worldPos, NULL, 0.0f, 0);
 
 			//ObjectCreationList::create(ocl, NULL, &adjustedPos, &adjustedPos, 0.0f); Dozer and OCL spawned at mouse position
 
 			TheInGameUI->message(UnicodeString(L"\x51c9\x51c9\x63a5\x5355 !"));
-        } else { // OCLä¸å­˜åœ¨ä»…æç¤ºï¼Œä¸breakï¼ˆé¿å…æå‰é€€å‡ºï¼‰
+        } else { // OCL²»´æÔÚ½öÌáÊ¾£¬²»break£¨±ÜÃâÌáÇ°ÍË³ö£©
             TheInGameUI->message(UnicodeString(L"OCL_CheatSpawnBuilding not found!"));
             TheInGameUI->message(UnicodeString(L"Dozer spawned at mouse position (without OCL)!"));
  //       }
@@ -3865,10 +3865,10 @@ targetCoord.z = 0.0f;  // ç¤ºä¾‹å€¼ï¼Œä½ éœ€æ›¿æ¢ä¸ºå®é™…ç›®æ ‡Zåæ ‡
         
         disp = DESTROY_MESSAGE;  
     }  
-    break; // caseåˆ†æ”¯çš„breakï¼Œä½œç”¨åŸŸæ­£ç¡®
+    break; // case·ÖÖ§µÄbreak£¬×÷ÓÃÓòÕıÈ·
 }
 }
-// caseåˆ†æ”¯ç»“æŸï¼ˆå¤§æ‹¬å·å®Œå…¨åŒ¹é…ï¼‰
+// case·ÖÖ§½áÊø£¨´óÀ¨ºÅÍêÈ«Æ¥Åä£©
 
 	
     case GameMessage::MSG_CHEAT_ADD_CASH:									
@@ -5100,23 +5100,23 @@ case GameMessage::MSG_META_DEMO_FREE_BUILD:
 			if (player->getPlayerType() == PLAYER_HUMAN)
 				player->enableFreeBuild(enable);
 
-			// å¦‚æœå¯ç”¨ freebuildï¼Œç»™ç©å®¶å¢åŠ  1200 å•ä½ç”µé‡
+			// Èç¹ûÆôÓÃ freebuild£¬¸øÍæ¼ÒÔö¼Ó 1200 µ¥Î»µçÁ¿
 			if (enable)
 			{
-				player->getEnergy()->depositEnergy(1200, true); // å¼€å¯ï¼š+1200
+				player->getEnergy()->depositEnergy(1200, true); // ¿ªÆô£º+1200
 			}
 			else
 				{
-				// å…³é—­ freebuild æ—¶ï¼Œæ‰£å›æœ€å¤š 1200ï¼ˆwithdrawEnergy å†…éƒ¨é’³åˆ°éè´Ÿï¼‰
+				// ¹Ø±Õ freebuild Ê±£¬¿Û»Ø×î¶à 1200£¨withdrawEnergy ÄÚ²¿Ç¯µ½·Ç¸º£©
 				player->getEnergy()->withdrawEnergy(1200, true);
 			}
 		}
 
 		if (enable)
-			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free Buildå…è´¹å»º+æ»¡ç”µé‡ is ON") );
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free BuildÃâ·Ñ½¨+ÂúµçÁ¿ is ON") );
 		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is off" ));
 		else
-			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free Buildå…è´¹å»º+æ»¡ç”µé‡ is OFF") );
+			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free BuildÃâ·Ñ½¨+ÂúµçÁ¿ is OFF") );
         TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is on" ));
 		disp = DESTROY_MESSAGE;
 		break;
@@ -5137,10 +5137,10 @@ case GameMessage::MSG_META_DEMO_UNLIMITED_AMMO:
 			if (player->getPlayerType() == PLAYER_HUMAN)
 				player->enableUnlimitedAmmo(enable);
        if (enable)
-				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOn", L"æ ¸å‹•åŠ›å…¨çƒæ™ºèƒ½æ‰“æ“Šç³»çµ±å¼€ ON"));"UNLIMITED_AMMO ON"
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOn", L"ºË„ÓÁ¦È«ÇòÖÇÄÜ´ò“ôÏµ½y¿ª ON"));"UNLIMITED_AMMO ON"
 TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb ON" ));
 			else
-				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOff", L"æ ¸å‹•åŠ›å…¨çƒæ™ºèƒ½æ‰“æ“Šç³»çµ±å…³ OFF"));
+				//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugUnlimitedAmmoOff", L"ºË„ÓÁ¦È«ÇòÖÇÄÜ´ò“ôÏµ½y¹Ø OFF"));
 TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80fd\x5168\x7403\x6218\x7565\x6253\x51fb OFF" ));
 
 			disp = DESTROY_MESSAGE;
@@ -5159,10 +5159,10 @@ case GameMessage::MSG_META_DEMO_qingwaGOD_MODE:
 		}
 
 		if (enable)
-			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOn", L"Godé’è›™æ— æ•Œæ¨¡å¼ Mode is ON"));
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOn", L"GodÇàÍÜÎŞµĞÄ£Ê½ Mode is ON"));
 TheInGameUI->message( UnicodeString( L"God QINGWA Mode\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is  ON" ));
 		else
-			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOff", L"Godé’è›™æ— æ•Œæ¨¡å¼ Mode is OFF"));Q
+			//TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugGodModeOff", L"GodÇàÍÜÎŞµĞÄ£Ê½ Mode is OFF"));Q
 TheInGameUI->message( UnicodeString( L"God QINGWA Mode\x9752\x86d9\x5927\x5927\x65e0\x654c\x6a21\x5f0f is OFF" ));
 
 		disp = DESTROY_MESSAGE;
