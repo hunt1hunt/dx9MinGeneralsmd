@@ -1357,10 +1357,20 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						if (s_pipeDiag) DIAG_LOG(("PIPELINE: === Forward Transparent Pass ===\n"));
 						LARGE_INTEGER fS,fE; QueryPerformanceCounter(&fS);
 					g_gbufferActive=false; ShaderClass::Invalidate();
-						// VF-2 write-route hunt: DS identity at the forward
+						// VF-2 DSCHK hunt: DS identity at the forward
 						// pass start (transparents render with this DS).
 						if (g_theW3DDeferredRenderer) g_theW3DDeferredRenderer->debugLogDSIdentity("forward_begin");
+						// SPLIT-DEPTH: forward pass (full scene re-render +
+						// ALL stencil systems - volumetric soft shadows etc.)
+						// runs on the AUTO D24S8 with a fresh clear; the
+						// wrapper cache flips with it so nested custom-RT
+						// restores stay on the auto DS during this phase.
+						if (g_theW3DDeferredRenderer) g_theW3DDeferredRenderer->splitDepthBindAutoForForward();
 						Customized_Render(rinfo); Flush(rinfo);
+						// SPLIT-DEPTH back: INTZ resumes as the frame DS so
+						// the next frame starts consistent (and the fog
+						// pass's samples read the gbuffer-depth INTZ).
+						if (g_theW3DDeferredRenderer) g_theW3DDeferredRenderer->splitDepthBindINTZAfterForward();
 						QueryPerformanceCounter(&fE);
 						if (s_pipeDiag) DIAG_LOG(("PIPELINE: Forward Pass took %.2f ms (forward-full)\n",(float)(fE.QuadPart-fS.QuadPart)*1000.0f/(float)pf.QuadPart));
 						g_theW3DDeferredRenderer->aoCompositePass();

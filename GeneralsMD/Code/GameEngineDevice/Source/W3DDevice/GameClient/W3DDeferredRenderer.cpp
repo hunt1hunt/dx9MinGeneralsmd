@@ -223,6 +223,7 @@ W3DDeferredRenderer::W3DDeferredRenderer()
 	m_iblCompositePS(NULL),
 	m_mainZTex(NULL),
 	m_mainZSurface(NULL),
+	m_mainZAutoDS(NULL),
 	m_mainZAvailable(false),
 	m_fogSceneRT(NULL),
 	m_fogFX(NULL),
@@ -538,10 +539,20 @@ bool W3DDeferredRenderer::beginGBufferPass()
 	surf1->Release();
 	surf2->Release();
 
-	// VF-2 write-route hunt: DS identity right before the scene clears and
-	// draws into the G-Buffer MRT. dsIsOurs=0 here = the geometry depth
-	// goes somewhere else all frame.
+	// VF-2 DSCHK hunt + split-depth: DS identity right before the scene
+	// clears and draws into the G-Buffer MRT.
 	debugLogDSIdentity("gbuffer_begin");
+
+	// SPLIT-DEPTH (2026-09-19 final): bind the INTZ as the DS for the
+	// G-Buffer pass so the fog gets a sampleable full-scene depth. The
+	// wrapper's DefaultDepthBuffer cache still holds the AUTO D24S8 (saved
+	// at the shadow pass' custom-RT switch), so endGBufferPass' restore
+	// swaps back automatically - the stencil systems (volumetric soft
+	// shadows etc.) run on the auto DS with stencil bits intact.
+	if (m_mainZAvailable && m_mainZSurface) {
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+		d9->SetDepthStencilSurface(m_mainZSurface);
+	}
 
 	// Clear all three RTs to black and clear depth-stencil.
 	DX8Wrapper::Clear(true, true, Vector3(0, 0, 0), 0, 1.0f, 0);
@@ -570,12 +581,21 @@ void W3DDeferredRenderer::endGBufferPass()
 	}
 	m_inGBufferPass = false;
 
-	// VF-2 write-route hunt: DS identity at G-Buffer pass END (before the
+	// VF-2 DSCHK hunt: DS identity at G-Buffer pass END (before the
 	// restore-to-default rebinds whatever the wrapper cached).
 	debugLogDSIdentity("gbuffer_end");
 
 	// Restore default render target (DX8Wrapper clears MRT slots automatically).
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
+
+	// SPLIT-DEPTH: the restore just re-bound the AUTO D24S8. It holds LAST
+	// frame's forward-pass depth (stale) - clear z+stencil once so the
+	// forward pass (full scene re-render, all the stencil shadow systems)
+	// starts from a clean depth exactly like a fresh frame.
+	if (m_mainZAvailable && m_mainZAutoDS) {
+		IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+		if (d9) d9->Clear(0, NULL, D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1.0f, 0);
+	}
 
 	// Restore original viewport.
 	DX8CALL(SetViewport(&m_savedViewport));
@@ -1632,29 +1652,20 @@ void W3DDeferredRenderer::releaseShadowResources()
 // ============================================================================
 // W3DDeferredRenderer::createMainZTexture  (VF-1c new, 2026-09-19)
 // ============================================================================
-// Re-binds the main z-buffer from the auto depth stencil to a sampleable
-// DEPTHSTENCIL TEXTURE.
-//
-// EXPERT VERDICT (2026-09-19, see .zcode/plans/vf2-expert-consultation.md):
-// D24S8/D24X8 depth textures get NO shader-resource view in dgVoodoo - the
-// 1.0 (unbound-sampler) and 0.0 (empty-SRV) reads were two failure modes of
-// the same root cause, NOT timing/binding bugs. D3DFMT_INTZ is the supported
-// sampleable-depth FOURCC here: creatable with D3DUSAGE_DEPTHSTENCIL,
-// bindable via SetDepthStencilSurface (test/write/clear all normal) AND
-// sampleable (.x/.r = 0..1 depth). Auto mode therefore tries INTZ FIRST and
-// falls back to mirroring the current DS (unsampleable, fog disabled).
-//
-// INTZ has NO stencil bits. Stencil users in the production config
-// (audited 2026-09-19: W3DScene behind-building markers, default ON;
-// deferred point-light volume culling on night maps; UseShadowVolumes is
-// INI-off) DEGRADE but do not crash, and DX8Wrapper::Clear queries the
-// bound DS format at runtime before adding D3DCLEAR_STENCIL (dx8wrapper.cpp
-// Clear), so frame clears stay legal. UseSampleableZBuffer=No restores the
-// D24S8 auto DS one-key.
-//
-// INI: UseSampleableZBuffer (default No). SampleableZFormat: 0=auto
-// (INTZ first), 1=D24X8, 2=D24S8 (both unsampleable per verdict, A/B
-// fossils), 3=force INTZ.
+// SPLIT-DEPTH architecture (2026-09-19 final): INTZ can be sampled but has NO
+// stencil bits, and the legacy stencil systems (W3DVolumetricShadow's SOFT
+// shadows - ships/rocks/buildings - behind-building markers, point-light
+// volumes) live on the frame DS. Binding INTZ as the all-frame DS broke them
+// ALL: the soft-shadow composite gates a SCREEN-SPACE quad with
+// STENCILFUNC=LESSEQUAL REF 1 - with no stencil plane every read is 0 <= 1 =
+// ALWAYS PASS, so every shadow painted its full screen rectangle, sliding
+// with the camera (the field-reported moving ship/rock shadows).
+// So: INTZ is bound as the DS during the G-Buffer pass ONLY (it receives the
+// full opaque scene depth there - exactly what the fog needs), and the rest
+// of the frame runs on the AUTO D24S8 (stencil intact, cleared once at the
+// swap; the forward pass re-renders the full scene into it). All stencil
+// systems return to production behavior; the fog samples the INTZ.
+// INI: UseSampleableZBuffer (default No).
 #ifndef D3DFMT_INTZ
 #define D3DFMT_INTZ ((D3DFORMAT)MAKEFOURCC('I','N','T','Z'))
 #endif
@@ -1662,23 +1673,29 @@ bool W3DDeferredRenderer::createMainZTexture()
 {
 	m_mainZAvailable = false;
 	if (!TheGlobalData || !TheGlobalData->m_useSampleableZBuffer) {
-		return false;	// INI off: the main z stays the auto DS
+		return false;	// INI off: single-DS production behavior
 	}
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) return false;
 	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
 
-	// Mirror the CURRENT depth-stencil for size, and keep its format as the
-	// fallback (D24S8 preferred by the engine's mode chain - keeps stencil).
-	UINT zw = 0, zh = 0;
-	D3DFORMAT dsFmt = D3DFMT_D24S8;
+	// Keep a reference to the device's AUTO depth-stencil (D24S8) - the
+	// frame's DS outside the G-Buffer pass. At init/ReAcquire time the auto
+	// DS is the current one (nothing has overridden it yet this device
+	// generation).
+	if (m_mainZAutoDS) { m_mainZAutoDS->Release(); m_mainZAutoDS = NULL; }
 	IDirect3DSurface9 *curDS = NULL;
 	if (SUCCEEDED(d9->GetDepthStencilSurface(&curDS)) && curDS) {
+		m_mainZAutoDS = curDS;	// keep the ref (released in releaseMainZTexture)
+	} else {
+		DIAG_LOG(("W3DDeferredRenderer: cannot obtain the auto DS - split-depth unavailable.\n"));
+		return false;
+	}
+
+	UINT zw = 0, zh = 0;
+	{
 		D3DSURFACE_DESC dsd;
-		if (SUCCEEDED(curDS->GetDesc(&dsd))) {
-			zw = dsd.Width; zh = dsd.Height; dsFmt = dsd.Format;
-		}
-		curDS->Release();
+		if (SUCCEEDED(m_mainZAutoDS->GetDesc(&dsd))) { zw = dsd.Width; zh = dsd.Height; }
 	}
 	if (zw == 0 || zh == 0) {
 		IDirect3DSurface9 *bb = NULL;
@@ -1690,59 +1707,45 @@ bool W3DDeferredRenderer::createMainZTexture()
 	}
 	if (zw == 0 || zh == 0) { zw = (UINT)m_gbufferWidth; zh = (UINT)m_gbufferHeight; }
 
-	D3DFORMAT wantFmt = D3DFMT_INTZ;	// auto = the only sampleable format
-	if (TheGlobalData->m_sampleableZFormat == 1) wantFmt = D3DFMT_D24X8;
-	else if (TheGlobalData->m_sampleableZFormat == 2) wantFmt = D3DFMT_D24S8;
-	else if (TheGlobalData->m_sampleableZFormat == 3) wantFmt = D3DFMT_INTZ;
-
 	if (m_mainZSurface) { m_mainZSurface->Release(); m_mainZSurface = NULL; }
 	if (m_mainZTex) { m_mainZTex->Release(); m_mainZTex = NULL; }
 
 	HRESULT hr = d9->CreateTexture(zw, zh, 1,
-		D3DUSAGE_DEPTHSTENCIL, wantFmt, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
-	D3DFORMAT zfmt = wantFmt;
-	if ((FAILED(hr) || !m_mainZTex) && TheGlobalData->m_sampleableZFormat == 0) {
-		// Auto fallback: unsampleable mirror of the engine's DS format.
-		// Fog will log-and-skip; the depth route itself still works.
-		DIAG_LOG(("W3DDeferredRenderer: INTZ create FAILED hr=0x%08x, falling back to DS mirror (%d).\n",
-			(int)hr, (int)dsFmt));
-		hr = d9->CreateTexture(zw, zh, 1,
-			D3DUSAGE_DEPTHSTENCIL, dsFmt, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
-		zfmt = dsFmt;
-	}
+		D3DUSAGE_DEPTHSTENCIL, D3DFMT_INTZ, D3DPOOL_DEFAULT, &m_mainZTex, NULL);
 	if (FAILED(hr) || !m_mainZTex) {
-		DIAG_LOG(("W3DDeferredRenderer: main z texture create FAILED hr=0x%08x (%ux%u fmt=%d) - staying on auto DS.\n",
-			(int)hr, zw, zh, (int)zfmt));
+		DIAG_LOG(("W3DDeferredRenderer: INTZ create FAILED hr=0x%08x (%ux%u) - fog disabled, single-DS production kept.\n",
+			(int)hr, zw, zh));
 		return false;
 	}
 	if (FAILED(m_mainZTex->GetSurfaceLevel(0, &m_mainZSurface)) || !m_mainZSurface) {
-		DIAG_LOG(("W3DDeferredRenderer: main z GetSurfaceLevel FAILED.\n"));
+		DIAG_LOG(("W3DDeferredRenderer: INTZ GetSurfaceLevel FAILED.\n"));
 		m_mainZTex->Release(); m_mainZTex = NULL;
 		return false;
 	}
-	d9->SetDepthStencilSurface(m_mainZSurface);
-	// Clear once so the very first frame's samples read far (1.0), not
-	// garbage. Stencil flag ONLY when the landed format has stencil bits
-	// (Clear is all-or-nothing - a stray STENCIL flag on INTZ would fail
-	// the whole call; the frame-clear path already does the same check).
+	// Pre-clear the INTZ once (z=1 far). beginGBufferPass binds it BEFORE the
+	// frame clear, so it also gets cleared every frame; this covers the very
+	// first frame and probe-bit skips.
 	{
-		DWORD clearFlags = D3DCLEAR_ZBUFFER;
-		if (zfmt == D3DFMT_D24S8 || zfmt == D3DFMT_D24X4S4 || zfmt == D3DFMT_D15S1) {
-			clearFlags |= D3DCLEAR_STENCIL;
-		}
-		d9->Clear(0, NULL, clearFlags, 0, 1.0f, 0);
+		IDirect3DSurface9 *dsSave = NULL;
+		d9->GetDepthStencilSurface(&dsSave);
+		d9->SetDepthStencilSurface(m_mainZSurface);
+		d9->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, 1.0f, 0);
+		d9->SetDepthStencilSurface(dsSave);
+		if (dsSave) dsSave->Release();
 	}
+	// The frame STARTS on INTZ (the shadow pass' first custom-RT switch saves
+	// it into the wrapper's DefaultDepthBuffer cache, keeping every nested
+	// restore consistent through the gbuffer phase). The forward pass swaps
+	// to the auto D24S8 and back (splitDepthBind* in W3DScene).
+	d9->SetDepthStencilSurface(m_mainZSurface);
 	m_mainZAvailable = true;
-	DIAG_LOG(("W3DDeferredRenderer: main z re-bound as sampleable DEPTHSTENCIL texture (%ux%u, fmt=%d%s).\n",
-		zw, zh, (int)zfmt, (zfmt == D3DFMT_INTZ) ? " INTZ" : ""));
-	if (zfmt == D3DFMT_INTZ) {
-		static bool s_intzWarned = false;
-		if (!s_intzWarned) {
-			s_intzWarned = true;
-			DIAG_LOG(("W3DDeferredRenderer: INTZ main z = NO stencil bits. Degraded: behind-building markers, "
-				"deferred point-light volume culling (shadow volumes are INI-off). UseSampleableZBuffer=No restores D24S8.\n"));
-		}
+	D3DSURFACE_DESC ad;
+	const char *autoFmt = "?";
+	if (SUCCEEDED(m_mainZAutoDS->GetDesc(&ad))) {
+		autoFmt = (ad.Format == D3DFMT_D24S8) ? "D24S8" : ((ad.Format == D3DFMT_D24X8) ? "D24X8" : "fmt");
 	}
+	DIAG_LOG(("W3DDeferredRenderer: SPLIT-DEPTH ready - INTZ %ux%u (G-Buffer pass DS, fog source) + auto %s (rest of frame, stencil intact).\n",
+		zw, zh, autoFmt));
 	return true;
 }
 
@@ -1753,11 +1756,18 @@ void W3DDeferredRenderer::releaseMainZTexture()
 {
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (dev && m_mainZSurface) {
-		// Unbind before release - the device still holds it as the current DS.
-		static_cast<IDirect3DDevice9*>(dev)->SetDepthStencilSurface(NULL);
+		// Only unbind if WE are the bound DS (the split design never leaves
+		// INTZ bound at frame end, but probe paths might).
+		IDirect3DSurface9 *cur = NULL;
+		static_cast<IDirect3DDevice9*>(dev)->GetDepthStencilSurface(&cur);
+		if (cur == m_mainZSurface) {
+			static_cast<IDirect3DDevice9*>(dev)->SetDepthStencilSurface(m_mainZAutoDS);
+		}
+		if (cur) cur->Release();
 	}
 	if (m_mainZSurface) { m_mainZSurface->Release(); m_mainZSurface = NULL; }
 	if (m_mainZTex) { m_mainZTex->Release(); m_mainZTex = NULL; }
+	if (m_mainZAutoDS) { m_mainZAutoDS->Release(); m_mainZAutoDS = NULL; }
 	m_mainZAvailable = false;
 }
 
@@ -1845,24 +1855,37 @@ bool W3DDeferredRenderer::createFogResources()
 		"    float marchLen = min(sceneDist, gFogParams.z);\n"
 		"    if (marchLen <= 0.001) return float4(scene, 1.0);\n"
 		"    float3 rd = ray / sceneDist;\n"
-		// doubao density integrated front-to-back + sun in-scattering
-		"    float dt = marchLen / 24.0;\n"
-		"    float trans = 1.0;\n"
-		"    float3 scat = float3(0.0, 0.0, 0.0);\n"
+		// 2026-09-19 SCATTER REWORK: the per-step in-march accumulation
+		// (scat += sunTerm * od * trans) quantized badly - dt = marchLen/24
+		// jumps between depth bands and the mid-point rule's error shows as
+		// horizontal stripes + blocky patches sliding over the ground with
+		// the camera (field report + scatter on/off diff evidence). Replace
+		// with the absorption-bounded analytic form: scat = sunTerm*(1-trans)
+		// - monotone, band-free (it shares trans' smooth saturation), keeps
+		// the sun-direction phase weighting. This is the standard cheap
+		// "sunlit fog" approximation (scattered light <= absorbed light).
 		"    float cosT = dot(rd, -gSunDir.xyz);\n"
 		"    float phase = 0.75 + 0.25 * cosT * cosT;\n"
 		"    float3 sunTerm = gSunColor.rgb * gFogColor.rgb * phase;\n"
-		"    for (int i = 0; i < 24; i++) {\n"
-		"        float t = ((float)i + 0.5) * dt;\n"
+		// 2026-09-19 BAND KILLER: 24 uniform steps quantized the optical
+		// depth into camera-centered rings - dead visible on flat water
+		// (the field-reported "ship shadow sliding with the camera" in the
+		// intro cinematic: the rings slid across the ship's static shadow).
+		// 48 steps + a per-pixel dithered march start break the remaining
+		// transmittance banding into sub-pixel noise.
+		"    float dt = marchLen / 48.0;\n"
+		"    float jitter = frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);\n"
+		"    float trans = 1.0;\n"
+		"    for (int i = 0; i < 48; i++) {\n"
+		"        float t = ((float)i + jitter) * dt;\n"
 		"        float3 p = gCamPos.xyz + rd * t;\n"
 		"        float d = gFogParams.x * exp(-max(p.z, 0.0) * gFogParams.y);\n"
-		"        float od = d * dt;\n"
-		"        scat += sunTerm * (od * trans);\n"
-		"        trans *= exp(-od);\n"
+		"        trans *= exp(-d * dt);\n"
 		"        if (trans < 0.01) break;\n"
 		"    }\n"
-		"    if (gFogParams.w >= 2.0) return float4(1.0 - trans, 1.0 - trans, 1.0 - trans, 1.0);\n"	// debug 2: fog factor
+		"    if (gFogParams.w >= 2.0) return float4(1.0 - trans, 1.0 - trans, 1.0 - trans, 1.0);\n"	// debug 2: fog factor viz
 		"    float3 fogCol = gFogColor.rgb * (1.0 - trans);\n"
+		"    float3 scat = sunTerm * (1.0 - trans);\n"
 		"    return float4(scene * trans + fogCol + scat * gSunDir.w, 1.0);\n"
 		"}\n"
 		"technique T {\n"
@@ -2232,6 +2255,34 @@ void W3DDeferredRenderer::debugLogDSIdentity(const char *tag)
 	static_cast<IDirect3DDevice9*>(dev)->GetDepthStencilSurface(&cur);
 	DIAG_LOG(("VF-2 DSCHK[%s]: dsIsOurs=%d\n", tag, (cur == m_mainZSurface) ? 1 : 0));
 	if (cur) cur->Release();
+}
+
+// ============================================================================
+// W3DDeferredRenderer::splitDepthBindAutoForForward / BindINTZAfterForward
+// ============================================================================
+// SPLIT-DEPTH phase swaps. The wrapper's DefaultDepthBuffer cache owns one
+// reference (GetDepthStencilSurface on save, Release on restore-null); we
+// swap it manually with matching refcounts so nested custom-RT switches
+// (water reflections, W3X shadow RTs) restore the correct DS per phase.
+void W3DDeferredRenderer::splitDepthBindAutoForForward()
+{
+	if (!m_mainZAvailable || !m_mainZAutoDS || !m_mainZSurface) return;
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+	if (!d9) return;
+	d9->SetDepthStencilSurface(m_mainZAutoDS);
+	// Fresh slate: the forward pass re-renders the full scene, and the
+	// stencil shadow systems need z=1/stencil=0 exactly like a fresh frame.
+	d9->Clear(0, NULL, D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1.0f, 0);
+	DX8Wrapper::Set_Default_Depth_Buffer(m_mainZAutoDS);
+}
+
+void W3DDeferredRenderer::splitDepthBindINTZAfterForward()
+{
+	if (!m_mainZAvailable || !m_mainZAutoDS || !m_mainZSurface) return;
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
+	if (!d9) return;
+	d9->SetDepthStencilSurface(m_mainZSurface);
+	DX8Wrapper::Set_Default_Depth_Buffer(m_mainZSurface);
 }
 
 // ============================================================================
