@@ -107,6 +107,8 @@ GlobalData* GlobalData::m_theOriginal = NULL;
 	{ "FogGroundDensity",			INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogGroundDensity ) },
 	{ "SunScatterStrength",		INI::parseReal,				NULL,			offsetof( GlobalData, m_volFogSunScatter ) },
 	{ "VolumetricFogDebug",		INI::parseInt,				NULL,			offsetof( GlobalData, m_volFogDebug ) },
+	{ "TerrainBumpStrength",		INI::parseReal,				NULL,			offsetof( GlobalData, m_terrainBumpStrength ) },
+	{ "TerrainBumpCliffFix",		INI::parseBool,				NULL,			offsetof( GlobalData, m_terrainBumpCliffFix ) },
 	{ "TerrainProbeMode",		INI::parseInt,				NULL,			offsetof( GlobalData, m_terrainProbeMode ) },
 	{ "DumpAssetUsage",						INI::parseBool,				NULL,			offsetof( GlobalData, m_dumpAssetUsage ) },
 	{ "FramesPerSecondLimit",			INI::parseInt,				NULL,			offsetof( GlobalData, m_framesPerSecondLimit ) },
@@ -779,6 +781,8 @@ GlobalData::GlobalData()
 	m_volFogGroundDensity = 1.0f;	// VF-2: ground multiplier
 	m_volFogSunScatter = 0.5f;	// VF-2: in-scattering gain
 	m_volFogDebug = 0;	// VF-2: 0=off 1=raw z viz 2=fog factor viz
+	m_terrainBumpStrength = 1.0f;	// 2026-09-19: terrain bump gain (0=off)
+	m_terrainBumpCliffFix = TRUE;	// 2026-09-19: kill bump on magnified (cliff-stretched) atlas UVs
 	m_terrainProbeMode = 0;	// VF-1a: probe off - all terrain passes drawn normally
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_useWaterPlane = FALSE;

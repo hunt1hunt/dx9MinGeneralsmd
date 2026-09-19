@@ -2375,6 +2375,7 @@ Int TerrainShaderPBR::init( void )
 			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
 			"float4 shadowDbg : register(c8);\n"
 			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float4 cliffFix : register(c15);\n"	// 2026-09-19: x=1 kills the bump where the normal atlas is magnified (stretched cliff UVs)
 			"float terrainShadow(float3 shadowUVZ)\n"
 			"{\n"
 			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
@@ -2428,6 +2429,19 @@ Int TerrainShaderPBR::init( void )
 			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
+			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
+			// uncompensated tex0 the base uses - on cliffs that UV set is
+			// stretched 3-6x, so each atlas texel row spans several screen
+			// pixels (horizontal stripes) and the per-cell quadrant repeat
+			// tiles diamond blocks (cliff-only field report). Attenuate the
+			// bump by the atlas magnification: full at <=~0.5 texel/px, zero
+			// at >=~2.5 texel/px (atlas 2048 wide -> texelUV = 1/2048).
+			"    if (cliffFix.x > 0.5) {\n"
+			"        float pxStep = max(length(duv1), length(duv2));\n"
+			"        float texelUV = 1.0 / 2048.0;\n"
+			"        float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
+			"        conc *= atten;\n"
+			"    }\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -2559,6 +2573,7 @@ Int TerrainShaderPBR::init( void )
 			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
 			"float4 shadowDbg : register(c8);\n"
 			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float4 cliffFix : register(c15);\n"	// 2026-09-19: x=1 kills the bump where the normal atlas is magnified (stretched cliff UVs)
 			"float terrainShadow(float3 shadowUVZ)\n"
 			"{\n"
 			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
@@ -2613,6 +2628,19 @@ Int TerrainShaderPBR::init( void )
 			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
+			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
+			// uncompensated tex0 the base uses - on cliffs that UV set is
+			// stretched 3-6x, so each atlas texel row spans several screen
+			// pixels (horizontal stripes) and the per-cell quadrant repeat
+			// tiles diamond blocks (cliff-only field report). Attenuate the
+			// bump by the atlas magnification: full at <=~0.5 texel/px, zero
+			// at >=~2.5 texel/px (atlas 2048 wide -> texelUV = 1/2048).
+			"    if (cliffFix.x > 0.5) {\n"
+			"        float pxStep = max(length(duv1), length(duv2));\n"
+			"        float texelUV = 1.0 / 2048.0;\n"
+			"        float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
+			"        conc *= atten;\n"
+			"    }\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -2667,6 +2695,7 @@ Int TerrainShaderPBR::init( void )
 			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
 			"float4 shadowDbg : register(c8);\n"
 			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float4 cliffFix : register(c15);\n"	// 2026-09-19: x=1 kills the bump where the normal atlas is magnified (stretched cliff UVs)
 			"float terrainShadow(float3 shadowUVZ)\n"
 			"{\n"
 			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
@@ -2721,6 +2750,19 @@ Int TerrainShaderPBR::init( void )
 			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
+			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
+			// uncompensated tex0 the base uses - on cliffs that UV set is
+			// stretched 3-6x, so each atlas texel row spans several screen
+			// pixels (horizontal stripes) and the per-cell quadrant repeat
+			// tiles diamond blocks (cliff-only field report). Attenuate the
+			// bump by the atlas magnification: full at <=~0.5 texel/px, zero
+			// at >=~2.5 texel/px (atlas 2048 wide -> texelUV = 1/2048).
+			"    if (cliffFix.x > 0.5) {\n"
+			"        float pxStep = max(length(duv1), length(duv2));\n"
+			"        float texelUV = 1.0 / 2048.0;\n"
+			"        float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
+			"        conc *= atten;\n"
+			"    }\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -2776,6 +2818,7 @@ Int TerrainShaderPBR::init( void )
 			"float4 shadowParams : register(c7);\n"	// x,y = shadow texel, z = depth bias, w = receive enable
 			"float4 shadowDbg : register(c8);\n"
 			"float4x4 PSInvView : register(c9);\n"	// 2026-09-08: rebuild world from camera-space TEXCOORD6	// x = PBRDebugMode: 22 = raw map depth viz, 23 = raw compare viz
+			"float4 cliffFix : register(c15);\n"	// 2026-09-19: x=1 kills the bump where the normal atlas is magnified (stretched cliff UVs)
 			"float terrainShadow(float3 shadowUVZ)\n"
 			"{\n"
 			"    // 2026-09-09 RA3-FAITHFUL: shadow UV+depth arrive pre-computed per-vertex\n"
@@ -2831,6 +2874,19 @@ Int TerrainShaderPBR::init( void )
 			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
+			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
+			// uncompensated tex0 the base uses - on cliffs that UV set is
+			// stretched 3-6x, so each atlas texel row spans several screen
+			// pixels (horizontal stripes) and the per-cell quadrant repeat
+			// tiles diamond blocks (cliff-only field report). Attenuate the
+			// bump by the atlas magnification: full at <=~0.5 texel/px, zero
+			// at >=~2.5 texel/px (atlas 2048 wide -> texelUV = 1/2048).
+			"    if (cliffFix.x > 0.5) {\n"
+			"        float pxStep = max(length(duv1), length(duv2));\n"
+			"        float texelUV = 1.0 / 2048.0;\n"
+			"        float atten = saturate((texelUV * 2.5 - pxStep) / (texelUV * 2.0));\n"
+			"        conc *= atten;\n"
+			"    }\n"
 			"    float3 N = normalize(geoN + (nm.x * T * c2.z + nm.y * B * c2.w) * conc * geoN.z);\n"
 			"    float3 L = normalize(sunDirection);\n"
 			"    float NdotL = saturate(dot(N, L));\n"
@@ -3043,6 +3099,12 @@ Int TerrainShaderPBR::set(Int pass)
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 			normalWeight = 1.0f;
+			// 2026-09-19: INI gain (TerrainBumpStrength, default 1.0 = unchanged
+			// taste per user verdict; flat-terrain look must NOT change).
+			if (TheGlobalData) {
+				normalWeight *= TheGlobalData->m_terrainBumpStrength;
+				if (normalWeight < 0.0f) normalWeight = 0.0f;
+			}
 		}
 		// c2 = { normalWeight, terrainRoughness, bumpSignX, bumpSignY }
 		//   x: detail-normal blend strength (1.0 when a normal atlas is bound, else 0.0 = geo only).
@@ -3065,6 +3127,12 @@ Int TerrainShaderPBR::set(Int pass)
 		static float s_terrainBumpSignY = -1.0f;
 		float nmWeight[4] = { normalWeight, s_terrainRoughness, s_terrainBumpSignX, s_terrainBumpSignY };
 		DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(2, nmWeight, 1);
+		// 2026-09-19: c15.x = cliff stretch-kill gate (INI TerrainBumpCliffFix,
+		// default Yes; No = old un-attenuated behavior for A/B).
+		{
+			float cliffFixV[4] = { (TheGlobalData && TheGlobalData->m_terrainBumpCliffFix) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+			DX8Wrapper::_Get_D3D_Device8()->SetPixelShaderConstantF(15, cliffFixV, 1);
+		}
 		// Texture shadow receive (forward pass, 2026-09-06): bind the R32F
 		// shadow-map copy at s7 and upload the sun view-proj (c3-c6) plus
 		// params (c7: texel.xy, depth bias, receive-enable). endShadowMapPass
