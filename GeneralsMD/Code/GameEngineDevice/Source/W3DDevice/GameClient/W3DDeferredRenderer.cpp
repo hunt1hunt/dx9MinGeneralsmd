@@ -1549,7 +1549,14 @@ bool W3DDeferredRenderer::createShadowResources()
 	// down to ~0.25 units. IF dgVoodoo samples fp16 as 0 (the R32F defect),
 	// shadows vanish this run - flip this back to A8R8G8B8 and the bias in
 	// W3DShaderManager back to 0.005 in one go.
-	WW3DFormat shadowFmt = WW3D_FORMAT_A16B16G16R16F;
+	// 2026-09-19 FP16 ROLLBACK (field report: W3X texture shadows gone while
+	// every chain gate logs green - casts running, receive=1, texture bound -
+	// i.e. the sampled map content is empty). The 09-10 fp16 trial's own head
+	// comment predicted this exact failure: "IF dgVoodoo samples fp16 as 0
+	// (the R32F defect), shadows vanish this run". Roll back to A8R8G8B8
+	// (the format of the last field-proven-good era, "RTS贴图阴影正常啦" 09-01)
+	// + restore the paired terrain receive bias 0.005 in W3DShaderManager.
+	WW3DFormat shadowFmt = WW3D_FORMAT_A8R8G8B8;
 	m_shadowDepthRT = DX8Wrapper::Create_Render_Target(
 		SM_SIZE, SM_SIZE, shadowFmt, true);
 	if (!m_shadowDepthRT) {

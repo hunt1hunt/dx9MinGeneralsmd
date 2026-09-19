@@ -3585,10 +3585,11 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 			{
 				FILE *df = fopen("E:\\freebuild_diag.log", "a");
 				if (df) {
-					fprintf(df, "ALTB enable=%d player[%d] type=%d freeNow=%d\n",
+					fprintf(df, "ALTB enable=%d player[%d] type=%d freeNow=%d tick=%lu\n",
 						(int)enable, player->getPlayerIndex(),
 						(int)player->getPlayerType(),
-						(int)player->buildsForFree());
+						(int)player->buildsForFree(),
+						GetTickCount());
 					fclose(df);
 				}
 			}
