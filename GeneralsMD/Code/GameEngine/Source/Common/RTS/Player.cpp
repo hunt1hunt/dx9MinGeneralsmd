@@ -434,7 +434,7 @@ void Player::init(const PlayerTemplate* pt)
 
 #if defined(_DEBUG) || defined(_INTERNAL)
 	m_DEMO_ignorePrereqs = FALSE;//TRUE;
-	m_DEMO_freeBuild = TRUE;//FALSE;//TRUE;
+	m_DEMO_freeBuild = FALSE;// 2026-09-19: 开局必须 OFF——ALT+B 首按=同时开免费建+1200电量(耦合语义);原 TRUE 使首按变成'关闭'
 	 m_DEMO_godMode = FALSE;
 	//m_DEMO_ignorePrereqs = enable
 	//m_DEMO_freeBuild = enable
@@ -443,7 +443,7 @@ void Player::init(const PlayerTemplate* pt)
 
 #if defined(_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	m_DEMO_instantBuild = FALSE;
-	m_DEMO_freeBuild = TRUE;
+	m_DEMO_freeBuild = FALSE;// 2026-09-19: 同上,开局 OFF,ALT+B 首按开启
 	m_DEMO_ignorePrereqs = FALSE;//TRUE;
     m_DEMO_godMode = FALSE;
 	m_qwwudiSelectionMode = FALSE;

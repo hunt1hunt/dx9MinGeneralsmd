@@ -400,9 +400,14 @@ void Energy::depositEnergy(Int amountToDeposit, Bool playSound)
 // ------------------------------------------------------------------------------------------------  
 Int Energy::withdrawEnergy(Int amountToWithdraw, Bool playSound)
 {
-	// 2026-09-19: removed the buildsForFree() early-return - this build has
-	// freebuild permanently ON (gameplay setting), which made the guard
-	// silently no-op the ALT+B power-cheat's withdraw leg forever.
+#if defined(RTS_DEBUG) || defined(_INTERNAL) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+	// 检查是否启用了 freebuild 作弊
+	// (2026-09-19 note: in the COUPLED ALT+B flow this guard never blocks -
+	// enableFreeBuild(false) runs BEFORE the withdraw, so buildsForFree() is
+	// already FALSE here.)
+	if (m_owner != NULL && m_owner->buildsForFree())
+		return 0; // freebuild 启用时不扣除电量
+#endif
 
 	if (amountToWithdraw > m_energyProduction)
 		amountToWithdraw = m_energyProduction;
