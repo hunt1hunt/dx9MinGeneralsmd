@@ -538,6 +538,11 @@ bool W3DDeferredRenderer::beginGBufferPass()
 	surf1->Release();
 	surf2->Release();
 
+	// VF-2 write-route hunt: DS identity right before the scene clears and
+	// draws into the G-Buffer MRT. dsIsOurs=0 here = the geometry depth
+	// goes somewhere else all frame.
+	debugLogDSIdentity("gbuffer_begin");
+
 	// Clear all three RTs to black and clear depth-stencil.
 	DX8Wrapper::Clear(true, true, Vector3(0, 0, 0), 0, 1.0f, 0);
 
@@ -564,6 +569,10 @@ void W3DDeferredRenderer::endGBufferPass()
 		return;
 	}
 	m_inGBufferPass = false;
+
+	// VF-2 write-route hunt: DS identity at G-Buffer pass END (before the
+	// restore-to-default rebinds whatever the wrapper cached).
+	debugLogDSIdentity("gbuffer_end");
 
 	// Restore default render target (DX8Wrapper clears MRT slots automatically).
 	DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)NULL);
@@ -2188,6 +2197,30 @@ void W3DDeferredRenderer::volumetricFogPass(
 	dev->SetRenderState(D3DRS_ZWRITEENABLE, oldZw);
 	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, oldBlend);
 	dev->SetRenderState(D3DRS_CULLMODE, oldCull);
+}
+
+// ============================================================================
+// W3DDeferredRenderer::debugLogDSIdentity  (VF-2 write-route hunt)
+// ============================================================================
+// One-shot PER TAG: is the device's current depth-stencil OUR sampleable z
+// surface? The self-test (mode 5) proved INTZ write+sample works here, so
+// the main-z 1.0 means the frame's scene writes get diverted somewhere -
+// the first tag reporting dsIsOurs=0 is the swap point.
+void W3DDeferredRenderer::debugLogDSIdentity(const char *tag)
+{
+	static const char *s_doneTags[16];
+	static int s_doneCount = 0;
+	for (int i = 0; i < s_doneCount; i++) {
+		if (s_doneTags[i] == tag) return;	// one-shot per tag (pointer identity)
+	}
+	if (s_doneCount < 16) { s_doneTags[s_doneCount++] = tag; }
+	if (!TheGlobalData || !TheGlobalData->m_useSampleableZBuffer || !m_mainZSurface) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+	IDirect3DSurface9 *cur = NULL;
+	static_cast<IDirect3DDevice9*>(dev)->GetDepthStencilSurface(&cur);
+	DIAG_LOG(("VF-2 DSCHK[%s]: dsIsOurs=%d\n", tag, (cur == m_mainZSurface) ? 1 : 0));
+	if (cur) cur->Release();
 }
 
 // ============================================================================
