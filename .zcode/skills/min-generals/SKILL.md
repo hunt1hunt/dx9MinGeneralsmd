@@ -64,6 +64,12 @@ python "E:\Source\repos\MinGeneralsfreebuild2ok\GeneralsMD\Code\Tools\apply_laa.
 - 最省事顺序：构建 → **先给 `GeneralsMD\Run\RTS.exe` 打 LAA** → 再拷贝部署（部署件自动带标志）；部署后对目标再跑一次脚本校验亦幂等。
 - 游戏目录有两个：`D:\!!!!!!!QWCSB\!!!!!!!QWCSB\`（本机部署目标）与 `E:\!!!!!!!QWCSB\`（另一环境，历来已带 LAA）。
 
+**资源文件双目录同步铁律（用户钦定 2026-09-19）：**
+
+- 凡修改过 **INI / 其他游戏资源文件**（GameData.ini、Data\INI\* 等），除布置到 D: 游戏目录外，**必须同步布置到 `E:\!!!!!!!QWCSB\` 对应路径**。
+- 部署到 E:（或覆盖任何同名文件）前**先备份**：`<原名>.bak_YYYYMMDD_HHMMSS` 存于同目录，再拷贝 + `cmp` 字节校验。
+- 汇报时带一行"已同步 E: + 备份名"。
+
 ---
 
 ## 核心架构速查
