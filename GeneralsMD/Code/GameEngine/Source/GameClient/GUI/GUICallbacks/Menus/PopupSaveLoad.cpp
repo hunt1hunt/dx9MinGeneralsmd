@@ -129,6 +129,14 @@ static void updateMenuActions( void )
 void SaveLoadMenuInit( WindowLayout *layout, void *userData )
 {
 
+	// 2026-09-18 SHXL breadcrumbs. The exit-time access violation
+	// (asciistring.h(589) operator==, RTSI.map 0x00405760, exactly 152 dumps per run,
+	// reproducible) fires inside Shell::doPop's newTop->runInit() for
+	// Menus/SaveLoad.wnd -- i.e. on this callback. The crash stack itself is only
+	// 2 frames (FPO, not walkable), so bracket the steps and let the log name the
+	// one that faults. Not a hot path -- menu transitions only.
+	DEBUG_LOG(("SHXL: SaveLoadMenuInit enter\n"));
+
 	// set default behavior for this menu
 	currentLayoutType = SLLT_SAVE_AND_LOAD;
 	isPopup = TRUE;
@@ -152,6 +160,7 @@ void SaveLoadMenuInit( WindowLayout *layout, void *userData )
 	buttonDeleteCancel		 = NAMEKEY( "PopupSaveLoad.wnd:ButtonDeleteCancel" );
 
 	//set keyboard focus to main parent and set modal
+	DEBUG_LOG(("SHXL: init: NAMEKEY block done\n"));
 	NameKeyType parentID = TheNameKeyGenerator->nameToKey("PopupSaveLoad.wnd:SaveLoadMenu");
 	parent = TheWindowManager->winGetWindowFromId( NULL, parentID );
 	TheWindowManager->winSetFocus( parent );
@@ -170,15 +179,21 @@ void SaveLoadMenuInit( WindowLayout *layout, void *userData )
 	saveDesc->winHide( TRUE );
 	deleteConfirm = TheWindowManager->winGetWindowFromId( parent, NAMEKEY( "PopupSaveLoad.wnd:DeleteConfirmParent" ) );
 	editDesc = TheWindowManager->winGetWindowFromId( parent, NAMEKEY( "PopupSaveLoad.wnd:EntryDesc" ) );
+	DEBUG_LOG(("SHXL: init: window lookups done\n"));
 	// get the listbox that will have the save games in it
 	listboxGames = TheWindowManager->winGetWindowFromId( NULL, listboxGamesKey );
 	DEBUG_ASSERTCRASH( listboxGames != NULL, ("SaveLoadMenuInit - Unable to find games listbox\n") );
 
 	// populate the listbox with the save games on disk
+	DEBUG_LOG(("SHXL: init -> populateSaveGameListbox\n"));
 	TheGameState->populateSaveGameListbox( listboxGames, currentLayoutType );
+	DEBUG_LOG(("SHXL: init <- populateSaveGameListbox\n"));
 
 	// update the availability of the menu buttons
+	DEBUG_LOG(("SHXL: init -> updateMenuActions\n"));
 	updateMenuActions();
+	DEBUG_LOG(("SHXL: init: updateMenuActions done\n"));
+	DEBUG_LOG(("SHXL: SaveLoadMenuInit exit\n"));
 
 }  // end SaveLoadMenuInit
 

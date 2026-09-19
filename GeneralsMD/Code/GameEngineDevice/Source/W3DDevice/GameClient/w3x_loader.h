@@ -233,6 +233,10 @@ public:
 	static void LogMeshSummary(const char *filename, const W3XMeshData &data);
 
 private:
+	// Internal: the un-memoized worker behind ResolveTextureDDS. Call
+	// ResolveTextureDDS instead -- it caches results (see w3x_loader.cpp).
+	static AsciiString ResolveTextureDDSUncached(const char *texName);
+
 	// Internal: read file content into a buffer via the engine FileClass
 	static char *ReadFileContent(const char *filename, int &fileSize);
 

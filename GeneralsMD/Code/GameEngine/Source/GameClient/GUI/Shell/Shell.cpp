@@ -66,6 +66,7 @@ Shell::Shell( void )
 	m_pendingPop = FALSE;
 	m_pendingPushName.set( "" );
 	m_isShellActive = TRUE;
+	m_isShuttingDown = FALSE;
 	m_shellMapOn = FALSE;
 	m_background = NULL;
 	m_clearBackground = FALSE;
@@ -85,6 +86,19 @@ Shell::Shell( void )
 //-------------------------------------------------------------------------------------------------
 Shell::~Shell( void )
 {
+	// 2026-09-18 fix for the exit-time access violation.
+	// Engine shutdown deletes subsystems before the shell is destroyed -- and
+	// SubsystemInterfaceList::shutdownAll() does `delete sys` WITHOUT nulling the global
+	// pointers. So by the time this loop drains the screen stack, TheGameState is already
+	// freed but still reachable. Draining normally calls popImmediate() -> doPop() ->
+	// newTop->runInit(); for Menus/SaveLoad.wnd that is SaveLoadMenuInit, which calls
+	// TheGameState->populateSaveGameListbox() and walks m_snapshotBlockList[SNAPSHOT_SAVELOAD]
+	// -- a freed std::list whose sentinel _M_next is zeroed (access violation on 0x00000000,
+	// historically also 0xC7000008/0x80000008 when the memory had been reused).
+	// Nothing needs initialising while the shell is being destroyed, so suppress it.
+	m_isShuttingDown = TRUE;
+	DEBUG_LOG(("SHX: ~Shell draining %d screen(s), runInit suppressed\n", m_screenCount));
+
 	WindowLayout *newTop = top();
 	while(newTop)
 	{
@@ -388,13 +402,24 @@ void Shell::popImmediate( void )
 
 	// run the shutdown
 	Bool immediatePop = TRUE;
+	// 2026-09-17 SHX breadcrumbs: the benchmark exit-time access violation
+	// (AsciiString::operator==, RTSI.map 0x00405740) first fires immediately after
+	// this function's DEBUG_LOG, and the crash stack has only 2 frames (FPO, not
+	// walkable). Bracket each step so the log names the step that faults.
+	// Not a hot path -- screen transitions only.
+	DEBUG_LOG(("SHX: popImmediate -> runShutdown\n"));
 	screen->runShutdown( &immediatePop );
+	DEBUG_LOG(("SHX: popImmediate <- runShutdown\n"));
 
 	// pop the screen of the stack
+	DEBUG_LOG(("SHX: popImmediate -> doPop\n"));
 	doPop( FALSE );
+	DEBUG_LOG(("SHX: popImmediate <- doPop\n"));
 
 	if (TheIMEManager)
 		TheIMEManager->detatch();
+
+	DEBUG_LOG(("SHX: popImmediate done\n"));
 
 }  // end popImmediate
 
@@ -632,22 +657,45 @@ void Shell::doPop( Bool impendingPush )
 	// there better be a top of the stack since we're popping
 	DEBUG_ASSERTCRASH( currentTop, ("Shell: No top of stack and we want to pop!\n") );
 		
+	// 2026-09-17 SHX breadcrumbs (see popImmediate). Suspect ordering: the popped
+	// WindowLayout is deleteInstance()'d and then runInit() runs on the NEXT screen
+	// -- in the benchmark repro that is Menus/SaveLoad.wnd, still on the stack, and
+	// its init walks the save directory.
 	// remove this screen from our list
+	DEBUG_LOG(("SHX: doPop -> unlinkScreen\n"));
 	unlinkScreen( currentTop );
+	DEBUG_LOG(("SHX: doPop <- unlinkScreen\n"));
 
 	// delete all the windows in the screen
+	DEBUG_LOG(("SHX: doPop -> destroyWindows\n"));
 	currentTop->destroyWindows();
+	DEBUG_LOG(("SHX: doPop <- destroyWindows\n"));
 
 	// release the screen object back to the memory pool
+	DEBUG_LOG(("SHX: doPop -> deleteInstance\n"));
 	currentTop->deleteInstance();
+	DEBUG_LOG(("SHX: doPop <- deleteInstance\n"));
 
 	// run the init for the new top of the stack if present
 	WindowLayout *newTop = top();
 	if( newTop && !impendingPush )
 	{
-		newTop->runInit( NULL );
+		// 2026-09-18: see the note in ~Shell. During teardown the globals this init would
+		// touch are already freed, so skip it -- it was the exit-time access violation.
+		if( m_isShuttingDown )
+		{
+			DEBUG_LOG(("SHX: doPop suppressing newTop->runInit (shell shutting down)\n"));
+		}
+		else
+		{
+			DEBUG_LOG(("SHX: doPop -> newTop->runInit\n"));
+			newTop->runInit( NULL );
+			DEBUG_LOG(("SHX: doPop <- newTop->runInit\n"));
+		}
 		//newTop->bringForward();
 	}
+
+	DEBUG_LOG(("SHX: doPop done\n"));
 
 	if (TheIMEManager)
 		TheIMEManager->detatch();

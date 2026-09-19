@@ -47,6 +47,13 @@
 #include "wwmemlog.h"
 #include <D3dx8core.h>
 
+// T15 (2026-09-18): declared locally because WW3D2 has no GameEngine include path.
+// Defined in GameEngine/Source/Common/System/FrameProbe.cpp; ww3d2 is a static
+// library linked into RTSI.exe, so this is the same module and plain linkage works.
+// Used to measure how long the thread is BLOCKED inside the dynamic VB Lock.
+void FrameProbeLockEnter(void);
+void FrameProbeLockLeave(void);
+
 #define DEFAULT_VB_SIZE 5000
 
 static bool _DynamicSortingVertexArrayInUse=false;
@@ -856,12 +863,14 @@ DynamicVBAccessClass::WriteLockClass::WriteLockClass(DynamicVBAccessClass* dynam
 //		WWASSERT(!_DynamicDX8VertexBuffer->Engine_Refs());
 
 		DX8_Assert();
+		FrameProbeLockEnter();	// T15: this call can BLOCK waiting for the GPU
 		// Lock with discard contents if the buffer offset is zero
 		DX8_ErrorCode(static_cast<DX8VertexBufferClass*>(DynamicVBAccess->VertexBuffer)->Get_DX8_Vertex_Buffer()->Lock(
 			DynamicVBAccess->VertexBufferOffset*_DynamicDX8VertexBuffer->FVF_Info().Get_FVF_Size(),
 			DynamicVBAccess->Get_Vertex_Count()*DynamicVBAccess->VertexBuffer->FVF_Info().Get_FVF_Size(),
 			(void**)&Vertices,
 			D3DLOCK_NOSYSLOCK | (!DynamicVBAccess->VertexBufferOffset ? D3DLOCK_DISCARD : D3DLOCK_NOOVERWRITE)));
+		FrameProbeLockLeave();
 		break;
 	case BUFFER_TYPE_DYNAMIC_SORTING:
 		Vertices=static_cast<SortingVertexBufferClass*>(DynamicVBAccess->VertexBuffer)->VertexBuffer;

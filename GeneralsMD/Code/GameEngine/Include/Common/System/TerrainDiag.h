@@ -52,4 +52,18 @@ __inline const char *GetPbrCompileLogPath(void)
 	return s_path;
 }
 
+// "<game dir>water_diag.log". Cached.
+// 2026-09-18: the water diagnostic used to fopen the hardcoded "E:\\water_diag.log"
+// on every call -- exactly the off-drive habit this header was created to replace.
+__inline const char *GetWaterDiagLogPath(void)
+{
+	static char s_path[MAX_PATH] = "";
+	if (s_path[0] == '\0')
+	{
+		strcpy(s_path, GetGameDir());
+		strcat(s_path, "water_diag.log");
+	}
+	return s_path;
+}
+
 #endif // __TERRAINDIAG_H
