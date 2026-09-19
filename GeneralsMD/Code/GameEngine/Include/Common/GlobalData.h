@@ -116,6 +116,7 @@ public:
 	Bool m_useDetailTerrainTex;
 	Bool m_multiPassTerrain;
 	Bool m_adjustCliffTextures;
+	Real m_cliffAtlasCrop;	///< 2026-09-19 v2 cliff stripe/diamond fix: UV crop factor for stretched-cliff cells (INI CliffAtlasCrop, 0=off default, 0.25=recommended). Mesh-side (getUVForTileIndex post-pass) - the pixel shader conc path stays untouched (the v1 shader attenuation's VALUE path was proven to kill the W3X texture shadow, bisect 2026-09-19).
 	Bool m_stretchTerrain;
 	Bool m_useHalfHeightMap;
 	Bool m_drawEntireTerrain;
