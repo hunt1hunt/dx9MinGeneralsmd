@@ -95,7 +95,11 @@
 //#include "Team.h"          // Team类的定义（defaultTeam的类型）
 //#include "Coord3D.h"       // Coord3D坐标类型的定义
 //#include "ThingFactory.h"  // 物体工厂相关
-class ObjectCreationList;  
+class ObjectCreationList;
+// 2026-09-19: ALT+B 电量作弊开关状态（与 freebuild 解耦——本 build 开局即
+// freebuild=ON 是玩法设定；此状态由 GameLogic::reset 每局清零）。
+static Bool s_cheatPowerBoostOn = FALSE;
+void resetCheatPowerBoostState(void) { s_cheatPowerBoostOn = FALSE; }
 //class MouseIO;  
 //class Coord3D;
 
@@ -3549,32 +3553,40 @@ TheInGameUI->message( UnicodeString( L"\x6838\x52a8\x529b\x4eba\x5de5\x667a\x80f
 {
 		// Doesn't make a valid network message
 		// TheSuperHackers @info In multiplayer, all clients need to enable this cheat at the same time, otherwise game will mismatch
-		Bool enable = !ThePlayerList->getLocalPlayer()->buildsForFree();
+		//
+		// 2026-09-19 DECOUPLED FROM FREEBUILD: this build intentionally starts
+		// with freebuild ON (Player ctor m_DEMO_freeBuild=TRUE, commit
+		// 47d9db16 - the freebuild gameplay). The old enable=!buildsForFree()
+		// toggle therefore made press1 silently DISABLE free build (and its
+		// withdraw no-op'd at 0 power), and only press2 re-enabled it (+1200)
+		// - the field-reported "first press doesn't add, second does". Now
+		// ALT+B is a PURE POWER toggle: freebuild state is never touched.
+		Bool enable = !s_cheatPowerBoostOn;
+		s_cheatPowerBoostOn = enable;
 
 		for (Int n = 0; n < ThePlayerList->getPlayerCount(); ++n)
 		{
 			Player* player = ThePlayerList->getNthPlayer(n);
-			if (player->getPlayerType() == PLAYER_HUMAN)
-				player->enableFreeBuild(enable);
+			if (player->getPlayerType() != PLAYER_HUMAN)
+				continue;
 
-			// 如果启用 freebuild，给玩家增加 1200 单位电量
 			if (enable)
 			{
 				player->getEnergy()->depositEnergy(1200, FALSE); // 开启：+1200
 			}
 			else
 			{
-			// 关闭 freebuild 时，扣回最多 1200（withdrawEnergy 内部钳到非负）
+				// 关闭：扣回最多 1200（withdrawEnergy 内部钳到非负）
 				player->getEnergy()->withdrawEnergy(1200, TRUE);
 			}
 		}
 
 		if (enable)
 			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOn", L"Free Build免费建+满电量 is ON") );
-		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is ON!" ));
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 +1200 is ON!" ));
 		else
 			//TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE("GUI:DebugFreeBuildOff", L"Free Build免费建+满电量 is OFF") );
-		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 is OFF!" ));
+		TheInGameUI->message( UnicodeString( L"Free Build POWER\x514d\x8d39\x5efa\x80FD\x91CF\x6EE1\x7EA7 -1200 is OFF!" ));
 
 		disp = DESTROY_MESSAGE;
 		break;
