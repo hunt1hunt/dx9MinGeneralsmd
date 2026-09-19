@@ -1773,6 +1773,7 @@ bool W3DDeferredRenderer::createFogResources()
 		"float4 gInvRow2;\n"
 		"float4 gInvRow3;\n"
 		"float4 main(float2 uv : TEXCOORD0) : COLOR0 {\n"
+		"    if (gFogParams.w >= 4.0) return float4(tex2D(SceneSampler, uv).rgb, 1.0);\n"		// debug 4: scene-sampler health (s0 + resolve chain)
 		"    float zw = tex2D(ZSampler, uv).x;\n"
 		"    if (gFogParams.w >= 1.0) return float4(zw, zw, zw, 1.0);\n"		// debug 1: raw sampled z
 		"    float3 scene = tex2D(SceneSampler, uv).rgb;\n"
@@ -1913,6 +1914,16 @@ void W3DDeferredRenderer::volumetricFogPass(
 			d9->GetDepthStencilSurface(&dsSave);
 			d9->SetDepthStencilSurface(NULL);
 			dumpShadowTexToPPM(m_mainZTex, "E:\\mainz_dump.ppm");
+			// CONTROL: dump the shadow's OWN D24X8 (the historical precedent
+			// texture, never the bound DS at this point) with the SAME
+			// machinery. Geometry here => machinery + precedent validated,
+			// mainz result trustworthy; flat here => effect-sampling of depth
+			// textures is dead on this stack, full stop - pivot to the COLOR
+			// RT depth-encode fallback.
+			if (m_shadowDepthStencilTex) {
+				dumpShadowTexToPPM((IDirect3DBaseTexture9*)m_shadowDepthStencilTex,
+					"E:\\shadowd24_dump.ppm");
+			}
 			d9->SetDepthStencilSurface(dsSave);
 			if (dsSave) dsSave->Release();
 			s_zDumped = true;
