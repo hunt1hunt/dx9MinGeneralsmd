@@ -13,17 +13,9 @@
     },
     "mempalace": {
       "type": "stdio",
-      "command": "mempalace-mcp",
-      "args": [],
-      "env": {}
-    },
-    "bb-browser": {
-      "type": "stdio",
-      "command": "npx",
+      "command": "mempalace",
       "args": [
-        "-y",
-        "bb-browser",
-        "--mcp"
+        "mcp"
       ],
       "env": {}
     }
