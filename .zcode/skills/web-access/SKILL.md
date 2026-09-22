@@ -14,9 +14,34 @@ description: 通过 bb-browser 用本机真实 Chrome 上网取信息。当需�
 | npm 全局包 | `bb-browser@0.14.2`（最新版；2026-05-29 发布） |
 | 命令 | `bb-browser` → `C:\Users\hjzh\AppData\Roaming\npm\bb-browser.cmd` |
 | 社区 adapter | 已装 **145 个**（`bb-browser site update` 从 github.com/epiral/bb-sites 拉取） |
-| 架构 | `CLI → daemon(127.0.0.1:19824) → CDP → 真实 Chrome` |
+| 架构 | `CLI → daemon(127.0.0.1:19824) → CDP → 真实 Edge`（见下节，已从 Chrome 改为 Edge） |
 
 ⚠️ **不要走 MCP**。虽然该项目的 README 写了 `{"command":"npx","args":["-y","bb-browser","--mcp"]}` 的 MCP 配置，但实测 **0.14.2 的代码里一处 "mcp" 都没有**（`--mcp` / `mcp` 都只落到帮助页），README 与实现不符。所以它**没有**进 `.mcp.json`，只能走 CLI。
+
+## 用哪个浏览器：Edge（打过补丁）
+
+`bb-browser` 用 `findBrowserExecutable()` 挑浏览器，Windows 下是**固定候选表 + `.find(第一个存在的)`**。原版顺序把 Chrome 排在 Edge 前面，本机装着 Chrome，所以**默认永远启 Chrome**——而且没有任何配置项能改这个顺序（无 `--browser` 参数，无环境变量）。
+
+2026-09-22 按用户要求改写为 **Edge 优先**：
+
+```
+文件：C:\Users\hjzh\AppData\Roaming\npm\node_modules\bb-browser\dist\cli.js
+改动：findBrowserExecutable() 的 win32 候选表，把两条 msedge.exe 提到 chrome.exe 之前
+备份：同目录 cli.js.orig-chrome
+```
+
+⚠️ **`npm i -g bb-browser` 升级会覆盖这个补丁**，之后要重新打。判断是否被打回：
+
+```bash
+sed -n '123,126p' "$(npm root -g)/bb-browser/dist/cli.js"   # 第一行应为 msedge.exe
+```
+
+另有一条不改代码的路子（若不想打补丁）：自己用 `--remote-debugging-port=9222` 起 Edge，然后设 `BB_BROWSER_CDP_URL=http://127.0.0.1:9222`，`discoverCdpPort()` 会优先直连、不再自己启浏览器。
+
+**两个必须知道的点**：
+
+- 它用的是**独立的干净 profile**（`~/.bb-browser/browser/user-data`），**不是你个人的 Edge 配置**——没有书签和扩展，登录态要在那个 profile 里单独登一次（登完会持久保存）。
+- 它**从来不会**用 IE（代码里 `iexplore` 一处都没有）。曾经误以为是 IE，实际是 Chrome 的干净 profile 窗口看着陌生。
 
 ## 用前先起 daemon
 
