@@ -1,0 +1,64 @@
+{
+  "title": "SagePerfDiag 下会话交接单 (2026-09-17 收工) — stash 位置 / 4 项优先级 / spd 份数更正",
+  "tags": ["performance", "FrameProbe", "handoff", "stash", "spd", "benchmark", "savegame", "crash", "SAGE"],
+  "context": "2026-09-17 收工交接。权威版是仓库看板 Tools/EXECUTION_STATUS.md（GitHub 为准），本条只记『磁盘实测过的关键事实 + 数字更正 + 硬规则』，避免下会话照抄口头转述。",
+  "verified_facts": [
+    "stash@{0} 确实存在: 'On main: W3XRenderObj shadow RECEIVE diag WIP (2026-09-17 stash before perf build)'。改动仅 1 个文件 GameEngineDevice/Source/W3DDevice/GameClient/W3XRenderObj.cpp, +50/-20。补丁备份 /tmp/w3x_shadow_diag_wip.patch (6311 字节, 09:54)。另有 stash@{1} 'autostash'。",
+    "工作区 W3XRenderObj.cpp 与 HEAD 一致 (git status 里根本不出现该文件), 文件内 15 处 W3XShadowDiag 调用 = 已提交的干净版。",
+    "游戏目录 exe = E:\\!!!!!!!QWCSB\\RTSI.exe, md5 896a9d2bd8ea825dae239a86002d32d2, mtime 2026-09-17 10:42:14.689, LAA=YES, 10661968 字节。身份凭证: 含 'params HasShadow' (干净版标志) 且不含 \"fx='%s' deferred\" (WIP 标志) → 确认是干净版, 那批 [W3X_SHDW] RECEIVE 的 fx=/hasVal=/hasH= 诊断不在 exe 里。对照备份 RTSI.exe.bak (10:18) 未覆盖。",
+    "游戏目录 .spd 实测共 729 份: 早于切分点 2026-09-17 10:42:14 的 712 份首帧含累加污染; 之后 17 份干净 (其中 12 份是存档基准 save_baseline_fixed, 另 5 份 probe_fix_verify* 是空图验证轮, 无 AI 无战斗, 不属于基准数据, 重扫时按 bench_manifest 的 tag 过滤)。"
+  ],
+  "correction": "口头交接说的『重扫历史 669 份 .spd』与磁盘不符。实测 find /e/!!!!!!!QWCSB -maxdepth 1 -name 'frameprobe_*.spd' | wc -l = 729 (712 旧 + 17 新), 与看板数字一致。重扫脚本与报告一律以 729/712/17 为准, 别用 669。",
+  "hard_rules": [
+    "做阴影调试前先 git stash pop (把 WIP 弹回来); 做性能基准时必须让 WIP 保持 stash (硬规则 #6), 免得 W3XShadowDiag 打印拖慢帧时污染基准。",
+    "早于 exe 部署时刻 (2026-09-17 10:42:14) 的 .spd 首帧带累加污染 → 所有基于 max / 峰值 / 卡顿聚类的历史结论作废重过; 中位数类结论不受影响, 可继续用。",
+    "先给 spd_analyzer.py / plan_generator.py 加『丢弃每份首行』兜底, 再重算历史结论。"
+  ],
+  "next_session_priorities": [
+    "1. 补 t_client 内约 105ms 的未细分埋点 —— 存档局 t_client 1081ms = t_render 865 + t_postfx 110 + t_present 0.8 + 约 105ms 黑盒 (占帧时 11%)。查 TheGameClient->UPDATE() 里除 render/postfx 外的大户 (drawable 更新 / UI / 雷达绘制)。需 Internal 构建。",
+    "2. 重扫历史 .spd (729 份, 见 correction) —— 无需构建, 可立即做。加丢首行兜底后重算, 只信 tag=save_baseline_fixed 的那 12 份。",
+    "3. 修退出期 AV —— 载入存档局被 -benchmark 局内强退 → scratch-pad '00000000.sav' 的 Xfer 句柄未关 → AsciiString::operator==() AV (读 0x000005DE, asciistring.h:589)。可稳定复现, 每次基准都会踩; 数据不受影响。查 GameStateMap 的 scratch-pad 清理与 XferLoad 关闭时序。需构建 + 带符号调试。",
+    "4. B2 正式 3 遍重复性验收 —— 存档局已成最稳场景 (P95/中位 = 1.046, 抖动 4.6%), 有希望一次过。探针开销 A/B 仍无数据源, 维持『由构造保证 + 微基准 0.22% 上界背书』收口。无需构建。",
+    "5. B3 专项: 每次 draw call 0.485ms 的归因 —— 靶子不是 draw call 数量 (真实峰值 ~1790), 而是每次成本; state_changes/draw_call = 0.51 不算失控, 嫌疑在每 draw 固定开销。需构建加埋点。"
+  ],
+  "key_numbers": {
+    "benchmark_scene": "存档 00000036.sav (游戏内名 Golden Oasis12345, 本地玩家 China), 帧 102-227 共 126 帧稳态",
+    "frame_total_ms": "中位 1095.3 / P95 1145.2 / P99 1272.8",
+    "jitter": "P95/中位 = 1.046 (4.6%)",
+    "t_client_ms": 1081.1,
+    "t_render_ms": 865.4,
+    "t_postfx_ms": 110.2,
+    "t_present_ms": 0.77,
+    "t_logic_ms": 14.9,
+    "blackbox_ms": "约 105 (= 帧时 11%, 下会话第 1 条要补)",
+    "objects": 651,
+    "draw_calls": 1783,
+    "state_changes": 910,
+    "per_draw_call_ms": 0.485,
+    "over_budget_33_3ms": "100%",
+    "load_spike": "载入帧 #101 t_total = 8804ms (真实尖峰, 非伪影)",
+    "one_click": "powershell -File Tools\\bench_capture.ps1 -ManualLoad -SaveName \"Golden Oasis12345\" -WarmupSeconds 150 -Seconds 210 -Tag <标签>"
+  },
+  "patch_backup_durable": {
+    "artifact_id": "art_20260917T063209_652132298ff8",
+    "sha256": "43e9ccde5187377235cf4139df47d919ce7f5487862fcc35fb6ed4de86353955",
+    "size_bytes": 6311,
+    "why": "stash 的补丁在宫殿留了一份, /tmp 被清也能救回。",
+    "how_to_apply": "mempalace artifact get art_20260917T063209_652132298ff8 | git apply   (或直接 git stash pop)"
+  },
+  "clean_spd_whitelist_for_rescan": {
+    "note": "17 份干净 .spd 的精确文件名 (切分点 2026-09-17 10:42:14 之后), 重扫时按此白名单 / manifest tag 过滤, 别把 5 份空图验证轮当基准。",
+    "baseline_save_baseline_fixed_12": [
+      "frameprobe_93909772_0.spd", "frameprobe_93940344_1.spd", "frameprobe_93989976_2.spd",
+      "frameprobe_94020321_3.spd", "frameprobe_94050832_4.spd", "frameprobe_94081642_5.spd",
+      "frameprobe_94112466_6.spd", "frameprobe_94142549_7.spd", "frameprobe_94173576_8.spd",
+      "frameprobe_94203654_9.spd", "frameprobe_94233745_10.spd", "frameprobe_94241284_11.spd"
+    ],
+    "not_baseline_probe_fix_verify_5": [
+      "frameprobe_93453892_0.spd", "frameprobe_93484290_1.spd", "frameprobe_93600279_0.spd",
+      "frameprobe_93630983_1.spd", "frameprobe_93661388_2.spd"
+    ],
+    "manifest": "E:\\!!!!!!!QWCSB\\bench_manifest_20260917_105736.csv (12 行 save_baseline_fixed, 全部 exitCode=0)"
+  },
+  "reminder": "收工时游戏目录 exe 是干净版 (供性能基准用), WIP 诊断只活在 stash@{0} 里。想再看到 [W3X_SHDW] RECEIVE 的 fx=/hasVal=/hasH=/tex/H 输出, 必须先 git stash pop 并重编 Internal, 不能指望现在这个 exe。"
+}

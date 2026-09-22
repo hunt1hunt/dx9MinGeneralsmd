@@ -1,0 +1,17 @@
+{
+  "title": "长局必现闪崩根治 — %ls格式化失败误判OOM (2026-09-15)",
+  "tags": ["crash", "root-cause", "OOM", "AsciiString", "VEH", "SAGE"],
+  "problem": "绝命时刻MOD长局遭遇战数分钟必现闪崩: Technical Difficulties 'Uncaught Exception in GameEngine::update', ReleaseCrashInfo.txt 截断在 '; Reason ' 中间且栈恒空, VEH栈捕获只出1帧系统DLL <Unknown> 0x76B8AA54。",
+  "root_cause": "DescribeObject (Object.cpp, DEBUG_LOG路径) 用 %ls 打印中文玩家名 → VC6 CRT 宽字符转MBCS失败 → _vsnprintf 返回-1 → AsciiString::format_va 误判为OOM 抛 ERROR_OUT_OF_MEMORY(0xDEAD0002) → GameEngine::update catch → 闪崩。且崩溃处理器自身 fprintf 走同一format_va再次失败,故崩溃转储文件写一半就死、栈全空,极难定位。",
+  "fix": "AsciiString/UnicodeString 的 format_va 共4处: 失败降级 set(\"<format-error>\") + FORMAT_FAIL 诊断日志,不再 throw。commit f7663009。用户实测长局稳定。",
+  "lessons": [
+    "VC6 _vsnprintf 返回<0 ≠ OOM: %ls宽字符转MBCS失败、非法格式串都返回-1,据此throw会杀游戏",
+    "定位手法: 逐层面包屑(UPDATE_CRASH_<分支> + OOM_* + THROW_SITE_N) 写 E:\terrain_diag.log,比栈转储可靠(栈在堆/栈损坏时会自毙)",
+    "错误码换算: -559087614=0xDEAD0002=ERROR_OUT_OF_MEMORY; Errors.h ERROR_BASE=0xdead0001,别看错枚举偏移",
+    "VEH对C++异常(0xE06D7363)只抓到CRT RaiseException帧(系统DLL),dbghelp无FPO数据回溯即断;原始栈扫描(过滤主模块内返回地址)+离线RTSI.map符号化才是兜底",
+    "良性噪音勿追: 'Tech Center模板缺失'断言=SkirmishScripts.scb脚本参数引用,原版也无此定义,脚本路径全有NULL保护",
+    "桌面工具包③增量构建Internal.bat 的findstr错误检查会误报(0 error也拦),以 desk_rts.log 的 'N error(s)' 行为准,部署步骤手动补",
+    "bin utils: 解析BIG用inline-name变体(16字节头+8字节entry+inline名);游戏用户数据目录在 Documents\Command and Conquer Generals Zero Hour Data\ReleaseCrashInfo.txt"
+  ],
+  "diagnostic_net_retained": "VEH硬错误优先+C++异常环形4槽; DumpFaultContextStack原始栈扫描; 7处THROW_SITE面包屑; catch分支全覆盖UPDATE_CRASH_*"
+}

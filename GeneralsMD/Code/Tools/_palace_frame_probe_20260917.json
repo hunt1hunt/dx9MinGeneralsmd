@@ -1,0 +1,25 @@
+{
+  "title": "SagePerfDiag 探针累加污染 + A1 回放路由真根因 (2026-09-17)",
+  "tags": ["performance", "FrameProbe", "replay", "benchmark", "savegame", "root-cause", "SAGE", "build"],
+  "problem": "两个假结论被当成事实: ①看板 B3 靶子写着 '45 万 draw_calls 峰值'; ②A1 回放判定为 'playbackFile 早期操作污染子系统链表导致 UPDATE 野指针'。user 质疑 '基准只用 -file 空图, 没玩家没战斗' 后彻查, 两条都是误判。",
+  "root_cause_1_probe": "FrameProbeFlush() 结尾 g_ringCount=0; g_ringHead=0; 但没有清零 g_ring[0]。而 FrameProbeCount()/FrameProbeEnd() 只做 '+='，FrameProbeEndFrame() 的 memset 只作用于下一个槽位 (head+1)，永远碰不到 0 号槽。→ 每个 .spd 的第一行 = 本次窗口首帧 + 之前所有窗口首帧的累加和。算术证据: 窗口首帧增量精确等于稳态值 (Δobjects=+651, Δdraw_calls=+1770, Δt_total=+900ms)，t_total 从 914ms 一路累到 14703ms。",
+  "root_cause_2_replay": "CommandLine.cpp:653 parseFile 对任何 -file 参数都调 ConvertShortMapPathToLongMapPath()，而该函数 (CommandLine.cpp:73) 只认二段式 '<目录>\\<名>.map'。传 .rep 时 token 循环耗尽 → DEBUG_CRASH(\"Invalid map name\") 但不 return → 继续把路径拼成 '<xxx.rep>\\.map' → GameEngine.cpp:650 的 fname.endsWithNoCase(\".map\") 判真 → 走地图分支加载不存在的图。**playbackFile() 从未被调用**。",
+  "fix": "① FrameProbe.cpp 落盘后补 memset(&g_ring[0], 0, sizeof(FPFrameRecord)); ② parseFile 改为只对 endsWithNoCase(\".map\") 的路径调 ConvertShortMapPathToLongMapPath。commit b79c433a。",
+  "verification": "探针: 窗口首帧 objects 序列 1225→1876→2526→3177 (每窗口+651,累加) 变为 651→650→651→651 (平坦)。回放: DebugLogFileI.txt 出现 'RecorderClass::readReplayHeader - GameInfo = ...' 与 'playbackFile() - original game was mode 2'，且 'Invalid map name' 断言计数归零。",
+  "perf_baseline_after_fix": "Golden Oasis12345 存档局 (00000036.sav, 本地玩家 China), 帧 102-227 共 126 帧稳态: t_total 中位 1095.3ms / P95 1145.2 / P99 1272.8, **P95/中位 = 1.046 (抖动仅 4.6%, 满足 B2 <5% 口径)**; t_client 1081.1 (98.7%) / t_render 865.4 (79.0%) / t_postfx 110.2 (10.1%) / t_logic 14.9 (1.4%) / t_present 0.77 (0.1%); objects 651 / draw_calls 1783 / state_changes 910 → **每次 draw call 0.485ms (健康值 0.001-0.01ms)**; 超 33.3ms 预算 100%; 载入帧 #101 t_total=8804ms 是真实载入尖峰。t_client 里另有约 105ms 完全未细分, 是下一个埋点缺口。",
+  "lessons": [
+    "**探针自身也会制造假数据**: 计数/计时累加器清零只有一处, 复位索引时必须同时清槽位。任何 '峰值/max/卡顿聚类' 结论先查是否只有 1 帧/窗口异常且增量恰等于稳态值 —— 那就是累加伪影。中位数受影响很小, 所以中位结论仍可用。",
+    "**改 SAGE 命令行参数前先读 ConvertShortMapPathToLongMapPath**: 它只接受二段式 '<目录>\\<名>.map' (会展开成 '<目录>\\<名>\\<名>.map', 幂等)。三段式会被重复拼接。对非 .map 路径会 DEBUG_CRASH 后继续, 把路径拼坏。",
+    "**WinMain 分词器是支持双引号的**: WinMain.cpp:1006 nextParam(lpCmdLine, \"\\\" \") 分隔符集合含双引号, 引号内空格会正确保留。旧结论'路径含空格被重分词拆碎'是误判。",
+    "**回放名必须是相对 Replays 目录的裸文件名**: Recorder.cpp:818-820 直接 fopen(getReplayDir()+filename), 传绝对路径会被拼成 '<Replays>\\e:\\...\\x.rep' 打不开。且 GameEngine.cpp:647 会 toLower() 后才传进来, 固定用小写 ASCII 名。",
+    "**回放头 CRC 不一致不阻断播放**: Recorder.cpp:1146 只是 DEBUG_ASSERTCRASH 且在 #ifdef DEBUG_LOGGING 内。MOD exe 频繁轮换不会让回放失效, 只是每次弹断言。",
+    "**引擎没有命令行载入存档/开遭遇战的通路**: -quickstart 只跳 logo/shellmap/动画; -map 只设 m_mapName 供 Recorder/Stats 用; -file 只认 .map/.rep。存档载入只有 UI 的 doLoadGame → TheGameState->loadGame(AvailableGameInfo)。想自动化必须自己加参数或走 UI 自动化。**存档路径不做 exe/INI CRC 校验**, 换 exe 仍可载入。",
+    "**用存档做基准比回放好**: 回放从头播, 120s 只推进 54 帧 (0.45 FPS) 到不了重载状态; 存档一进去就是打起来的场面。",
+    "**桌面一键构建 bat 从 git-bash/PowerShell 调会误判失败**: [1/5] 的 `find /I` 被 GNU find 劫持; [5/5] 的 `findstr /R` 里 /R 被 MSYS 当路径吃掉 → 误报 [失败] 并**跳过部署**。实际构建是成功的 (看 desk_*.log 的 'N error(s)')。要命令行调必须先净化 PATH, 否则就双击跑。",
+    "**bat 构建后必须手动补三件事**: ①拷 GeneralsMD\\Run\\RTSI.exe → 游戏目录 ②跑 python Tools/apply_laa.py 重打 LAA (bat 不做) ③用标记字符串验证 (exe 字节大小跨构建常常完全相同, 不可作凭证)。可用标记: 干净版 'params HasShadow' vs 脏版 \"fx='%s' deferred\"。",
+    "**.ps1 工具必须存为 UTF-8 with BOM**: 否则 PowerShell 5.1 按 ANSI(GBK) 读中文注释, 直接语法报错。",
+    "**用户有把 exe 改名存档的习惯** (RTSI9月16日收工.exe 等几十个), 脚本硬编码 RTSI.exe 会启动失败。挑 exe 可用 PE 头 TimeDateStamp (pe+8) 排序, 比 mtime 可靠。",
+    "**未修**: 载入存档局被 -benchmark 局内强退时, scratch-pad '00000000.sav' 的 Xfer 句柄未关 → teardown 触发 AV (asciistring.h:589 operator==, AV 读 0x000005DE)。与探针/parseFile 改动无关, 数据不受影响, 可稳定复现, 值得单独排查 GameStateMap 的 scratch-pad 清理与 XferLoad 关闭时序。"
+  ],
+  "tools": "bench_capture.ps1 三种模式: -Map 'Maps\\<图名>.map' (固定地图直接开局, 无 AI) / -ReplayPath <rep> (自动拷成 Replays\\bench_replay.rep 并传裸名) / -ManualLoad -SaveName <显示名> -WarmupSeconds N (存档手动载入, -benchmark (Warmup+Seconds) 自动退出, 必须带 -ignoreAsserts)。产出 bench_manifest_*.csv (轮次/探针状态/场景/exe/退出码/spd)。退出码 0=正常退出, 'killed'=脚本超时强杀。"
+}

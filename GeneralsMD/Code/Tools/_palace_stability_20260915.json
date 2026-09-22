@@ -1,0 +1,7 @@
+{
+  "title": "2026-09-15 稳定性收官 — 从必崩到极限可玩",
+  "tags": ["stability", "LAA", "performance", "里程碑"],
+  "result": "用户破笔记本原状: 单家地图不开敌10分钟必崩。现况: 4v4八家冷酷+双阵营全兵种+作弊四开+加速模式, 26万对象/45万draw calls 长时间稳定运行。三修复: ①%ls格式化失败误抛OOM(f7663009) ②LAA 2GB→4GB(PE头pe+4+18|=0x20字节补丁,每次构建后重打) ③诊断网常驻(VEH环形+THROW_SITE+OOM快照+#MEM水位)。",
+  "perf_data": "加速模式瓶颈大转移: <20万对象时t_client/render占85-99%, 26万对象时t_logic独占99%(150-300ms/帧)。渲染靶: draw call批处理(45万峰值)。模拟靶: 每对象逻辑开销(T5细分插桩)。",
+  "tools": "bench_capture.ps1(afd4b694): -file回放+-benchmark定时退出(Internal限定)+-ProbeOff对照。spd列序: frame,wall,TOTAL,RADAR,AUDIO,CLIENT,MSG,NET,LOGIC,NET_WAIT,RENDER,PRESENT,POSTFX,SPIN,draw_calls,state_changes,objects,drawables,particles"
+}
