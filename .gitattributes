@@ -13,6 +13,12 @@
 *.clang-format      text eol=lf
 *.clang-tidy        text eol=lf
 
+# ---------- Shell scripts / git hooks ----------
+# Must stay LF even on Windows (core.autocrlf=true would corrupt them: a CRLF
+# shebang or `exit 1\r` breaks the script). .githooks/commit-msg in particular.
+*.sh                text eol=lf
+.githooks/*         text eol=lf
+
 # ---------- C/C++ Sources ----------
 *.c                 text eol=lf    diff=cpp
 *.cc                text eol=lf    diff=cpp

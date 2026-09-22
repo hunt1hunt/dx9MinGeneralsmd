@@ -1,0 +1,37 @@
+#!/bin/sh
+# Conventional Commits 提交前拦截 —— 白名单与 CI 的
+# .github/workflows/conventional-commits.yml 保持一致：
+#   allowed-commit-types: feat,fix,docs,chore,build,refactor,style,perf,test,ci,revert
+#
+# 启用（每台机器各跑一次，core.hooksPath 是本机配置、不随 git 走）：
+#   git config core.hooksPath .githooks
+#
+# 紧急绕过：git commit --no-verify
+
+msg_file="$1"
+subject=$(head -n 1 "$msg_file")
+types=" feat fix docs chore build refactor style perf test ci revert "
+
+type=$(printf '%s\n' "$subject" | sed -nE 's/^([A-Za-z]+)(\([^)]*\))?!?: .*$/\1/p')
+
+case "$types" in
+  *" $type "*) exit 0 ;;
+esac
+
+printf '\n' >&2
+printf '[commit-msg] 提交消息不符合 Conventional Commits，已拦截。\n' >&2
+printf '\n' >&2
+printf '  你的消息 : %s\n' "$subject" >&2
+printf '  允许类型 : feat fix docs chore build refactor style perf test ci revert\n' >&2
+printf '  正确格式 : <type>(<scope>): <描述>\n' >&2
+printf '             例) fix: 修 W3X 贴图阴影丢失\n' >&2
+printf '             例) chore(libs): 整理依赖\n' >&2
+printf '\n' >&2
+printf '  常见错法（都曾让 CI 变红）：\n' >&2
+printf '    checkpoint: Step 3 complete     -> 用 chore:\n' >&2
+printf '    tool: 新脚本                     -> 用 build: 或 chore:\n' >&2
+printf '    docs+revert: 两件事              -> 一条提交只用一个类型，拆开或取主类型\n' >&2
+printf '    Merge branch '"'"'main'"'"' of ...      -> 用 git pull --rebase，避免产生 merge commit\n' >&2
+printf '    Revert "feat: xxx"               -> git revert --no-commit 后手写 revert: xxx\n' >&2
+printf '\n' >&2
+exit 1
