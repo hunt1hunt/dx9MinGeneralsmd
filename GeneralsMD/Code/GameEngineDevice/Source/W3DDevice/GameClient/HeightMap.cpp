@@ -2042,6 +2042,15 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
  		}
  		// Fallback: if selected noise variant unavailable, use base variant
  		if (W3DShaderManager::getShaderPasses(st) == 0) {
+			// 2026-09-21 GHOST-GATE FIX: this silent fallback to the LIGHTMAP-LESS
+			// base variant was the visible symptom of every "W3X texture shadow
+			// killed by a shader edit" session (09-19). Loud now - one line per
+			// session, so the next experiment that trips the ps_2_a ceiling
+			// announces itself instead of haunting.
+			{	FILE *gf = fopen(GetTerrainDiagLogPath(), "a");
+				if (gf) {	fprintf(gf, "[%u] TERRAIN_VARIANT_FALLBACK: requested st=%d unregistered -> base st=%d. LIGHTMAP receive LOST (W3X texture shadows will be DEAD). Check pbr_compile.log for the failed profile.\n",
+							timeGetTime(), (int)st, (int)(pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR : W3DShaderManager::ST_TERRAIN_BASE));
+					fclose(gf); } }
  			st = pbrAvail ? W3DShaderManager::ST_TERRAIN_PBR : W3DShaderManager::ST_TERRAIN_BASE;
  		}
  
@@ -2100,6 +2109,82 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 			}
 			normDiagOnce = TRUE;
 		}
+		// 2026-09-21 route 3 (TerrainWorldNormals): the procedural world noise
+		// texture lives on s6 ALWAYS (the PS detail slot - binding the base
+		// atlas there echoed a per-tile grid through the ±7.5% detail term,
+		// the "faint grid" of the 09-22 No-mode test). s5 only switches to it
+		// in world-normal mode; otherwise the per-tile atlas stays.
+		{
+			static TextureClass *wnTex = NULL;
+			if (!wnTex) {
+				// 对标 NormalMapTerrainTextureClass (TerrainTex.cpp:238): the
+				// WORKING normal atlas uses MIP_LEVELS_3 - our first cut used
+				// MIP_LEVELS_1 and minified into a moire lattice (09-22 shot).
+				// Each level is refilled analytically (periodic function stays
+				// periodic at every scale; no driver autogen dependency).
+				wnTex = NEW TextureClass(256, 256, WW3D_FORMAT_A8R8G8B8, MIP_LEVELS_3, TextureClass::POOL_MANAGED, false, false);
+				for (int lvl = 0; lvl < 3 && wnTex; lvl++) {
+					int dim = 256 >> lvl;
+					SurfaceClass *surf = wnTex->Get_Surface_Level(lvl);
+					if (!surf) break;
+					int pitch;
+					UnsignedInt *pixels = (UnsignedInt*)surf->Lock(&pitch);
+					if (!pixels) { REF_PTR_RELEASE(surf); break; }
+					// 2026-09-22 TUNE: mode-2 bisect proved t4 coords work; the mode-1
+					// "lattice" = this noise's own high-freq waves rendered as bump
+					// shading (22deg tilt = +/-25% brightness swings). Route 3 needs
+					// LARGE SOFT undulations, not a dense net: drop the freq-7 wave,
+					// target ~8deg mean tilt.
+					const int WA[2] = {3, 5}, WB[2] = {2, -4};
+					const float WAMP[2] = {6.0f, 3.5f};
+					const float WPH[2] = {1.7f, 0.3f};
+					double sumTilt = 0.0; int nPx = 0;
+					for (int y = 0; y < dim; y++) {
+						for (int x = 0; x < dim; x++) {
+							float u = (float)x / (float)dim, v = (float)y / (float)dim;
+							float dhdx = 0.0f, dhdy = 0.0f;
+							for (int w = 0; w < 2; w++) {
+								float ph = 6.2831853f * (WA[w]*u + WB[w]*v) + WPH[w];
+								dhdx += WAMP[w] * WA[w] * cosf(ph);
+								dhdy += WAMP[w] * WB[w] * cosf(ph);
+							}
+							const float WNSCALE = 0.006f;
+							float gx = -WNSCALE * dhdx;
+							float gy = -WNSCALE * dhdy;
+							float len = (float)sqrt(gx*gx + gy*gy + 1.0f);
+							gx /= len; gy /= len;
+							float nz = 1.0f / len;
+							float invOct = 1.0f / ((float)fabs(gx) + (float)fabs(gy) + nz);
+							int r = (int)((gx*invOct*0.5f + 0.5f) * 255.0f + 0.5f);
+							int g = (int)((gy*invOct*0.5f + 0.5f) * 255.0f + 0.5f);
+							if (r < 0) r = 0; if (r > 255) r = 255;
+							if (g < 0) g = 0; if (g > 255) g = 255;
+							pixels[y * pitch/4 + x] = 0xFF000000 | (r << 16) | (g << 8) | 128;
+							sumTilt += atan2((double)sqrt(gx*gx+gy*gy), (double)nz) * 57.295779513;
+							nPx++;
+						}
+					}
+					surf->Unlock();
+					if (lvl == 0) {
+						FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+						if (f) { fprintf(f, "[%d] WN_TEX: 3-level built, meanTilt=%.1fdeg\n", timeGetTime(), sumTilt/nPx); fclose(f); }
+					}
+					REF_PTR_RELEASE(surf);
+				}
+			}
+			if (wnTex) {
+				W3DShaderManager::setTexture(6, wnTex);
+			}
+			if (wnTex && TheGlobalData && (TheGlobalData->m_terrainWorldNormals == 1 || TheGlobalData->m_terrainWorldNormals == 3)) {
+				W3DShaderManager::setTexture(5, wnTex);
+				static Bool wnDiagOnce = FALSE;
+				if (!wnDiagOnce) {
+					FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+					if (f) { fprintf(f, "[%d] HT_WN_MODE: world normals ACTIVE (s5+s6)\n", timeGetTime()); fclose(f); }
+					wnDiagOnce = TRUE;
+				}
+			}
+		}
 		//Disable writes to destination alpha channel (if there is one)
 		if (DX8Wrapper::getBackBufferFormat() == WW3D_FORMAT_A8R8G8B8)
 			DX8Wrapper::Set_DX8_Render_State(D3DRS_COLORWRITEENABLE,D3DCOLORWRITEENABLE_BLUE|D3DCOLORWRITEENABLE_GREEN|D3DCOLORWRITEENABLE_RED);
@@ -2144,47 +2229,13 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 						pbrDiagOnce = TRUE;
 					}
 				}
-				// HT_DRAW_CTX (09-05): WHICH pass paints the visible terrain?
-				// gbuffer=1 -> terrain pixels are deferred-shaded (the shadow map
-				// can reach them); gbuffer=0 -> the FORWARD pass paints the terrain
-				// LAST, overwriting the deferred-lit image AND any shadow in it -
-				// the ground shadow must then be added to the forward terrain path.
-				{
-					extern bool g_gbufferActive;
-					static unsigned s_htCtxLast = 0;
-					unsigned nowMs = timeGetTime();
-					if (nowMs - s_htCtxLast >= 2000) {
-						s_htCtxLast = nowMs;
-						FILE *fctx = fopen(GetTerrainDiagLogPath(), "a");
-						if (fctx) {
-							fprintf(fctx, "[%u] HT_DRAW_CTX gbuffer=%d st=%d\n",
-								nowMs, g_gbufferActive ? 1 : 0, (int)st);
-							fclose(fctx);
-						}
-					}
-				}
+				// 2026-09-22 PROBE CLEANUP: the HT_DRAW_CTX (2s), PRE-DRAW s4
+				// (GetTexture - driver sync hitch source) and DRAW-TIME constant
+				// (GetTransform/GetVertexShaderConstantF) probes were removed -
+				// their investigations closed, and the periodic device reads were
+				// the intermittent-stutter suspects. One-shot init logging and the
+				// INI-gated (terrainProbeMode) probes stay.
  				W3DShaderManager::setShader(st, pass);
-				// 2026-09-08 PRE-DRAW TRUTH PROBE (throttled): read the device's
-				// s4 IMMEDIATELY BEFORE the tile loop issues its draws. Every
-				// earlier probe observed either set()-entry (frame-end residue)
-				// or post-bind — never the actual draw-time state. This is the
-				// decisive observation for the "last meter" swap.
-				{
-					static unsigned s_pdLast = 0;
-					unsigned nowMs = timeGetTime();
-					if (nowMs - s_pdLast >= 2000) {
-						s_pdLast = nowMs;
-						IDirect3DDevice9 *d9pd = static_cast<IDirect3DDevice9*>(DX8Wrapper::_Get_D3D_Device8());
-						IDirect3DBaseTexture9 *p4 = NULL;
-						d9pd->GetTexture(4, &p4);
-						FILE *fpd = fopen(GetPbrCompileLogPath(), "a");
-						if (fpd) {
-							fprintf(fpd, "[%u] PRE-DRAW st=%d s4=%p\n", nowMs, (int)st, (void*)p4);
-							fclose(fpd);
-						}
-						if (p4) p4->Release();
-					}
-				}
 				// FAN-2.0 STATE SNAPSHOT probe bit8388608 (throttled 2s): dump
 				// the ACTUAL device state the terrain VS draw consumes — VS
 				// handle, VS constant c0 (the transposed ViewProj row 0),
@@ -2193,6 +2244,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 				// VS route) and once clean (deferred OFF + VS route) and diff —
 				// the diverging field names the corrupted state directly.
 				if (TheGlobalData && (TheGlobalData->m_terrainProbeMode & 8388608)) {
+					extern bool g_gbufferActive;	// 2026-09-22: re-homed here when the HT_DRAW_CTX probe block was removed
 					static unsigned s_snapLast = 0;
 					unsigned snapMs = timeGetTime();
 					if (snapMs - s_snapLast >= 2000) {
@@ -2240,43 +2292,6 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 					numVertex /= 4;
 				}
 				DX8Wrapper::Set_Vertex_Buffer(m_vertexBufferTiles[j*m_numVBTilesX+i]);
-				// FAN-2.0 DRAW-TIME constant probe (first tile, 2s throttle):
-				// compare the device's CURRENT c0-c3 against a FRESH device
-				// VIEW x PROJ concat computed HERE - after set(), after the
-				// buffer Apply, immediately before the Draw. If this diverges
-				// while the upload-time NUMCHK matched, something rewrites the
-				// VS constants between set() and the draw.
-				{
-					static unsigned s_dtLast = 0;
-					unsigned dtMs = timeGetTime();
-					if (j == 0 && i == 0 && dtMs - s_dtLast >= 2000) {
-						s_dtLast = dtMs;
-						IDirect3DDevice9 *dtd = DX8Wrapper::_Get_D3D_Device8();
-						if (dtd) {
-							D3DMATRIX dtV, dtP;
-							float dtC[4][4];
-							dtd->GetTransform(D3DTS_VIEW, &dtV);
-							dtd->GetTransform(D3DTS_PROJECTION, &dtP);
-							dtd->GetVertexShaderConstantF(0, (float*)dtC, 4);
-							D3DXMATRIX dtFF;
-							D3DXMatrixMultiply(&dtFF, (D3DXMATRIX*)&dtV, (D3DXMATRIX*)&dtP);
-							const float *ffa = (const float*)&dtFF;
-							float maxAbs = 0.0f;
-							int k;
-							for (k = 0; k < 16; k++) {
-								float d = ffa[k] - ((const float*)dtC)[k];
-								if (d < 0.0f) d = -d;
-								if (d > maxAbs) maxAbs = d;
-							}
-							FILE *dtf = fopen(GetPbrCompileLogPath(), "a");
-							if (dtf) {
-								fprintf(dtf, "[%u] DRAWTIME c0vsFF maxAbsDiff=%.6f c0=(%.4f,%.4f,%.4f,%.4f)\n",
-									dtMs, maxAbs, dtC[0][0], dtC[0][1], dtC[0][2], dtC[0][3]);
-								fclose(dtf);
-							}
-						}
-					}
-				}
 #ifdef PRE_TRANSFORM_VERTEX
 				if (m_xformedVertexBuffer && pass==0) {
 					// Note - m_xformedVertexBuffer should only be used for non T&L hardware.  jba.

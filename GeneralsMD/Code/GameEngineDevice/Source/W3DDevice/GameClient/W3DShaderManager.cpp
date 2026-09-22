@@ -2368,6 +2368,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s1 : register(s1);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
+			"sampler s6 : register(s6);\n"
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
@@ -2387,17 +2388,17 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
 			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 512.0 + 1.0);\n"
 			"    float sun = 1.0 - f * (1.0 / 9.0);\n"
 			"    float lit = 0.3 + 0.7 * sun;\n"
 			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
@@ -2405,21 +2406,18 @@ Int TerrainShaderPBR::init( void )
 			"    float mViz = step(0.5, shadowParams.w);\n"
 			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
 			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
-				"    float vizS = tex2D(s4, suv).r;\n"
-				"    float vizC = saturate((sd - vizS) * 8.0 + 0.5);\n"
-				"    return lerp(lerp(base, vizS, m22), vizC, m23);\n"
 			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
 			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
 			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
 			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
 			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
 			"}\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex4 : TEXCOORD4, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
+			"    float detail = tex2D(s6, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float3 dp1 = ddx(worldPos);\n"
 			"    float3 dp2 = ddy(worldPos);\n"
@@ -2428,7 +2426,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
 			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
 			"    float3 geoN = normalize(cross(B, T));\n"
-			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
+			"    float2 p = tex2D(s5, tex4).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
 			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
@@ -2476,7 +2474,13 @@ Int TerrainShaderPBR::init( void )
 			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
-			"    float3 result = terrainColor * (0.4 + 0.6 * NdotL);\n"
+			// 2026-09-22 EXPERT FIX (facet kill): geoN from ddx/ddy is per-triangle
+			// constant -> lighting is faceted (the cliff "diamonds/jaggies"). Blend
+			// the smooth per-vertex baked Gouraud light (diffuse.rgb - proven alive
+			// by the VERTEXLIGHT-PROBE build) back in at 50%. Literal weight only -
+			// NO new constant registers (ps_2_a 31-reg ceiling, c15 precedent).
+			"    float3 smoothLit = diffuse.rgb;\n"
+			"    float3 result = terrainColor * lerp(0.4 + 0.6 * NdotL, smoothLit, 0.75);\n"
 			"    result += sunColor * specular * 0.6;\n"
 			"    result *= terrainShadow(shadowUVZ);\n"
 			"    result += terrainPointLights(worldPos, N, terrainColor, c2.y, PSInvView[3].xyz);\n"
@@ -2487,10 +2491,23 @@ Int TerrainShaderPBR::init( void )
 			"}\n";
 		// 2026-09-08: ps_3_0 REQUIRED for the shadow-map sample (the s7/ps_2_a
 		// combination read 0 - viz mode 22 proved all-black terrain).
-		if (FAILED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader, "terrain_pbr_nm")))
-			return terrainShaderPixelShader.init();
-		// P1d: ps_3_0 twin (legal vs_3_0 pairing for the terrain VS route)
-		compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader30, "terrain_pbr_nm_30", "ps_3_0");
+		// 2026-09-21 GHOST-GATE FIX: a failed ps_2_a here used to abort the whole
+		// init -> classic-shader fallback -> NO lightmap receive -> the "W3X
+		// texture-shadow kills" of 09-19 (pbr_compile.log shows X5589
+		// const-register-32 clusters on exactly the death sessions; variant
+		// registration below was gated on SUCCEEDED(ps_2_a) so one over-ceiling
+		// experiment silently unregistered the noise variants and the terrain
+		// fell back to the LIGHTMAP-LESS base variant while still running the
+		// edited math - the "compiled fine but killed shadows" ghost). Now:
+		// compile BOTH profiles unconditionally, register if EITHER lives, and
+		// LOUD-log every ps_2_a failure so shader experiments can never again
+		// silently assassinate the shadow receive.
+		Bool ps2aOK = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader, "terrain_pbr_nm"));
+		Bool ps30OK = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRPixelShader30, "terrain_pbr_nm_30", "ps_3_0"));
+		if (!ps2aOK)
+			TerrainDiag("TERRAIN_PBR_GHOSTGUARD: base ps_2_a FAILED - if this repeats across variants the terrain falls to the classic chain and the lightmap shadow receive DIES. Recovery: TerrainVSRoute=Yes (ps_3_0 twins) or shrink the constant/instruction footprint.");
+		if (!ps2aOK && !ps30OK)
+			return terrainShaderPixelShader.init();	// both profiles dead: genuine abort to classic
 		// VF-1c: MRT G-Buffer twin (RT1 oct-normal, RT2 NDC z) - see BuildTerrainMRTSrc
 		{
 			std::string mrtSrc;
@@ -2585,6 +2602,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s2 : register(s2);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
+			"sampler s6 : register(s6);\n"
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
@@ -2604,17 +2622,17 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
 			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 512.0 + 1.0);\n"
 			"    float sun = 1.0 - f * (1.0 / 9.0);\n"
 			"    float lit = 0.3 + 0.7 * sun;\n"
 			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
@@ -2622,21 +2640,18 @@ Int TerrainShaderPBR::init( void )
 			"    float mViz = step(0.5, shadowParams.w);\n"
 			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
 			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
-				"    float vizS = tex2D(s4, suv).r;\n"
-				"    float vizC = saturate((sd - vizS) * 8.0 + 0.5);\n"
-				"    return lerp(lerp(base, vizS, m22), vizC, m23);\n"
 			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
 			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
 			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
 			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
 			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
 			"}\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex4 : TEXCOORD4, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
+			"    float detail = tex2D(s6, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float3 dp1 = ddx(worldPos);\n"
@@ -2646,7 +2661,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
 			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
 			"    float3 geoN = normalize(cross(B, T));\n"
-			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
+			"    float2 p = tex2D(s5, tex4).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
 			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
@@ -2677,7 +2692,9 @@ Int TerrainShaderPBR::init( void )
 			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
-			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
+			// 2026-09-22 EXPERT FIX: same facet-kill blend as the base variant.
+			"    float3 smoothLit = diffuse.rgb;\n"
+			"    float3 lit = terrainColor * lerp(0.4 + 0.6 * NdotL, smoothLit, 0.75);\n"
 			"    lit += sunColor * specular * 0.6;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3);\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
@@ -2687,8 +2704,14 @@ Int TerrainShaderPBR::init( void )
 			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
 			"    return float4(lit, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha - base0.a translucency was the FAN (see base variant note)
 			"}\n";
-		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"))) {
-			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader30, "terrain_pbr_nm_noise1_30", "ps_3_0");
+		// 2026-09-21 GHOST-GATE FIX: compile both profiles unconditionally and
+		// register the variant if EITHER survives (was: registration inside
+		// SUCCEEDED(ps_2_a) only - one X5589 over-ceiling edit unregistered the
+		// variant, the terrain silently fell back to the lightmap-less base,
+		// and the W3X texture-shadow receive died with no visible error).
+		{
+			Bool n1_2a = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader, "terrain_pbr_nm_noise1"));
+			Bool n1_30 = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise1PixelShader30, "terrain_pbr_nm_noise1_30", "ps_3_0"));
 			// VF-1c: MRT G-Buffer twin
 			{
 				std::string mrtSrc;
@@ -2696,8 +2719,12 @@ Int TerrainShaderPBR::init( void )
 					compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRNoise1PixelShaderMRTD, "terrain_pbr_nm_noise1_mrt", "ps_3_0");
 				}
 			}
-			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
-			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
+			if (n1_2a || n1_30) {
+				W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = &terrainShaderPBR;
+				W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE1] = 1;
+			}
+			if (!n1_2a)
+				TerrainDiag("TERRAIN_PBR_GHOSTGUARD: noise1 ps_2_a FAILED - variant registered via ps_3_0 only; cloud receive requires TerrainVSRoute=Yes or it falls to the lightmap-less base.");
 		}
 	}
 
@@ -2709,6 +2736,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s2 : register(s2);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
+			"sampler s6 : register(s6);\n"
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
@@ -2728,17 +2756,17 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
 			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 512.0 + 1.0);\n"
 			"    float sun = 1.0 - f * (1.0 / 9.0);\n"
 			"    float lit = 0.3 + 0.7 * sun;\n"
 			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
@@ -2746,21 +2774,18 @@ Int TerrainShaderPBR::init( void )
 			"    float mViz = step(0.5, shadowParams.w);\n"
 			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
 			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
-				"    float vizS = tex2D(s4, suv).r;\n"
-				"    float vizC = saturate((sd - vizS) * 8.0 + 0.5);\n"
-				"    return lerp(lerp(base, vizS, m22), vizC, m23);\n"
 			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
 			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
 			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
 			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
 			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
 			"}\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex4 : TEXCOORD4, float2 tex2 : TEXCOORD2, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
+			"    float detail = tex2D(s6, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 lightmapTex = tex2D(s2, tex2);\n"
 			"    float3 dp1 = ddx(worldPos);\n"
@@ -2770,7 +2795,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
 			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
 			"    float3 geoN = normalize(cross(B, T));\n"
-			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
+			"    float2 p = tex2D(s5, tex4).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
 			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
@@ -2801,7 +2826,9 @@ Int TerrainShaderPBR::init( void )
 			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
-			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
+			// 2026-09-22 EXPERT FIX: same facet-kill blend as the base variant.
+			"    float3 smoothLit = diffuse.rgb;\n"
+			"    float3 lit = terrainColor * lerp(0.4 + 0.6 * NdotL, smoothLit, 0.75);\n"
 			"    lit += sunColor * specular * 0.6;\n"
 			"    lit *= lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
@@ -2811,8 +2838,10 @@ Int TerrainShaderPBR::init( void )
 			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
 			"    return float4(lit, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha - base0.a translucency was the FAN (see base variant note)
 			"}\n";
-		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"))) {
-			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader30, "terrain_pbr_nm_noise2_30", "ps_3_0");
+		// 2026-09-21 GHOST-GATE FIX: same decoupling as noise1 (see above).
+		{
+			Bool n2_2a = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader, "terrain_pbr_nm_noise2"));
+			Bool n2_30 = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise2PixelShader30, "terrain_pbr_nm_noise2_30", "ps_3_0"));
 			// VF-1c: MRT G-Buffer twin
 			{
 				std::string mrtSrc;
@@ -2820,8 +2849,12 @@ Int TerrainShaderPBR::init( void )
 					compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRNoise2PixelShaderMRTD, "terrain_pbr_nm_noise2_mrt", "ps_3_0");
 				}
 			}
-			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
-			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
+			if (n2_2a || n2_30) {
+				W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = &terrainShaderPBR;
+				W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE2] = 1;
+			}
+			if (!n2_2a)
+				TerrainDiag("TERRAIN_PBR_GHOSTGUARD: noise2 ps_2_a FAILED - variant registered via ps_3_0 only; LIGHTMAP receive requires TerrainVSRoute=Yes or it falls to the lightmap-less base (texture shadows would die).");
 		}
 	}
 
@@ -2834,6 +2867,7 @@ Int TerrainShaderPBR::init( void )
 			"sampler s3 : register(s3);\n"
 			"sampler s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
+			"sampler s6 : register(s6);\n"
 			"float4 c2 : register(c2);\n"
 			"float3 sunDirection : register(c0);\n"
 			"float3 sunColor : register(c1);\n"
@@ -2853,17 +2887,17 @@ Int TerrainShaderPBR::init( void )
 			"    // diagonal texel stair-step the 1x1 bilinear could not) + the RA3\n"
 			"    // CONTINUOUS transition band per tap (smooth depth edge, K=256 =\n"
 			"    // ~15-unit band). Spatial kernel kills jaggies, the band softens.\n"
-			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 4.0 / (2048.0 * shadowParams.x);\n"
+			"    float2 ts = float2(shadowParams.x, shadowParams.y) * 2.0 / (2048.0 * shadowParams.x);\n"
 			"    float f = 0.0;\n"
 			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 512.0 + 1.0);\n"
 			"    float sun = 1.0 - f * (1.0 / 9.0);\n"
 			"    float lit = 0.3 + 0.7 * sun;\n"
 			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"
@@ -2871,21 +2905,18 @@ Int TerrainShaderPBR::init( void )
 			"    float mViz = step(0.5, shadowParams.w);\n"
 			"    float m22 = step(21.5, shadowDbg.x) * (1.0 - step(22.5, shadowDbg.x)) * mViz;\n"
 			"    float m23 = step(22.5, shadowDbg.x) * (1.0 - step(23.5, shadowDbg.x)) * mViz;\n"
-				"    float vizS = tex2D(s4, suv).r;\n"
-				"    float vizC = saturate((sd - vizS) * 8.0 + 0.5);\n"
-				"    return lerp(lerp(base, vizS, m22), vizC, m23);\n"
 			"    float m24 = step(23.5, shadowDbg.x) * mViz;\n"
 			"    float m25 = step(24.5, shadowDbg.x) * mViz;\n"
 			"    float m26 = step(25.5, shadowDbg.x) * mViz;\n"
 			"    float m27 = mViz;  // 2026-09-08 HARDCODED: bypass the shadowDbg(c8) chain entirely - c7.w is log-proven =1\n"
 			"    return base;  // 2026-09-09 FINAL: XCHECK numerically validated the matrix (uv/z in correct domain) - REAL shadow\n"
 			"}\n"
-			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
+			"float4 main(float2 tex0 : TEXCOORD0, float2 tex1 : TEXCOORD1, float2 tex4 : TEXCOORD4, float2 tex2 : TEXCOORD2, float2 tex3 : TEXCOORD3, float4 diffuse : COLOR0, float3 worldPos : TEXCOORD6, float3 shadowUVZ : TEXCOORD7) : COLOR\n"
 			"{\n"
 			"    float4 base0 = tex2D(s0, tex0);\n"
 			"    float4 base1 = tex2D(s1, tex1);\n"
 			"    float3 terrainColor = lerp(base0.rgb, base1.rgb, diffuse.a);\n"
-			"    float detail = tex2D(s4, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
+			"    float detail = tex2D(s6, tex0 * 8.0).r;\n"	// VF-1c BISECT REVERT 2026-09-14: back to s4 (pre-VF-1c behavior). The s4->s6 move was A/B'd against the black-terrain+fan regression: TerrainMRTDepth=No still showed both, leaving this sampler move as the only active delta. Reverting to bisect; do NOT re-move without understanding why s6 broke the terrain.
 			"    terrainColor *= (1.0 + (detail - 0.5) * 0.15);\n"
 			"    float4 cloudTex = tex2D(s2, tex2);\n"
 			"    float4 lightmapTex = tex2D(s3, tex3);\n"
@@ -2896,7 +2927,7 @@ Int TerrainShaderPBR::init( void )
 			"    float3 T = normalize(dp1 * duv2.y - dp2 * duv1.y);\n"
 			"    float3 B = normalize(-dp1 * duv2.x + dp2 * duv1.x);\n"
 			"    float3 geoN = normalize(cross(B, T));\n"
-			"    float2 p = tex2D(s5, tex0).rg * 2.0 - 1.0;\n"
+			"    float2 p = tex2D(s5, tex4).rg * 2.0 - 1.0;\n"
 			"    float3 nm = normalize(float3(p, 1.0 - abs(p.x) - abs(p.y)));\n"
 			"    float conc = c2.x * (1.0 - diffuse.a);\n"
 			// 2026-09-19 CLIFF STRETCH KILL: the normal atlas samples the SAME
@@ -2927,7 +2958,9 @@ Int TerrainShaderPBR::init( void )
 			"    float G_L = NdotL / (NdotL * (1.0 - k) + k);\n"
 			"    float f = 1.0 - VdotH; float f5 = f * f; f5 = f5 * f5; f5 = f5 * f;\n"
 			"    float3 specular = D * G_L * (float3(0.04,0.04,0.04) + (1.0 - 0.04) * f5);\n"
-			"    float3 lit = terrainColor * (0.4 + 0.6 * NdotL);\n"
+			// 2026-09-22 EXPERT FIX: same facet-kill blend as the base variant.
+			"    float3 smoothLit = diffuse.rgb;\n"
+			"    float3 lit = terrainColor * lerp(0.4 + 0.6 * NdotL, smoothLit, 0.75);\n"
 			"    lit += sunColor * specular * 0.6;\n"
 			"    lit *= (1.0 + cloudTex.rgb * 0.3) * lightmapTex.rgb;\n"
 			"    lit *= terrainShadow(shadowUVZ);\n"
@@ -2937,8 +2970,15 @@ Int TerrainShaderPBR::init( void )
 			"    lit = lerp(lit, fogColor.rgb, fogA);\n"
 			"    return float4(lit, 1.0);\n"	// VF-1a FIX 2026-09-14: OPAQUE alpha - base0.a translucency was the FAN (see base variant note)
 			"}\n";
-		if (SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"))) {
-			compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader30, "terrain_pbr_nm_noise12_30", "ps_3_0");
+		// 2026-09-21 GHOST-GATE FIX: same decoupling as noise1 (see above).
+		// NOISE12 is THE variant that carries the s3 lightmap multiply on the
+		// user's settings (UseLightMap+UseCloudMap both on) - its silent
+		// unregistration is exactly the "conc kills W3X texture shadows" law
+		// of 09-19: the edited math still ran (via the base fallback) so the
+		// experiment LOOKED compiled while the lightmap receive was gone.
+		{
+			Bool n12_2a = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader, "terrain_pbr_nm_noise12"));
+			Bool n12_30 = SUCCEEDED(compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + src).c_str(), &m_dwPBRNoise12PixelShader30, "terrain_pbr_nm_noise12_30", "ps_3_0"));
 			// VF-1c: MRT G-Buffer twin
 			{
 				std::string mrtSrc;
@@ -2946,8 +2986,12 @@ Int TerrainShaderPBR::init( void )
 					compilePBRShader((std::string(TERRAIN_POINTLIGHT_HLSL) + mrtSrc).c_str(), &m_dwPBRNoise12PixelShaderMRTD, "terrain_pbr_nm_noise12_mrt", "ps_3_0");
 				}
 			}
-			W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
-			W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
+			if (n12_2a || n12_30) {
+				W3DShaders[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = &terrainShaderPBR;
+				W3DShadersPassCount[W3DShaderManager::ST_TERRAIN_PBR_NOISE12] = 1;
+			}
+			if (!n12_2a)
+				TerrainDiag("TERRAIN_PBR_GHOSTGUARD: noise12 ps_2_a FAILED - variant registered via ps_3_0 only; LIGHTMAP receive requires TerrainVSRoute=Yes or the terrain falls to the lightmap-less base and W3X TEXTURE SHADOWS DIE.");
 		}
 	}
 
@@ -3054,9 +3098,19 @@ Int TerrainShaderPBR::set(Int pass)
 	// Raw D3D9 call: _Set_DX8_Transform asserts transform<=D3DTS_WORLD, and
 	// stage 6 must always run (even the base variant) for the TBN world position.
 	DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE6, (D3DMATRIX*)&inv);
-	// Bind a dummy texture so the rasterizer always processes this stage.
-	if (W3DShaderManager::getShaderTexture(0)) {
-		DX8Wrapper::_Get_D3D_Device8()->SetTexture(6, W3DShaderManager::getShaderTexture(0)->Peek_D3D_Texture());
+	// Bind a texture so the rasterizer always processes this stage. Route 3:
+	// the PS detail sample reads s6 now (s4 stays pure shadow receive) - prefer
+	// the procedural noise registered by HeightMap, else the base-texture dummy.
+	{
+		TextureClass *stage6Tex = W3DShaderManager::getShaderTexture(6);
+		if (!stage6Tex) stage6Tex = W3DShaderManager::getShaderTexture(0);
+		if (stage6Tex) {
+			DX8Wrapper::_Get_D3D_Device8()->SetTexture(6, stage6Tex->Peek_D3D_Texture());
+			DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_ADDRESSV, D3DTADDRESS_WRAP);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(6, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		}
 	}
 
 	// Setup noise texture stages for variants that need them
@@ -3113,14 +3167,44 @@ Int TerrainShaderPBR::set(Int pass)
 			DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 		}
 
+		// Stage 4 coordinate generation (2026-09-21 route 3): the PS samples the
+		// bump via tex4. TerrainWorldNormals=Yes => t4 = worldXY * k (continuous,
+		// kills cliff diamonds + blend-seam jaggies); No => PASSTHRU|0 so t4
+		// duplicates tex0 and the atlas behavior is preserved bit-for-bit.
+		// NOTE: requires TerrainVSRoute=No (the VS route bypasses TSS coord gen).
+		// 2026-09-22 对标 FIX: the first cut used RAW SetTextureStageState - the
+		// wrapper's Apply_Render_State_Changes replays ITS cached stage states
+		// and stomped the raw writes (half-stomped state = camera-inverse leaking
+		// into the UVs = the destroyed-terrain shots). The working stages 6/7
+		// write TCI/TTFF WRAPPER-VISIBLE (Set_DX8_Texture_Stage_State) and only
+		// the matrix raw - mirrored exactly here.
+		{
+			Int wnMode = (TheGlobalData ? TheGlobalData->m_terrainWorldNormals : 0);
+			if (wnMode == 1 || wnMode == 2) {
+				const float kWN = 1.0f / 80.0f;	// 2026-09-22 TUNE: large soft undulations (256px/80u); the 20u period rendered the noise's own waves as a dense net
+				D3DXMATRIX sWN, mWN;
+				D3DXMatrixScaling(&sWN, kWN, kWN, 1.0f);
+				D3DXMatrixMultiply(&mWN, &inv, &sWN);	// row-vector: v*(inv*s) => xy = world.xy*k
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+				DX8Wrapper::_Get_D3D_Device8()->SetTransform(D3DTS_TEXTURE4, &mWN);
+			} else {
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 0);
+				DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+			}
+		}
+
 		// Stage 5: terrain normal map atlas (PBR bump). Shares UV set 0 with base.
 		float normalWeight = 0.0f;
 		if (W3DShaderManager::getShaderTexture(5)) {
 			DX8Wrapper::_Get_D3D_Device8()->SetTexture(5,
 				W3DShaderManager::getShaderTexture(5)->Peek_D3D_Texture());
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_TEXCOORDINDEX, 0);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+			// route 3: world normals tile continuously (WRAP); the atlas must CLAMP
+			// (tile borders bleed otherwise). Modes 1/3 = wnTex; 2 keeps the atlas.
+			DWORD wnAddr = ((TheGlobalData && (TheGlobalData->m_terrainWorldNormals == 1 || TheGlobalData->m_terrainWorldNormals == 3))) ? D3DTADDRESS_WRAP : D3DTADDRESS_CLAMP;
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_ADDRESSU, wnAddr);
+			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_ADDRESSV, wnAddr);
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
 			DX8Wrapper::Set_DX8_Texture_Stage_State(5, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 			normalWeight = 1.0f;
@@ -3672,6 +3756,11 @@ void TerrainShaderPBR::reset(void)
 	}
 	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 7);
 	DX8Wrapper::_Get_D3D_Device8()->SetTextureStageState(7, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);	// 2026-09-08: shadow receive stage (s4 - DEVENTRY proved s1 swapped by material replay)
+	// 2026-09-21 route 3: undo the stage-4 world-UV generation so later FF draws
+	// (roads/decals) see plain uv0 on stage 4 again. (对标: wrapper-visible, same
+	// as the working stage-7 restore below.)
+	DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU | 4);
+	DX8Wrapper::Set_DX8_Texture_Stage_State(4, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::_Get_D3D_Device8()->SetTexture(4, NULL);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
 	DX8Wrapper::Set_DX8_Texture_Stage_State(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU|0);
@@ -4259,6 +4348,7 @@ Int W3DPBRShader::init( void )
 			"samplerCUBE s3 : register(s3);\n"
 			"samplerCUBE s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
+			"sampler s6 : register(s6);\n"
 			"float3 c0 : register(c0);\n"
 			"float3 c1 : register(c1);\n"
 			"float3 c2 : register(c2);\n"
@@ -4522,6 +4612,7 @@ Int W3DPBRShader::init( void )
 			"samplerCUBE s3 : register(s3);\n"
 			"samplerCUBE s4 : register(s4);\n"
 			"sampler s5 : register(s5);\n"
+			"sampler s6 : register(s6);\n"
 			"float3 c0 : register(c0);\n"
 			"float3 c1 : register(c1);\n"
 			"float3 c2 : register(c2);\n"
@@ -5787,14 +5878,14 @@ Int RoadShaderPBR::init( void )
 			"    float2 ts = float2(c7.x, c7.y) * 2.0 / (2048.0 * c7.x);\n"
 			"    float f = 0.0;\n"
 			"    f += saturate((sd - tex2D(s4, suv).r) * 512.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 256.0 + 1.0);\n"
-			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 256.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, -ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, 0.0)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(-ts.x, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(0.0, ts.y)).r) * 512.0 + 1.0);\n"
+			"    f += saturate((sd - tex2D(s4, suv + float2(ts.x, ts.y)).r) * 512.0 + 1.0);\n"
 			"    float sun = 1.0 - f * (1.0 / 9.0);\n"
 			"    float lit = 0.3 + 0.7 * sun;\n"
 			"    float inB = (suv.x > 0.001 && suv.x < 0.999 && suv.y > 0.001 && suv.y < 0.999) ? 1.0 : 0.0;\n"

@@ -62,7 +62,16 @@ python "E:\Source\repos\MinGeneralsfreebuild2ok\GeneralsMD\Code\Tools\apply_laa.
 
 - 链接器产物不带 LARGE_ADDRESS_AWARE（0x010F），不打补丁的 32 位 exe 只能寻址 2GB。
 - 最省事顺序：构建 → **先给 `GeneralsMD\Run\RTS.exe` 打 LAA** → 再拷贝部署（部署件自动带标志）；部署后对目标再跑一次脚本校验亦幂等。
-- 游戏目录有两个：`D:\!!!!!!!QWCSB\!!!!!!!QWCSB\` 与 `E:\!!!!!!!QWCSB\`。**2026-09-19 实锤：用户日常从 E: 盘启动游戏**——EXE 与资源文件一样双目录部署（E: 同名先时间戳备份）；只部署 D: 会让用户测到旧 exe（已发生一次：9-16 旧版被当成修复失败）。
+- 游戏目录有两个：`D:\!!!!!!!QWCSB\!!!!!!!QWCSB\` 与 `E:\!!!!!!!QWCSB\`。**2026-09-21 修正：用户日常从 D: 盘启动游戏**（9-19 记的"E: 启动"已过时）——EXE 与资源文件一样双目录部署（覆盖前同名先时间戳备份）。
+- 用户偏好真身在 `F:\myDocuments\Command and Conquer Generals Zero Hour Data\options.ini`（`StaticGameLOD = Custom` 时其中 `UseShadowVolumes`/`UseShadowDecals` 为唯一定案值，GameData.ini/GameLOD.ini 无覆盖权）。
+
+**构建链铁律（2026-09-21 血泪新增）：**
+
+- 正确构建链 = ww3d2 → GameEngineDevice → RTS 三工程**各自 /MAKE**（桌面"构建工具"文件夹的 bat 即此流程）；build.sh 往 bash PATH 塞 Windows 分号路径会导致 msdev 找不到。
+- **msdev 必须单实例**；被取消的后台构建任务≠杀掉 msdev 子进程——每次构建前 `tasklist` 查残留，杀掉后还要删 `GameEngineDevice\Release\vc60.idb`（锁死即 C1033 风暴源）。
+- msdev 退出码不可信，以日志 error 计数为准。
+- **HEAD ≠ 已部署**：commit 时间晚于部署 exe 时间且含"已恢复 bak"字样 = HEAD 含未实测代码。从 HEAD 构建前必须甄别（9-21 事故：viz 复活代码从未进游戏却藏在 HEAD 里，三次构建全杀影）。
+- **着色器安全基线验证**：新 exe 与已知好 exe 做着色器 fragment 零差异比对（`Tools/cmp_exe_shaders.py` 思路：两 exe 提取含 float/tex2D/lerp/step/register 的字符串段做 diff）。**terrainShadow() 内的采样代码形态碰不得——viz 复活任何形态（休眠 if-return/无分支 lerp）都是结构类杀招，会杀 W3X 贴图阴影。**
 
 **资源文件双目录同步铁律（用户钦定 2026-09-19）：**
 
