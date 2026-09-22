@@ -1,0 +1,117 @@
+# 本地 stash 导出存档 — 2026-09-22
+#
+# 来源   : git stash list 的 stash@{0}
+# 原始时间: 2026-09-17 09:54:31 +0800
+# 内容   : W3XRenderObj shadow RECEIVE diag WIP
+# 实质改动: 删除 SKIN_G 名称排除（该思路认为 SKIN_G00-G03 是底座实心板）
+# 处置原因: 已被后续 HEAD 版本取代 —— HEAD 明确保留 SKIN_G 排除，且理由更完整
+#           （格栅写进 shadow map 会导致所有接收面出现网状叠加；且格栅与实心
+#            车身共用 objectsgeneric.fx / buildingsallied.fx，不能靠 shader 名区分）
+#          诊断部分仅把 3 次爆发调成 24 次，属调试调参，HEAD 为 3 次
+# 重新应用: git apply <本文件>   （基础已变，可能需要 git apply -3 或手工调整）
+
+diff --git a/GeneralsMD/Code/GameEngineDevice/Source/W3DDevice/GameClient/W3XRenderObj.cpp b/GeneralsMD/Code/GameEngineDevice/Source/W3DDevice/GameClient/W3XRenderObj.cpp
+index 4e87be18..93a42779 100644
+--- a/GeneralsMD/Code/GameEngineDevice/Source/W3DDevice/GameClient/W3XRenderObj.cpp
++++ b/GeneralsMD/Code/GameEngineDevice/Source/W3DDevice/GameClient/W3XRenderObj.cpp
+@@ -1463,22 +1463,27 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
+ 			}
+ 		}
+ 	} else {
+-		// ISOLATION BUILD: 3 bursts, >=10s apart (was a process one-shot) - shows
++		// ISOLATION BUILD: bursts, >=10s apart (was a process one-shot) - shows
+ 		// WHEN W3X objects first reach a forward/g-buffer render and with what
+ 		// shadow bindings, alongside the periodic CAST bursts.
++		// 2026-09-11: 3 -> 24 + fx name + HasShadow BOOL VALUE - the building
++		// BASE SLABS read pure-lit while walls/turret receive fine; the first 3
++		// budget slots only ever caught a helicopter + 2 humvees, so building
++		// receive state was never recorded.
+ 		static int s_recvDiagN = 0;
+ 		static unsigned s_recvDiagLast = 0;
+-		if (s_recvDiagN < 3 && GetTickCount() - s_recvDiagLast >= 10000) {
++		if (s_recvDiagN < 24 && GetTickCount() - s_recvDiagLast >= 3000) {
+ 			s_recvDiagN++;
+ 			s_recvDiagLast = GetTickCount();
+ 			D3DXHANDLE hHas = effect->GetParameterByName(NULL, "HasShadow");
+ 			D3DXHANDLE hMap = effect->GetParameterByName(NULL, "ShadowMap");
+ 			D3DXHANDLE hTexel = effect->GetParameterByName(NULL, "Shadowmap_Zero_Zero_OneOverMapSize_OneOverMapSize");
+-			W3XShadowDiag("[W3X_SHDW] RECEIVE '%s' deferred=%p avail=%d receive=%d\n",
+-				m_name, (void*)g_theW3DDeferredRenderer,
++			BOOL hasVal = FALSE;
++			if (hHas) effect->GetBool(hHas, &hasVal);
++			W3XShadowDiag("[W3X_SHDW] RECEIVE '%s' fx='%s' deferred=%p avail=%d receive=%d hasVal=%d (hasH=%p mapH=%p texelH=%p tex=%p)\n",
++				m_name, m_fxName.str(), (void*)g_theW3DDeferredRenderer,
+ 				(g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->isShadowMapAvailable()) ? 1 : 0,
+-				receiveShadow ? 1 : 0);
+-			W3XShadowDiag("[W3X_SHDW]   params HasShadow=%p ShadowMap=%p SMtexel=%p shadowTex=%p\n",
++				receiveShadow ? 1 : 0, (int)hasVal,
+ 				(void*)hHas, (void*)hMap, (void*)hTexel, (void*)shadowTex);
+ 			W3XShadowDiag("[W3X_SHDW]   W2S r0=(%.3f,%.3f,%.3f,%.3f) r3=(%.3f,%.3f,%.3f,%.3f)\n",
+ 				shadowW2S[0].X, shadowW2S[0].Y, shadowW2S[0].Z, shadowW2S[0].W,
+@@ -1822,20 +1827,14 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
+ 			bool isTransparent = !os.isEmpty()
+ 				&& (strstr(os.str(), "muzzle") != NULL);
+ 			if (!isTransparent) {
+-				// 2026-09-10 TANK-CAST FIX: the AlphaTestEnable blanket exclusion is
+-				// GONE. It was meant for grille/lattice meshes, but it also killed
+-				// the Battlemaster / GattTank BODY+TURRET cast - their materials
+-				// declare AlphaTestEnable=true for alpha-channel textures whose
+-				// alpha is actually 1 (solid), so both tanks cast ZERO pixels and
+-				// had no ground shadow (the TroopCrawler's materials don't declare
+-				// it, which is why IT had a shadow). The fx PS_ShadowDepth already
+-				// clips by the REAL sampled alpha (RA3 behavior): true lattices
+-				// self-clip into a net shadow, solids pass. Keep excluding by the
+-				// SKIN_G* grille naming so the authored wire-grates still cast
+-				// nothing (the old net-overlay complaint).
+-				if (smeshName && strstr(smeshName, ".SKIN_G") != NULL) {
+-					isTransparent = true;
+-				}
++				// 2026-09-11 SKIN_G EXCLUSION REMOVED: the Chinese buildings'
++				// SKIN_G00-G03 sub-meshes are their BASE SLABS (solid foundation
++				// plates), not grilles - the blanket name exclusion left the
++				// command center / barracks bases with NO shadow at all. The fx
++				// PS_ShadowDepth alpha-clip is now the single authority: true
++				// lattices (alpha < 0.375 texels) self-clip into net shadows,
++				// solid slabs cast fully. Only the muzzle flash meshes stay
++				// excluded (flat quads casting a solid square).
+ 				// 2026-09-12 BUILDING LIGHTS: SKIN_LIGHT lamp quads are additive
+ 				// emissive meshes (w3x_lights.fx) - they must not write sun depth
+ 				// or they stamp black rectangles into the shadow map.
+@@ -2045,6 +2044,37 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
+ 		(void)ssRes; (void)vdRes;	// keep C4189 away when DEBUG_LOG is compiled out
+ #endif
+ 
++		// 2026-09-11 SLAB EXTRUDE drive: SKIN_G* sub-meshes are the ground-flush
++		// BASE SLABS. A single-sided flush slab rasterizes to its own XY in the
++		// shadow map -> NO outward shadow (the old volumetric soft shadow DID
++		// draw one - user-confirmed regression vs that era). The fx cast VS
++		// pushes vertices anti-sunward by W3XSlabExtrude world units, giving the
++		// slab an effective thickness; 3.5u -> ~3u of projection past the edge.
++		// Set BEFORE Begin (Begin snapshots effect parameters).
++		if (inShadowPass) {
++			const char *snm = sm.name.str();
++			D3DXHANDLE hExt = drawEffect->GetParameterByName(NULL, "W3XSlabExtrude");
++			if (hExt) drawEffect->SetFloat(hExt,
++				(snm && strstr(snm, ".SKIN_G") != NULL) ? 3.5f : 0.0f);
++		}
++		// 2026-09-11 LIGHT-PART EMISSIVE drive: a LIGHT-named sub-mesh (window/
++		// lamp meshes on the RA3 buildings) renders through the same PBR PS as
++		// everything else and reads as a dead dark part. The shared PS now adds
++		// DiffuseTexture.rgb * W3XLitEmissive as glow; light it up here (main
++		// pass only - the cast pass ignores color anyway).
++		if (!inShadowPass) {
++			const char *lnm = sm.name.str();
++			D3DXHANDLE hLit = drawEffect->GetParameterByName(NULL, "W3XLitEmissive");
++			if (hLit) drawEffect->SetFloat(hLit,
++				(lnm && strstr(lnm, "LIGHT") != NULL) ? 1.5f : 0.0f);
++			// 2026-09-11 SHADOW VIZ: DISABLED after the decisive run (the slab's
++			// shadow term was pixel-proven live: R=0.17..0.59 -> the contrast fix
++			// (term^2 in the fx) is the actual cure). Flip back to 1.0f on G00
++			// if the receive needs visualizing again.
++			D3DXHANDLE hViz = drawEffect->GetParameterByName(NULL, "W3XDebugShadow");
++			if (hViz) drawEffect->SetFloat(hViz, 0.0f);
++		}
++
+ 		UINT passes;
+ 		HRESULT hr = drawEffect->Begin(&passes, 0);
+ 		if (FAILED(hr)) { DEBUG_LOG(("[W3X_P5]   submesh[%d] Begin FAILED hr=0x%08X\n", (int)si, (int)hr)); totalFailed++; continue; }
