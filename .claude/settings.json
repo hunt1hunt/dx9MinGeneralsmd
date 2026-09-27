@@ -1,4 +1,5 @@
 {
+  "model": "deepseek-v4-flash",
   "env": {
     "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
@@ -15,6 +16,8 @@
       "Read",
       "Grep",
       "Glob",
+      "mcp__codegraph__*",
+      "mcp__mempalace__*",
       "Bash(python:*)",
       "PowerShell(Get-Content:*)",
       "PowerShell(Get-ChildItem:*)",
