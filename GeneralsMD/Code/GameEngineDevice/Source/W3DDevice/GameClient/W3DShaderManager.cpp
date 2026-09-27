@@ -58,6 +58,7 @@
 #include "assetmgr.h"
 #include "Lib/BaseType.h"
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <ctype.h>
 #include "Common/File.h"
@@ -1595,6 +1596,10 @@ public:
 	IDirect3DVertexShader9*	m_vsPBRUnit;	///<pass-through vertex shader for PBR unit (vs_1_1)
 	IDirect3DPixelShader9*	m_dwSunGlowShader;	///<sun glow overlay (RA3-style)
 	Bool				m_sunGlowEnabled;	///<true after successful compile
+	IDirect3DPixelShader9*	m_dwSkyboxShader;	///<RA3-style fullscreen skybox PS (ported from RA3 Sky.fx)
+	IDirect3DPixelShader9*	m_dwSkyboxShaderFwd;	///<forward-path skybox PS (opaque, no depth gate)
+	IDirect3DCubeTexture9*	m_skyboxCube;		///<procedurally generated RA3-style sky cubemap
+	Bool				m_skyboxEnabled;	///<true after successful compile
 	virtual Int set(Int pass);		///<setup shader for specified rendering pass
 	virtual void reset(void);		///<restore W3D state after PBR
 	virtual Int init(void);			///<compile HLSL and create shaders
@@ -2129,6 +2134,139 @@ static HRESULT compilePBRShader(const char* source, IDirect3DPixelShader9** ppSh
 		TerrainDiagI(tag, (int)hr);
 	}
 	return hr;
+}
+
+// ============================================================================
+// RA3-style procedural sky cubemap (2026-09-24) - no external assets, tunable.
+// The fullscreen skybox PS samples this cube; sun glare is computed in the PS
+// from the sun direction (RA3 Sky.fx SunFactor), so the cube carries only the
+// gradient + procedural clouds.
+// ============================================================================
+static float skyHash3(float x, float y, float z)
+{
+	// deterministic value-noise hash in [0,1)
+	float h = sinf(x * 127.1f + y * 311.7f + z * 74.7f) * 43758.5453f;
+	h = h - floorf(h);
+	return h;
+}
+static float skyNoise3(float x, float y, float z)
+{
+	// trilinear value noise (smoothstepped lattice) in ~[0,1]
+	int ix = (int)floorf(x), iy = (int)floorf(y), iz = (int)floorf(z);
+	float fx = x - (float)ix, fy = y - (float)iy, fz = z - (float)iz;
+	fx = fx * fx * (3.0f - 2.0f * fx);
+	fy = fy * fy * (3.0f - 2.0f * fy);
+	fz = fz * fz * (3.0f - 2.0f * fz);
+	float c000 = skyHash3((float)ix,     (float)iy,     (float)iz);
+	float c100 = skyHash3((float)ix + 1, (float)iy,     (float)iz);
+	float c010 = skyHash3((float)ix,     (float)iy + 1, (float)iz);
+	float c110 = skyHash3((float)ix + 1, (float)iy + 1, (float)iz);
+	float c001 = skyHash3((float)ix,     (float)iy,     (float)iz + 1);
+	float c101 = skyHash3((float)ix + 1, (float)iy,     (float)iz + 1);
+	float c011 = skyHash3((float)ix,     (float)iy + 1, (float)iz + 1);
+	float c111 = skyHash3((float)ix + 1, (float)iy + 1, (float)iz + 1);
+	float x00 = c000 + (c100 - c000) * fx, x10 = c010 + (c110 - c010) * fx;
+	float x01 = c001 + (c101 - c001) * fx, x11 = c011 + (c111 - c011) * fx;
+	float y0 = x00 + (x10 - x00) * fy, y1 = x01 + (x11 - x01) * fy;
+	return y0 + (y1 - y0) * fz;
+}
+static float skyFbm3(float x, float y, float z, int octaves)
+{
+	// fractal brownian motion, ~[0,1] for 3 octaves (0.5+0.25+0.125 = 0.875 max)
+	float s = 0.0f, amp = 0.5f, fr = 1.0f;
+	for (int i = 0; i < octaves; i++) {
+		s += amp * skyNoise3(x * fr, y * fr, z * fr);
+		amp *= 0.5f;
+		fr *= 2.0f;
+	}
+	return s;
+}
+
+// DirectX cubemap face -> direction (DX9 convention). u,v in [0,1].
+static void skyCubeDir(int face, float u, float v, float* dir)
+{
+	float s = u * 2.0f - 1.0f;
+	float t = v * 2.0f - 1.0f;
+	switch (face) {
+		case 0: dir[0] =  1.0f; dir[1] = -t; dir[2] = -s; break; // POS_X
+		case 1: dir[0] = -1.0f; dir[1] = -t; dir[2] =  s; break; // NEG_X
+		case 2: dir[0] =  s; dir[1] =  1.0f; dir[2] =  t; break; // POS_Y
+		case 3: dir[0] =  s; dir[1] = -1.0f; dir[2] = -t; break; // NEG_Y
+		case 4: dir[0] =  s; dir[1] = -t; dir[2] =  1.0f; break; // POS_Z
+		default:dir[0] = -s; dir[1] = -t; dir[2] = -1.0f; break; // NEG_Z
+	}
+	float len = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+	dir[0] /= len; dir[1] /= len; dir[2] /= len;
+}
+
+// Tunable RA3-style daylight palette (all values can be tweaked freely).
+static IDirect3DCubeTexture9* CreateSkyCubeTexture(IDirect3DDevice8* dev, int size)
+{
+	if (!dev || size <= 0) return NULL;
+	IDirect3DCubeTexture9* cube = NULL;
+	// Use the D3D9 interface (same pattern as IBL: static_cast like
+	// W3DDeferredRenderer does) - the D3D8-wrapper CreateCubeTexture
+	// failed on this stack (cube stayed NULL => sky never drew).
+	IDirect3DDevice9 *d9 = static_cast<IDirect3DDevice9*>(dev);
+	HRESULT hr = d9 ? d9->CreateCubeTexture(size, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &cube, NULL)
+	                : dev->CreateCubeTexture(size, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &cube, NULL);
+	if (FAILED(hr) || !cube) return NULL;
+
+	// --- palette (RA3 daylight feel: cool zenith, milky horizon) ---
+	const float zenith[3]    = { 0.30f, 0.49f, 0.75f };  // top of sky
+	const float horizon[3]   = { 0.74f, 0.81f, 0.90f };  // near horizon
+	const float ground[3]    = { 0.56f, 0.64f, 0.76f };  // below horizon
+	const float cloudCol[3]  = { 0.96f, 0.97f, 1.00f };  // cloud white
+	const float cloudScale   = 2.4f;                     // cloud feature size
+	const float cloudCover   = 0.58f;                    // 0..1, more = cloudier
+	const float cloudBright  = 0.85f;                    // cloud opacity
+
+	static const int faceOrder[6] = { 0,1,2,3,4,5 }; // POS_X,NEG_X,POS_Y,NEG_Y,POS_Z,NEG_Z
+	for (int fi = 0; fi < 6; fi++) {
+		int face = faceOrder[fi];
+		D3DLOCKED_RECT lr;
+		if (FAILED(cube->LockRect((D3DCUBEMAP_FACES)face, 0, &lr, NULL, 0))) continue;
+		BYTE* dst = (BYTE*)lr.pBits;
+		for (int y = 0; y < size; y++) {
+			BYTE* row = dst + y * lr.Pitch;
+			for (int x = 0; x < size; x++) {
+				float dir[3];
+				skyCubeDir(face, (x + 0.5f) / (float)size, (y + 0.5f) / (float)size, dir);
+				float hei = dir[1];
+				float up  = hei > 0.0f ? hei : 0.0f;
+				float tPow = powf(up, 0.40f);
+				float r, g, b;
+				if (hei >= 0.0f) {
+					r = horizon[0] + (zenith[0] - horizon[0]) * tPow;
+					g = horizon[1] + (zenith[1] - horizon[1]) * tPow;
+					b = horizon[2] + (zenith[2] - horizon[2]) * tPow;
+				} else {
+					float gt = -hei * 1.6f; if (gt > 1.0f) gt = 1.0f;
+					r = horizon[0] + (ground[0] - horizon[0]) * gt;
+					g = horizon[1] + (ground[1] - horizon[1]) * gt;
+					b = horizon[2] + (ground[2] - horizon[2]) * gt;
+				}
+				// procedural clouds (only above the horizon)
+				if (hei > 0.02f) {
+					float n = skyFbm3(dir[0]*cloudScale + 0.37f, dir[1]*cloudScale + 0.13f, dir[2]*cloudScale, 3);
+					float cf = (n - cloudCover) / (0.85f - cloudCover);
+					if (cf < 0.0f) cf = 0.0f; if (cf > 1.0f) cf = 1.0f;
+					float hMask = hei * 3.0f; if (hMask > 1.0f) hMask = 1.0f;
+					float w = cf * cloudBright * hMask;
+					r = r + (cloudCol[0] - r) * w;
+					g = g + (cloudCol[1] - g) * w;
+					b = b + (cloudCol[2] - b) * w;
+				}
+				// A8R8G8B8 little-endian byte order: B,G,R,A
+				row[x*4+0] = (BYTE)(b * 255.0f);
+				row[x*4+1] = (BYTE)(g * 255.0f);
+				row[x*4+2] = (BYTE)(r * 255.0f);
+				row[x*4+3] = 0xFF;
+			}
+		}
+		cube->UnlockRect((D3DCUBEMAP_FACES)face, 0);
+	}
+	return cube;
 }
 
 // VF-1c 2026-09-14: build an MRT (G-Buffer) twin from one terrain variant
@@ -3860,6 +3998,10 @@ Int W3DPBRShader::init( void )
 	m_vsPBRUnit = NULL;
 	m_dwSunGlowShader = NULL;
 	m_sunGlowEnabled = FALSE;
+	m_dwSkyboxShader = NULL;
+	m_dwSkyboxShaderFwd = NULL;
+	m_skyboxCube = NULL;
+	m_skyboxEnabled = FALSE;
 
 	// Phase 4: 4-light GGX shader with PBR texture support
 	// Register layout:
@@ -4948,6 +5090,78 @@ Int W3DPBRShader::init( void )
 		TerrainDiagI("sun_glow_compiled", (int)m_sunGlowEnabled);
 	}
 
+	// ---- RA3-style fullscreen skybox (2026-09-24, ported from RA3 Sky.fx) ----
+	// Fullscreen PS: cube-sampled procedural sky + sun glare (Sky.fx SunFactor)
+	// + depth-gated fade (near objects stay opaque). The W3D dome skybox
+	// (qsnboxmorning/qingwaddskybox) is disabled in BloomBox.ini, so this pass
+	// provides the new sky. State handling learns the sun-glow crash lesson:
+	// clear the vertex shader first and set ALL constants before drawing.
+	{
+		m_skyboxCube = CreateSkyCubeTexture(DX8Wrapper::_Get_D3D_Device8(), 256);
+		const char* skySrc =
+			"sampler SkyCube : register(s0);\n"
+			"sampler DepthTex : register(s1);\n"
+			"float4x4 InvViewProj : register(c0);\n"
+			"float4 EyeAndFar : register(c4);\n"     // xyz=eye, w=far(0 unused)\n"
+			"float4 SunDir : register(c5);\n"        // xyz=sun dir (normalized)\n"
+			"float4 SunColor : register(c6);\n"      // rgb=sun color, a=glow strength\n"
+			"float4 main(float2 uv : TEXCOORD0) : COLOR\n"
+			"{\n"
+			"    float4 ndc = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);\n"
+			"    float4 wFar = mul(InvViewProj, ndc);\n"
+			"    float3 dir = normalize(wFar.xyz / wFar.w - EyeAndFar.xyz);\n"
+			"    float3 sky = texCUBE(SkyCube, dir).rgb;\n"
+			"    float NdotL = saturate(dot(dir, SunDir.xyz));\n"
+			"    float glow = pow(NdotL, 8.0) * 0.35 + pow(NdotL, 128.0) * 1.2;\n"
+			"    sky += SunColor.rgb * glow * SunColor.a;\n"
+			"    float ndcZ = tex2D(DepthTex, uv).r;\n"
+			"    float skyFactor = saturate((ndcZ - 0.82) / 0.16);\n"
+			"    skyFactor = skyFactor * skyFactor;\n"
+			"    return float4(sky, skyFactor);\n"
+			"}\n";
+		if (FAILED(compilePBRShader(skySrc, &m_dwSkyboxShader, "skybox_ra3")))
+			m_dwSkyboxShader = NULL;
+		m_skyboxEnabled = (m_dwSkyboxShader != NULL && m_skyboxCube != NULL) ? TRUE : FALSE;
+		DEBUG_LOG(("Skybox shader: %s  cube=%p\n",
+			m_skyboxEnabled ? "COMPILED OK" : "FAILED", (void*)m_skyboxCube));
+		TerrainDiagI("skybox_ra3_compiled", (int)m_skyboxEnabled);
+		// forward-path variant: no depth texture, opaque output. Drawn BEFORE
+		// scene objects as a far-z quad; objects (z<1) then overwrite it.
+		{
+			const char* skySrcFwd =
+				"sampler SkyCube : register(s0);\n"
+				"float4x4 InvViewProj : register(c0);\n"
+				"float4 EyeAndFar : register(c4);\n"
+				"float4 SunDir : register(c5);\n"
+				"float4 SunColor : register(c6);\n"
+				"float4 FogColor : register(c7);\n"  // rgb=fog color, a=horizon blend strength\n"
+				"float4 main(float2 uv : TEXCOORD0) : COLOR\n"
+				"{\n"
+				"    float4 ndc = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);\n"
+				"    float4 wFar = mul(InvViewProj, ndc);\n"
+				"    float3 dir = normalize(wFar.xyz / wFar.w - EyeAndFar.xyz);\n"
+				"    float3 sky = texCUBE(SkyCube, dir).rgb;\n"
+				// Horizon fog blend (RA3-style haze): the distant terrain fades to
+				// 100% fog color at fogEnd, so the sky must converge to the SAME
+				// color AT the horizon or a tonal step shows at the terrain edge.
+				// Asymmetric: full fog everywhere BELOW the horizon (that sky is
+				// the infinitely-distant ground past the map edge - it must read
+				// as pure haze, not as cube "ground" colors), smoothstep ramp
+				// above over ~20 deg -> thick haze low, clear sky high.
+				"    float hor = saturate(1.0 - dir.y * 3.0);\n"
+				"    hor = hor * hor * (3.0 - 2.0 * hor);\n"
+				"    sky = lerp(sky, FogColor.rgb, hor * FogColor.a);\n"
+				"    float NdotL = saturate(dot(dir, SunDir.xyz));\n"
+				"    float glow = pow(NdotL, 8.0) * 0.35 + pow(NdotL, 128.0) * 1.2;\n"
+				"    sky += SunColor.rgb * glow * SunColor.a;\n"
+				"    return float4(sky, 1.0);\n"
+				"}\n";
+			if (FAILED(compilePBRShader(skySrcFwd, &m_dwSkyboxShaderFwd, "skybox_ra3_fwd")))
+				m_dwSkyboxShaderFwd = NULL;
+			TerrainDiagI("skybox_ra3_fwd_compiled", (int)(m_dwSkyboxShaderFwd != NULL));
+		}
+	}
+
 	return (m_dwPBRPixelShader != NULL || m_dwPBRPixelShader_30 != NULL) ? TRUE : FALSE;
 }
 
@@ -5221,6 +5435,17 @@ Int W3DPBRShader::shutdown(void)
 		m_dwSunGlowShader->Release(); m_dwSunGlowShader = NULL;
 	}
 	m_sunGlowEnabled = FALSE;
+	if (m_dwSkyboxShader) {
+		DEBUG_LOG(("Skybox shader: RELEASED\n"));
+		m_dwSkyboxShader->Release(); m_dwSkyboxShader = NULL;
+	}
+	if (m_dwSkyboxShaderFwd) {
+		m_dwSkyboxShaderFwd->Release(); m_dwSkyboxShaderFwd = NULL;
+	}
+	if (m_skyboxCube) {
+		m_skyboxCube->Release(); m_skyboxCube = NULL;
+	}
+	m_skyboxEnabled = FALSE;
 	if (g_gbufferVS) { g_gbufferVS->Release(); g_gbufferVS = NULL; }
 		if (g_gbufferPS) { g_gbufferPS->Release(); g_gbufferPS = NULL; }
 
@@ -6684,6 +6909,264 @@ extern "C" void PBR_RenderSunGlow(void)
 	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, aB);
 	dev->SetRenderState(D3DRS_SRCBLEND, sB);
 	dev->SetRenderState(D3DRS_DESTBLEND, dB);
+}
+
+// C-linkage: RA3-style fullscreen skybox access for W3DScene.cpp.
+extern "C" bool PBR_IsSkyBoxEnabled(void)
+{
+	return w3dPBRShader.m_skyboxEnabled
+		&& w3dPBRShader.m_dwSkyboxShader != NULL
+		&& w3dPBRShader.m_skyboxCube != NULL;
+}
+// DEPTH-GATED sky overlay - CURRENTLY UNUSED, kept for reference (see the
+// 2026-09-25 note in W3DScene.cpp: it was replaced by the opaque
+// PBR_RenderSkyBoxBackground quad. Drawing the sky both as an opaque
+// background AND as a post-fog overlay re-added the sky + sun glare a second
+// time on the composited frame). Re-enable only by restoring a call site.
+extern "C" void PBR_RenderSkyBox(const Vector3& sunDir, const Vector3& sunColor,
+	const Vector3& camPos, const Matrix4x4& invViewProj)
+{
+	if (!PBR_IsSkyBoxEnabled()) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+
+	// ---- save state ----
+	DWORD zE, zW, aB, sB, dB, cull;
+	IDirect3DVertexShader9* oldVS = NULL;
+	IDirect3DPixelShader9* oldPS = NULL;
+	dev->GetRenderState(D3DRS_ZENABLE, &zE);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &zW);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &aB);
+	dev->GetRenderState(D3DRS_SRCBLEND, &sB);
+	dev->GetRenderState(D3DRS_DESTBLEND, &dB);
+	dev->GetRenderState(D3DRS_CULLMODE, &cull);
+	dev->GetVertexShader(&oldVS);
+	dev->GetPixelShader(&oldPS);
+
+	// ---- set state (sun-glow crash lesson: kill residual VS, set ALL constants) ----
+	dev->SetVertexShader(NULL);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+	dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+
+	// ---- constants ----
+	float c0[16];
+	for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) c0[r*4+c] = invViewProj[r][c];
+	dev->SetPixelShaderConstantF(0, c0, 4);
+	float c4[4] = { camPos.X, camPos.Y, camPos.Z, 0.0f };
+	float c5[4] = { sunDir.X, sunDir.Y, sunDir.Z, 0.0f };
+	float c6[4] = { sunColor.X, sunColor.Y, sunColor.Z, 1.0f };
+	dev->SetPixelShaderConstantF(4, c4, 1);
+	dev->SetPixelShaderConstantF(5, c5, 1);
+	dev->SetPixelShaderConstantF(6, c6, 1);
+
+	// ---- textures: s0 = procedural sky cube, s1 = G-Buffer rt2 depth (NDC z in .r) ----
+	IDirect3DBaseTexture8* depthTex = NULL;
+	dev->SetTexture(0, static_cast<IDirect3DBaseTexture8*>(w3dPBRShader.m_skyboxCube));
+	if (g_theW3DDeferredRenderer && g_theW3DDeferredRenderer->getGBufferRT(2)) {
+		depthTex = g_theW3DDeferredRenderer->getGBufferRT(2)->Peek_D3D_Base_Texture();
+		dev->SetTexture(1, depthTex);
+	}
+
+	// ---- first-draw diagnostic (terrain_diag.log) ----
+	{
+		static Bool s_skyLogged = FALSE;
+		if (!s_skyLogged) {
+			s_skyLogged = TRUE;
+			D3DVIEWPORT9 vp;
+			dev->GetViewport(&vp);
+			FILE *f = fopen(GetTerrainDiagLogPath(), "a");
+			if (f) {
+				fprintf(f, "[%u] SKYBOX_RENDER: enabled=%d shader=0x%08X cube=%p depthTex=%p viewport=%dx%d@%d,%d\n",
+					timeGetTime(),
+					(int)PBR_IsSkyBoxEnabled(),
+					(UINT)(UINT_PTR)w3dPBRShader.m_dwSkyboxShader,
+					(void*)w3dPBRShader.m_skyboxCube,
+					(void*)depthTex,
+					(int)vp.Width, (int)vp.Height, (int)vp.X, (int)vp.Y);
+				fclose(f);
+			}
+		}
+	}
+
+	// ---- fullscreen quad (XYZRHW) ----
+	// XYZRHW interprets (x,y) as PIXEL coordinates in the CURRENT viewport.
+	// The original -1..1 NDC-style coords drew off-screen (black sky). Follow
+	// the project convention (W3DDeferredRenderer::createFullScreenQuad): span
+	// the viewport with a -0.5 half-pixel offset, UV (0,0)-(1,1).
+	{
+		D3DVIEWPORT9 vp;
+		dev->GetViewport(&vp);
+		float w = (float)vp.Width;
+		float h = (float)vp.Height;
+		float o = 0.5f;
+		struct QV { float x, y, z, w; float u, v; };
+		QV v[4] = {
+			{  -o,    -o, 0, 1, 0, 0 },
+			{ w - o,  -o, 0, 1, 1, 0 },
+			{  -o,  h - o, 0, 1, 0, 1 },
+			{ w - o, h - o, 0, 1, 1, 1 },
+		};
+		dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+		dev->SetPixelShader(w3dPBRShader.m_dwSkyboxShader);
+		dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(QV));
+	}
+
+	// ---- restore ----
+	dev->SetTexture(0, NULL);
+	dev->SetTexture(1, NULL);
+	dev->SetPixelShader(oldPS ? oldPS : NULL);
+	dev->SetVertexShader(oldVS ? oldVS : NULL);
+	dev->SetRenderState(D3DRS_ZENABLE, zE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, zW);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, aB);
+	dev->SetRenderState(D3DRS_SRCBLEND, sB);
+	dev->SetRenderState(D3DRS_DESTBLEND, dB);
+	dev->SetRenderState(D3DRS_CULLMODE, cull);
+	if (oldPS) oldPS->Release();
+	if (oldVS) oldVS->Release();
+}
+
+// Forward-path RA3 sky background: opaque full-screen quad drawn BEFORE
+// scene objects at far depth (z=1). Scene objects (z<1) then overwrite it
+// naturally, so no depth texture / depth gate is needed on this path.
+extern "C" void PBR_RenderSkyBoxBackground(const Vector3& sunDir, const Vector3& sunColor,
+	const Vector3& camPos, const Matrix4x4& invViewProj)
+{
+	if (!w3dPBRShader.m_dwSkyboxShaderFwd || !w3dPBRShader.m_skyboxCube) return;
+	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
+	if (!dev) return;
+	// 2026-09-25: water-mirror renders (renderMirror -> WW3D::Render(parentScene))
+	// come through here too - and that is WANTED: during a mirror the current
+	// render target IS the reflection texture and rinfo.Camera IS the reflected
+	// camera, so painting the current target here puts the correctly-reflected
+	// sky into the water reflection with zero extra code.
+
+	// ---- save state (render states + viewport) ----
+	DWORD zE, zW, zF, aB, sB, dB, cull;
+	IDirect3DVertexShader9* oldVS = NULL;
+	IDirect3DPixelShader9* oldPS = NULL;
+	D3DSURFACE_DESC curDesc;
+	D3DVIEWPORT9 oldVP, vp;
+	dev->GetRenderState(D3DRS_ZENABLE, &zE);
+	dev->GetRenderState(D3DRS_ZWRITEENABLE, &zW);
+	dev->GetRenderState(D3DRS_ZFUNC, &zF);
+	dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &aB);
+	dev->GetRenderState(D3DRS_SRCBLEND, &sB);
+	dev->GetRenderState(D3DRS_DESTBLEND, &dB);
+	dev->GetRenderState(D3DRS_CULLMODE, &cull);
+	dev->GetVertexShader(&oldVS);
+	dev->GetPixelShader(&oldPS);
+	dev->GetViewport(&oldVP);
+
+	// ---- 2026-09-25 ROOT-CAUSE FIX #2: paint the CURRENT render target ----
+	// The visible frame is painted by whichever full-scene forward pass calls
+	// us (non-deferred branch, or the deferred branch's forward re-render
+	// which overwrites the deferred lighting output). There is deliberately NO
+	// mirror guard: when the caller IS a water-mirror render the current target
+	// is the reflection texture and painting it is exactly what we want (see
+	// the note at the top of this function). So the correct destination is
+	// simply the surface the caller is about to render its scene objects onto.
+	// Span THAT target with a matching viewport (the incoming viewport can be a
+	// leftover sub-viewport from an RTT pass - the original black-sky bug).
+	{
+		IDirect3DSurface9 *curRT = NULL;
+		curDesc.Width = oldVP.Width;
+		curDesc.Height = oldVP.Height;
+		dev->GetRenderTarget(0, &curRT);
+		if (curRT) {
+			curRT->GetDesc(&curDesc);
+			curRT->Release();
+		}
+		vp.X = 0; vp.Y = 0;
+		vp.Width = curDesc.Width; vp.Height = curDesc.Height;
+		vp.MinZ = 0.0f; vp.MaxZ = 1.0f;
+		dev->SetViewport(&vp);
+	}
+
+	// ---- set state: opaque background, depth DISABLED (same proven
+	// pattern as toneMapPass). Scene objects rendered afterward are
+	// opaque and overwrite the quad by color - no depth test / write
+	// needed. (Earlier ZENABLE=TRUE+ZFUNC=ALWAYS was overridden by the
+	// wrapper's cached depth func, so the quad got clipped to terrain.) ----
+	dev->SetVertexShader(NULL);
+	dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+
+	// ---- constants ----
+	// Raw device writes are deliberate. This engine uploads every pixel-shader
+	// constant UNCONDITIONALLY through the raw device (28 call sites; the c8.x
+	// PBRDebugMode upload comment spells out that this is what keeps stale
+	// constants from leaking between shader systems). Routing these through the
+	// wrapper's Set_Pixel_Shader_Constant setter instead made the sky render with
+	// whatever the engine had left behind - its memcmp short-circuit skips the
+	// re-upload once its (otherwise unmaintained) cache matches, which produced
+	// hard seams across the sky. For the same reason no save/restore of c0..c7 is
+	// needed: the next consumer re-uploads its own constants unconditionally.
+	float c0[16];
+	for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) c0[r*4+c] = invViewProj[r][c];
+	dev->SetPixelShaderConstantF(0, c0, 4);
+	float c4[4] = { camPos.X, camPos.Y, camPos.Z, 0.0f };
+	float c5[4] = { sunDir.X, sunDir.Y, sunDir.Z, 0.0f };
+	float c6[4] = { sunColor.X, sunColor.Y, sunColor.Z, 1.0f };
+	// c7: fog color + horizon blend strength. Matches the distant-terrain fog
+	// fade (100% at the horizon) so the sky/terrain boundary shows no tonal
+	// step. a=1.0: converge fully at the horizon line itself.
+	float c7[4] = { 0.74f, 0.81f, 0.90f, 1.0f };
+	if (TheGlobalData) {
+		c7[0] = TheGlobalData->m_fogColorR;
+		c7[1] = TheGlobalData->m_fogColorG;
+		c7[2] = TheGlobalData->m_fogColorB;
+	}
+	dev->SetPixelShaderConstantF(4, c4, 1);
+	dev->SetPixelShaderConstantF(5, c5, 1);
+	dev->SetPixelShaderConstantF(6, c6, 1);
+	dev->SetPixelShaderConstantF(7, c7, 1);
+
+	// ---- texture: s0 = procedural sky cube ----
+	// Plain NULL restore (not a captured previous texture): GetTexture() is a
+	// device round-trip and this runs several times a frame (main pass + every
+	// water-mirror render), which showed up as periodic hitching. Leaving s0
+	// unbound here is harmless - s0 is bound explicitly before every later use.
+	dev->SetTexture(0, static_cast<IDirect3DBaseTexture8*>(w3dPBRShader.m_skyboxCube));
+
+	// ---- fullscreen quad: spans the CURRENT target (curDesc), z=1.0, UV 0..1 ----
+	{
+		float w = (float)curDesc.Width;
+		float h = (float)curDesc.Height;
+		float o = 0.5f;
+		struct QV { float x, y, z, w; float u, v; };
+		QV v[4] = {
+			{  -o,    -o, 1.0f, 1, 0, 0 },
+			{ w - o,  -o, 1.0f, 1, 1, 0 },
+			{  -o,  h - o, 1.0f, 1, 0, 1 },
+			{ w - o, h - o, 1.0f, 1, 1, 1 },
+		};
+		dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+		dev->SetPixelShader(w3dPBRShader.m_dwSkyboxShaderFwd);
+		dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(QV));
+	}
+
+	// ---- restore ----
+	dev->SetTexture(0, NULL);
+	dev->SetPixelShader(oldPS ? oldPS : NULL);
+	dev->SetVertexShader(oldVS ? oldVS : NULL);
+	dev->SetRenderState(D3DRS_ZENABLE, zE);
+	dev->SetRenderState(D3DRS_ZWRITEENABLE, zW);
+	dev->SetRenderState(D3DRS_ZFUNC, zF);
+	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, aB);
+	dev->SetRenderState(D3DRS_SRCBLEND, sB);
+	dev->SetRenderState(D3DRS_DESTBLEND, dB);
+	dev->SetRenderState(D3DRS_CULLMODE, cull);
+	// restore the caller's viewport (render target / depth never touched)
+	dev->SetViewport(&oldVP);
+	if (oldPS) oldPS->Release();
+	if (oldVS) oldVS->Release();
 }
 
 // C-linkage: bind PBR vertex shader + VS constants from dx8renderer.cpp.

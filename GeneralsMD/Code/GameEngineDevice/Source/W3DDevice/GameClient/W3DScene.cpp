@@ -86,6 +86,10 @@ static void diagSceneWrite(const char *fmt, ...)
 }
 #define DIAG_LOG(x)  do { diagSceneWrite x; } while (0)
 extern "C" void PBR_RenderSunGlow(void);
+extern "C" void PBR_RenderSkyBox(const Vector3& sunDir, const Vector3& sunColor,
+	const Vector3& camPos, const Matrix4x4& invViewProj);
+extern "C" void PBR_RenderSkyBoxBackground(const Vector3& sunDir, const Vector3& sunColor,
+	const Vector3& camPos, const Matrix4x4& invViewProj);
 struct PBRCheckParams { float r; float m; float pad[2]; };
 extern "C" bool PBR_GetLegacyPBRParams(const char *meshName, PBRCheckParams *outParams);
 
@@ -1366,6 +1370,13 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						// wrapper cache flips with it so nested custom-RT
 						// restores stay on the auto DS during this phase.
 						if (g_theW3DDeferredRenderer) g_theW3DDeferredRenderer->splitDepthBindAutoForForward();
+						// 2026-09-25 RA3 SKYBOX (deferred path): the visible frame IS this
+						// forward re-render (the deferred lighting output gets overwritten
+						// by it), so the sky background must be painted HERE - right after
+						// the split-depth clear, right before the scene objects - exactly
+						// like the non-deferred branch below. Without this the cleared
+						// sky region never receives any color and stays black.
+						PBR_RenderSkyBoxBackground(sunDir, sunColor, camPos, invViewProj);
 						Customized_Render(rinfo); Flush(rinfo);
 						// SPLIT-DEPTH back: INTZ resumes as the frame DS so
 						// the next frame starts consistent (and the fog
@@ -1386,6 +1397,13 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 						// local shading. No-op unless UseVolumetricFog +
 						// UseSampleableZBuffer are INI-on.
 						g_theW3DDeferredRenderer->volumetricFogPass(invViewProj, camPos, sunDir, sunColor);
+						// 2026-09-24 RA3 SKYBOX was drawn here (depth-gated overlay,
+						// after fog, before bloom). 2026-09-25 REMOVED: the sky is now
+						// painted as the opaque background at the forward-pass start
+						// above (PBR_RenderSkyBoxBackground). The overlay re-added the
+						// sky + sun glare a second time on the composited frame and its
+						// independent UV->ray mapping showed a faint secondary glare
+						// spot mirrored around the horizon.
 						// P3: bloom LAST - it must see the final composited LDR frame
 						g_theW3DDeferredRenderer->bloomPass();
 					}
@@ -1394,6 +1412,27 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 			else
 			{
 				// Original forward rendering path
+				// RA3 sky background: opaque far-z quad BEFORE scene objects; objects (z<1) overwrite it naturally.
+// NOTE: also runs inside water-mirror renders (current target = the reflection
+// texture, rinfo.Camera = the reflected camera) - that puts the correctly
+// reflected sky into the water reflection for free.
+{
+	Vector3 skyDir(0,0,-1), skyCol(1,1,1);
+	if (TheGlobalData) {
+		skyDir.Set((float)-TheGlobalData->m_terrainLightPos[0].x,
+			(float)-TheGlobalData->m_terrainLightPos[0].y,
+			(float)-TheGlobalData->m_terrainLightPos[0].z);
+	}
+	if (m_globalLight[0]) { m_globalLight[0]->Get_Diffuse(&skyCol); }
+	Vector3 skyCam = rinfo.Camera.Get_Position();
+	Matrix4x4 skyView, skyProj, skyVP, skyInvVP;
+	{ Matrix3D sv = rinfo.Camera.Get_View_Matrix(); skyView = Matrix4x4(sv);
+		skyProj = rinfo.Camera.Get_Projection_Matrix();
+		Matrix4x4 svT = skyView.Transpose(), spT = skyProj.Transpose(); skyVP = svT * spT;
+		D3DXMATRIX sd3dVP = (D3DXMATRIX&)skyVP, sd3dInv; float sdet;
+		D3DXMatrixInverse(&sd3dInv, &sdet, &sd3dVP); skyInvVP = (Matrix4x4&)sd3dInv; }
+	PBR_RenderSkyBoxBackground(skyDir, skyCol, skyCam, skyInvVP);
+}
 				updatePlayerColorPasses();
 				updateFixedLightEnvironments(rinfo);
 				Customized_Render(rinfo);
@@ -1577,7 +1616,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 
 	//terrain needs to be rendered first
 	if (terrainObject)	// Don't check visibility - terrain is always visible. jba.
-	{		
+	{
 		robj=terrainObject;
 		rinfo.light_environment = NULL;		// Terrain is self lit.
 		rinfo.Camera.Set_User_Data(this);	//pass the scene to terrain via user data.
