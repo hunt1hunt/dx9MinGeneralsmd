@@ -1,0 +1,8 @@
+{
+  "title": "2026-09-25 RA3天空盒黑屏根因 — 天空四边形画进256离屏反射纹理",
+  "tags": ["rendering", "skybox", "render-target", "W3DScene", "避坑"],
+  "result": "现象: 加RA3程序化天空盒后天空全黑。铁证: terrain_diag.log的SKYVP探针两个会话954/954+610/610帧全部显示画天空四边形时设备目标=viewport 256x256 rt=离屏纹理(水面反射纹理,引擎内唯一256RT=m_reflectionSize)。根因: PBR_RenderSkyBoxBackground在RTS3DScene::Render前向分支顶部裸调设备(DrawPrimitiveUP)画全屏quad——该时点设备停在帧首RTT块(W3DDisplay::draw里updateRenderTargetTextures水面倒影等)遗留的256目标上;主场景几何走DX8Wrapper由其重建目标+视口所以正常上屏,天空pass绕过wrapper=画进离屏纹理永远不可见。前向PS当时是纯橙A/B测试,若到达可见帧应橙色,黑=零到达。旧穹顶天空(qsnboxmorning/qingwaddskybox)已在Data/INI/Object/BloomBox.ini禁用(Model首位None)+Begin_Render清屏黑→天空无人上色。延迟路径PBR_RenderSkyBox从未跑(PIPE_DEFERRED/SKYBOX_ENTRY缺席,deferred不可用走PIPE_FORWARD)。",
+  "lesson": "本引擎插入直通设备的全屏pass时,RTS3DScene::Render入口处的'当前渲染目标'不受调用者控制(帧首RTT遗留状态,可能是256水面反射纹理),必须先显式DX8Wrapper::Set_Render_Target(NULL)+设全屏视口再画,画完恢复;或挪到场景渲染后带深度门。d3d8compat.h把IDirect3DDevice8直接typedef成IDirect3DDevice9——static_cast<IDirect3DDevice9*>(dev)是空操作,GetViewport/GetRenderTarget即真实设备状态,这类探针可放心用于定位'画到哪了'。",
+  "fix_direction": "未实施(用户只要分析): 显式绑后备缓冲或挪调用点到wrapper已确立目标之后;撤掉橙色A/B测试换真实cube采样。",
+  "evidence": "D盘terrain_diag.log: SKYVP全256; SKYBOX_FWD_ENTRY shader+cube均非NULL; PIPE_FORWARD在; PIPE_DEFERRED/SKYBOX_ENTRY缺席; pbr_compile.log尾: skybox_ra3/skybox_ra3_fwd编译hr=0"
+}

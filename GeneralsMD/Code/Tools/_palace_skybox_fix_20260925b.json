@@ -1,0 +1,11 @@
+{
+  "title": "2026-09-25 RA3天空盒全链修通 — 延迟分支插入点+画当前目标+倒影天空+地平线雾",
+  "tags": ["rendering", "skybox", "deferred", "water-mirror", "fog", "W3DShaderManager"],
+  "result": "天空黑屏三连修: ①真根因=主帧走DEFERRED分支(延迟渲染器可用;此前误判从未执行,因一次性探针被菜单期消费+地图加载日志重置双重掩蔽——RCTX每帧普查探针戳穿),可见画面=延迟分支内的前向全场景重渲(它覆盖延迟光照输出),天空调用必须插在splitDepthBindAutoForForward之后Customized_Render之前;②画法=画'当前渲染目标'而非硬绑后备缓冲(倒影渲染时当前目标=256反射纹理+相机=反射相机,拆掉倒影守卫后倒影天空自动正确,零额外代码);③shader修正=mul(InvViewProj,ndc)矩阵在前(对标延迟光照PS的点积重建约定)+NDC y翻转(1.0-uv.y*2,D3D9视口clip+1在上)。",
+  "root_cause_lesson": "一次性static探针+地图加载日志重置('w')=双重掩蔽陷阱: DEFERRED_GATE/PIPE_DEFERRED/SKYBOX_ENTRY'缺席'其实是菜单期消费后被重置抹掉。判管线走哪条分支必须用每帧(无static守卫)探针,且日志重置后要重新圈定当前进程段再计数。",
+  "horizon_fix": "地平线分界线根因=颜色不收敛(远地形淡出到100%雾色,天空只混80%),非渲染顺序(顺序本来就是天空→地形→物体)。修=c7常量传GlobalData雾色+不对称混合: saturate(1.0-dir.y*3.0)平滑方肩lerp,地平线以下(地图边缘外无限远地面)恒100%雾色,上方~20°渐变。地形侧若仍不收敛调fogStart/fogEnd。",
+  "antipode_glare": "太阳反侧次亮斑: 拆掉了雾后bloom前的PBR_RenderSkyBox延迟overlay调用(与背景天空重复叠glare且UV→射线映射独立,疑产生镜像次斑)。若仍有淡斑,次嫌疑=程序云亮块(cloudCover/cloudBright可调)。",
+  "deploy": "D+E双目录已部署(带LAA);增量构建脚本对游戏运行中部署会'另一个程序正在使用此文件'失败——构建前必须先关游戏(tasklist内存列带逗号,awk $5+0陷阱,用PowerShell WorkingSet过滤杀)",
+  "repo": "https://github.com/hunt1hunt/MinGeneralsmd",
+  "branch": "main"
+}
