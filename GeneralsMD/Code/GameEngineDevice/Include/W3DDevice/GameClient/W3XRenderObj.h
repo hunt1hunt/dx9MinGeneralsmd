@@ -118,6 +118,13 @@ public:
 	// w3x_buildings.fx FORBID_CLIPPING, so they carry no AlphaTestEnable bool) and
 	// exclude them from writing a wire-mesh pattern into the shadow map.
 	void SetSubMeshName(int subMeshIndex, const char *name);
+	// Compact slot -> GLOBAL bone index for a sub-mesh whose bone set exceeds the
+	// per-draw budget (shader WorldBones[] holds kMaxBones). Set at load; the draw
+	// then uploads just these bones for that mesh. Empty = use the model-wide array.
+	void SetSubMeshBoneRemap(int subMeshIndex, const std::vector<int> &remap) {
+		if (subMeshIndex >= 0 && subMeshIndex < (int)m_meshes.size())
+			m_meshes[subMeshIndex].boneRemap = remap;
+	}
 	void SetFX(const char *fxName, int technique, const std::vector<W3XShaderConstant> &constants);
 	void SetBones(float *bones, int boneCount);
 	// Skin-bone access for the volumetric shadow system. The shadow geometry is
@@ -179,14 +186,14 @@ public:
 	// transform is the bone's LOCAL rotation (e.g. Rotate_Z(turretYaw)); it is
 	// composed into the object-local WorldBones during Render. Mirrors
 	// RenderObjClass::Control_Bone so W3D turret logic can drive a W3X model.
-	virtual void Capture_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) m_boneCtrlActive[bindex] = true; }
-	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxBones) { m_boneCtrlActive[bindex] = false; m_boneAnimQuatActive[bindex] = false; m_boneAnimTransActive[bindex] = false; } }
+	virtual void Capture_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxRigBones) m_boneCtrlActive[bindex] = true; }
+	virtual void Release_Bone(int bindex) { if (bindex >= 0 && bindex < kMaxRigBones) { m_boneCtrlActive[bindex] = false; m_boneAnimQuatActive[bindex] = false; m_boneAnimTransActive[bindex] = false; } }
 	// Clear only the animation-driven overrides (quat + trans) for all bones,
 	// leaving turret Control_Bone rotations intact. Called at the start of each
 	// animation update so a bone outside the current animation's channel set
 	// returns to its bind pose without disturbing a game-logic controlled turret.
 	void ResetAnimationBones(void);
-	virtual bool Is_Bone_Captured(int bindex) const { return (bindex >= 0 && bindex < kMaxBones) ? m_boneCtrlActive[bindex] : false; }
+	virtual bool Is_Bone_Captured(int bindex) const { return (bindex >= 0 && bindex < kMaxRigBones) ? m_boneCtrlActive[bindex] : false; }
 	virtual void Control_Bone(int bindex, const Matrix3D &objtm, bool world_space_translation = false);
 	// Animation override: set a bone's LOCAL rotation from the animation channel.
 	// The quaternion is the RAW channel value (NOT frame-0-normalized): the
@@ -275,6 +282,19 @@ public:
 		if (name) { strncpy(m_name, name, sizeof(m_name) - 1); m_name[sizeof(m_name) - 1] = '\0'; }
 	}
 
+	// Bone budgets. PUBLIC because the loader (W3XModelDraw) has to decide, per
+	// sub-mesh, whether the vertex bone indices fit one draw's upload and must
+	// therefore be compacted.
+	//
+	// Per-DRAW budget: how many bones one BindW3XBones upload may carry. The
+	// shader declares "float4 WorldBones[128]" alongside "#define MaxSkinningBones
+	// 64"; a bone costs 2 float4 (quat + offset/alpha), so 128/2 = 64.
+	enum { kMaxBones = 64 };	// must match the shader's MaxSkinningBones
+	// Per-RIG budget: how many bones a model's skeleton may have. The composition
+	// buffers, control/anim override arrays and stack scratch are sized for this;
+	// only the UPLOAD is limited to kMaxBones, via the per-mesh compact table.
+	enum { kMaxRigBones = 128 };
+
 protected:
 	virtual void Update_Cached_Bounding_Volumes(void) const;
 
@@ -305,11 +325,23 @@ private:
 		// vertex average IS the lamp position). Cached once from the VB.
 		float lampCenter[3];
 		bool lampCenterValid;
+		// Per-sub-mesh COMPACT bone table: slot i holds the GLOBAL bone index that
+		// this mesh's vertex attribute i refers to. Empty means "identity" -- the
+		// mesh's vertex bone indices already fit the draw budget (kMaxBones) and
+		// the global array is uploaded as-is.
+		//
+		// A rig may carry more bones than one draw can upload (the shader's
+		// WorldBones[] holds kMaxBones). RA3 handles those by re-indexing per
+		// sub-mesh, and that is what we do too: at load the vertex bone indices
+		// are rewritten to compact slots and the global indices are kept here, so
+		// the draw uploads only the bones THIS mesh needs.
+		// (Celestial mech rigs: 72 bones globally, but no single mesh exceeds 40.)
+		std::vector<int> boneRemap;
 	};
 
-	enum { kMaxBones = 64 };	// must match BindW3XBones' 64-bone array
+	// (kMaxBones / kMaxRigBones are declared in the public section above.)
 	// Compose the bind pose + Control_Bone rotations + turret->barrel cascade
-	// into 'out' (kMaxBones*8 floats, quat+offset per bone). Shared by Render
+	// into 'out' (kMaxRigBones*8 floats, quat+offset per bone). Shared by Render
 	// (which uploads it) and Get_Bone_Transform (muzzle/launch offset must follow
 	// the animated turret). 'out' may alias m_bones when nothing is controlled.
 	void composeControlledBones(float *out) const;
@@ -322,12 +354,12 @@ private:
 	std::vector<AsciiString> m_boneNames;	// per-bone name (index-aligned with m_bones)
 	std::vector<int> m_boneParents;			// per-bone parent index (-1 = root), for turret->barrel cascade
 	Matrix3D m_boneTransformCache;			// Get_Bone_Transform returns a const ref
-	bool m_boneCtrlActive[kMaxBones];		// per-bone turret-control flag (Control_Bone, game-logic driven)
-	float m_boneCtrlQuat[kMaxBones][4];		// per-bone control rotation (quat)
-	float m_boneAnimQuat[kMaxBones][4];		// per-bone animated LOCAL quaternion (RAW channel value)
-	bool m_boneAnimQuatActive[kMaxBones];	// true when the animation overrides the local quaternion
-	float m_boneAnimTrans[kMaxBones][3];	// per-bone animated LOCAL translation (RAW channel value)
-	bool m_boneAnimTransActive[kMaxBones];	// true when the animation overrides the local translation
+	bool m_boneCtrlActive[kMaxRigBones];		// per-bone turret-control flag (Control_Bone, game-logic driven)
+	float m_boneCtrlQuat[kMaxRigBones][4];		// per-bone control rotation (quat)
+	float m_boneAnimQuat[kMaxRigBones][4];		// per-bone animated LOCAL quaternion (RAW channel value)
+	bool m_boneAnimQuatActive[kMaxRigBones];	// true when the animation overrides the local quaternion
+	float m_boneAnimTrans[kMaxRigBones][3];	// per-bone animated LOCAL translation (RAW channel value)
+	bool m_boneAnimTransActive[kMaxRigBones];	// true when the animation overrides the local translation
 	float *m_boneLocalQuat;					// bind-pose LOCAL rotations (boneCount*4), from Pivot Rotation
 	float *m_boneLocalTrans;				// bind-pose LOCAL translations (boneCount*3), from Pivot Translation
 	Vector3 m_bmin;

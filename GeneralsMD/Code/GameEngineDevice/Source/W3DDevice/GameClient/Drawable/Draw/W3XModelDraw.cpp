@@ -538,6 +538,69 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		// (vehicles/buildings, no second set) keep the 1-bone Default path.
 		bool softMesh = meshData.hasSoftBinding && (int)meshData.vertices2.size() >= vertCount;
 
+		// ---- Per-mesh bone compaction (RA3-style re-indexing) ------------------
+		// A rig may carry more bones than one draw can upload: the shader holds
+		// WorldBones[kMaxBones] (= 64 bones, 2 float4 each), so a vertex whose
+		// bone index is >= 64 indexes past the array and renders garbage.
+		//
+		// The Celestial mech rigs hit exactly that: 72 bones overall, with the
+		// upper-body mesh referencing bones 64..71 -> the torso collapsed.
+		// RA3 handles such rigs by re-indexing PER SUB-MESH, and that is what we
+		// do here: walk this mesh's bone indices, assign compact slots (0..n-1)
+		// on first sight, rewrite the vertex indices below, and keep the
+		// slot->global table on the SubMesh so the draw uploads just these bones.
+		//
+		// Only engages when the mesh actually exceeds the budget, so every model
+		// that already fits keeps the old path byte-for-byte (boneRemap stays empty).
+		enum { kMaxBoneMap = 512 };
+		int boneMap[kMaxBoneMap];
+		std::vector<int> boneRemap;
+		for (int bm0 = 0; bm0 < kMaxBoneMap; bm0++) boneMap[bm0] = -1;
+		bool needRemap = false;
+		if (hasBones) {
+			int maxGlobal = -1;
+			// NOTE: VC6 leaks a for-loop's variable into the enclosing scope, so
+			// each loop here needs its OWN name -- reusing "bi" is error C2374.
+			for (size_t bmi = 0; bmi < meshData.boneIndices.size(); bmi++) {
+				const int g = meshData.boneIndices[bmi];
+				if (g > maxGlobal) maxGlobal = g;
+			}
+			for (size_t bm2 = 0; bm2 < meshData.boneIndices2.size(); bm2++) {
+				const int g = meshData.boneIndices2[bm2];
+				if (g > maxGlobal) maxGlobal = g;
+			}
+			if (maxGlobal >= (int)W3XRenderObjClass::kMaxBones) {
+				// Assign compact slots in first-seen order (primary set first, then
+				// the soft second set) so the mapping is deterministic.
+				for (size_t bm3 = 0; bm3 < meshData.boneIndices.size(); bm3++) {
+					const int g = meshData.boneIndices[bm3];
+					if (g >= 0 && g < kMaxBoneMap && boneMap[g] < 0) {
+						boneMap[g] = (int)boneRemap.size();
+						boneRemap.push_back(g);
+					}
+				}
+				for (size_t bm4 = 0; bm4 < meshData.boneIndices2.size(); bm4++) {
+					const int g = meshData.boneIndices2[bm4];
+					if (g >= 0 && g < kMaxBoneMap && boneMap[g] < 0) {
+						boneMap[g] = (int)boneRemap.size();
+						boneRemap.push_back(g);
+					}
+				}
+				if ((int)boneRemap.size() <= (int)W3XRenderObjClass::kMaxBones) {
+					needRemap = true;
+				} else {
+					// Even compacted the mesh needs more bones than one draw can
+					// upload; fall back to the old behaviour and say so loudly.
+					DEBUG_LOG(("[W3X_BONES] sub-mesh '%s' needs %d distinct bones > %d; "
+						"cannot compact (max index %d)\n", sub.renderObjectName.str(),
+						(int)boneRemap.size(), (int)W3XRenderObjClass::kMaxBones, maxGlobal));
+					boneRemap.clear();
+				}
+			}
+		}
+		#define W3X_MAP_BONE(g) (needRemap && (g) >= 0 && (g) < kMaxBoneMap && boneMap[(g)] >= 0 \
+			? boneMap[(g)] : (g))
+
 		// V-flip decision (per sub-mesh, before building vertices).
 		// .w3x UV V is authored V=0-at-bottom; D3D9 samples V=0-at-top, so every
 		// sub-mesh needs v=1-v. Cluster-sampling TavBtMstr2 at the barrel's UV
@@ -590,8 +653,10 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 				// toward POSITION1/BONE1, normalized in case the two blocks don't sum
 				// to exactly 1. The volumetric shadow blends lerp(P0,P1,bw) and the
 				// RA3 skin shader must use the SAME direction (lerp(X0,X1,bw)).
-				sverts[vi].boneIdx0 = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
-				sverts[vi].boneIdx1 = vi < (int)meshData.boneIndices2.size() ? (float)meshData.boneIndices2[vi] : sverts[vi].boneIdx0;
+				// Compacted index when this mesh exceeded the draw budget (needRemap);
+				// otherwise W3X_MAP_BONE is the identity.
+				sverts[vi].boneIdx0 = hasBones ? (float)W3X_MAP_BONE(meshData.boneIndices[vi]) : (float)sub.boneIndex;
+				sverts[vi].boneIdx1 = vi < (int)meshData.boneIndices2.size() ? (float)W3X_MAP_BONE(meshData.boneIndices2[vi]) : sverts[vi].boneIdx0;
 				float w0 = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
 				float w1 = vi < (int)meshData.boneWeights2.size() ? meshData.boneWeights2[vi] : 0.0f;
 				sverts[vi].blendWeight = (w0 + w1 > 1e-6f) ? (w1 / (w0 + w1)) : 0.0f;
@@ -661,7 +726,7 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 				// is laid out 2 float4 per bone ([2i]=quat, [2i+1]=offset), so the
 				// raw bone index b must be stored AS-IS: floor(b*2)=2b points to the
 				// bone's quat slot. Do NOT divide by 2.
-				verts[vi].boneIdx = hasBones ? (float)meshData.boneIndices[vi] : (float)sub.boneIndex;
+				verts[vi].boneIdx = hasBones ? (float)W3X_MAP_BONE(meshData.boneIndices[vi]) : (float)sub.boneIndex;
 				verts[vi].boneWeight = hasBones && vi < (int)meshData.boneWeights.size() ? meshData.boneWeights[vi] : 1.0f;
 				verts[vi].color = 0xFFFFFFFF;	// white vertex color (RA3 shader reads VertexColor)
 				verts[vi].u2 = 0; verts[vi].v2 = 0;	// TEXCOORD1 (RA3 texcoordNEW: zero)
@@ -711,7 +776,20 @@ bool W3XModelDraw::loadW3XModel(const char *containerName, LoadedModelData &outD
 		subBuf.boundMax[0] = meshData.boundMax[0];
 		subBuf.boundMax[1] = meshData.boundMax[1];
 		subBuf.boundMax[2] = meshData.boundMax[2];
+		// Compact slot -> global bone index, when this mesh's bone set exceeded the
+		// per-draw budget and its vertex indices were rewritten. Empty = the mesh
+		// fits and the draw uploads the model-wide bone array unchanged.
+		subBuf.boneRemap = boneRemap;
+		if (!boneRemap.empty()) {
+			DEBUG_LOG(("[W3X_BONES] sub-mesh '%s' compacted: %d distinct bones "
+				"(draw budget %d)\n", sub.renderObjectName.str(),
+				(int)boneRemap.size(), (int)W3XRenderObjClass::kMaxBones));
+		}
 		outData.subMeshes.push_back(subBuf);
+		// NOTE: W3X_MAP_BONE stays defined to the end of this file -- it is used
+		// by both the soft (W3XSoftVertex) and hard (W3XVertex) vertex writers
+		// above and lives in this per-sub-mesh loop, so it cannot be #undef'd
+		// here without breaking the next iteration.
 
 		DEBUG_LOG(("[W3X_P5]   Sub-mesh '%s': %d verts, %d tris, bones=%d, tangents=%d, shader=%s\n",
 			sub.renderObjectName.str(), vertCount, triCount, hasBones ? (int)meshData.boneIndices.size() : 0,
@@ -922,6 +1000,9 @@ void W3XModelDraw::createRenderObject(LoadedModelData &data)
 		// SKIN_G* prefix to recognize building grille/lattice meshes and exclude
 		// them from writing a wire-mesh pattern into the shadow map.
 		robj->SetSubMeshName((int)i, sm.name.str());
+		// Compact bone table for rigs whose bone count exceeds one draw's budget
+		// (shader WorldBones[] = kMaxBones). Empty for every mesh that fits.
+		robj->SetSubMeshBoneRemap((int)i, sm.boneRemap);
 		// Per-sub-mesh shader override: route each sub-mesh to the SAS-free
 		// variant matching its RA3 FXShader, whenever it differs from the
 		// model-wide shader. Buildings stay opaque (w3x_buildings.fx

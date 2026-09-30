@@ -231,6 +231,11 @@ private:
 		std::vector<W3XShaderConstant> constants;	// this sub-mesh's shader constants
 		float boundMin[3];			// local-space AABB from .w3x <BoundingBox> (culling + projected shadow)
 		float boundMax[3];
+		// Compact slot -> GLOBAL bone index, set only when this mesh's bone set
+		// exceeded the per-draw budget (the shader's WorldBones holds kMaxBones).
+		// The loader rewrote the vertex bone indices to compact slots; the draw
+		// gathers just those bones and uploads that. Empty = mesh fits as before.
+		std::vector<int> boneRemap;
 	};
 
 	struct LoadedModelData

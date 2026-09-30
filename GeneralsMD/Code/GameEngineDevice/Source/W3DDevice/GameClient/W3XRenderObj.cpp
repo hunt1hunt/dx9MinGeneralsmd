@@ -164,7 +164,7 @@ W3XRenderObjClass::W3XRenderObjClass() :
 	m_valid(false),
 	m_inShadowMapPass(false)
 {
-	for (int i = 0; i < kMaxBones; i++) {
+	for (int i = 0; i < kMaxRigBones; i++) {
 		m_boneCtrlActive[i] = false;
 		m_boneCtrlQuat[i][0] = m_boneCtrlQuat[i][1] = m_boneCtrlQuat[i][2] = 0.0f;
 		m_boneCtrlQuat[i][3] = 1.0f;
@@ -378,7 +378,7 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 	// legs/spine/arms) follow the channel.
 	bool hasLocalPose = (m_boneLocalQuat != NULL && m_boneLocalTrans != NULL);
 
-	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
+	for (int bi = 0; bi < m_boneCount && bi < kMaxRigBones; bi++) {
 		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
 
 		float lq[4];
@@ -454,7 +454,7 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 		}
 
 		// --- world = parentWorld * local ---
-		if (pj >= 0 && pj < kMaxBones) {
+		if (pj >= 0 && pj < kMaxRigBones) {
 			float wq[4];
 			W3XQuatMultiply(wq, &out[pj*8], lq);
 			out[bi*8+0] = wq[0]; out[bi*8+1] = wq[1]; out[bi*8+2] = wq[2]; out[bi*8+3] = wq[3];
@@ -473,7 +473,7 @@ void W3XRenderObjClass::composeControlledBones(float *out) const
 
 int W3XRenderObjClass::GetComposedBones(float *out, int maxFloats) const
 {
-	if (!out || maxFloats < kMaxBones * 8) return 0;
+	if (!out || maxFloats < kMaxRigBones * 8) return 0;
 	composeControlledBones(out);
 	return m_boneCount;
 }
@@ -484,7 +484,7 @@ bool W3XRenderObjClass::ApplyAnimationFrame(const W3XAnimation *anim, int frame)
 	bool applied = false;
 	for (size_t ci = 0; ci < anim->channels.size(); ci++) {
 		const W3XAnimChannel &ch = anim->channels[ci];
-		if (ch.pivot < 0 || ch.pivot >= kMaxBones) continue;
+		if (ch.pivot < 0 || ch.pivot >= kMaxRigBones) continue;
 		if (!ch.quatFrames.empty()) {
 			int n = (int)ch.quatFrames.size() / 4;
 			int f = (n > 0) ? (frame % n) : 0;
@@ -513,7 +513,7 @@ const Matrix3D &W3XRenderObjClass::Get_Bone_Transform(int boneindex)
 		return m_boneTransformCache;
 	}
 	// Compose bind pose + controlled rotations + cascade into a temp array.
-	float comp[kMaxBones * 8];
+	float comp[kMaxRigBones * 8];
 	composeControlledBones(comp);
 
 	float wq[4];
@@ -543,7 +543,7 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model(int boneindex) const
 	Matrix3D result;
 	result.Make_Identity();
 	if (boneindex < 0 || boneindex >= m_boneCount || !m_bones) return result;
-	float comp[kMaxBones * 8];
+	float comp[kMaxRigBones * 8];
 	composeControlledBones(comp);
 	const float *bq = &comp[boneindex * 8 + 0];
 	const float *bo = &comp[boneindex * 8 + 4];
@@ -573,16 +573,16 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 	if (t < 0.0f) t = 0.0f;
 
 	// Build per-bone animated LOCAL overrides from the animation's channels at 'frame'.
-	float aq[kMaxBones][4];  bool qa[kMaxBones];
-	float at[kMaxBones][3];  bool ta[kMaxBones];
-	for (int i = 0; i < kMaxBones; i++) {
+	float aq[kMaxRigBones][4];  bool qa[kMaxRigBones];
+	float at[kMaxRigBones][3];  bool ta[kMaxRigBones];
+	for (int i = 0; i < kMaxRigBones; i++) {
 		aq[i][0] = aq[i][1] = aq[i][2] = 0.0f; aq[i][3] = 1.0f; qa[i] = false;
 		at[i][0] = at[i][1] = at[i][2] = 0.0f; ta[i] = false;
 	}
 	for (size_t ci = 0; ci < anim->channels.size(); ci++) {
 		const W3XAnimChannel &ch = anim->channels[ci];
 		int p = ch.pivot;
-		if (p < 0 || p >= kMaxBones) continue;
+		if (p < 0 || p >= kMaxRigBones) continue;
 		if (!ch.quatFrames.empty()) {
 			int n = (int)ch.quatFrames.size() / 4;
 			if (n >= 1) {
@@ -622,8 +622,8 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 	// world = parentWorld × local (parent chain).
 	// Same math as composeControlledBones but with the evaluated anim overrides and
 	// no turret Control_Bone (infantry launch bones are not turret-driven).
-	float comp[kMaxBones * 8];
-	for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
+	float comp[kMaxRigBones * 8];
+	for (int bi = 0; bi < m_boneCount && bi < kMaxRigBones; bi++) {
 		int pj = (bi < (int)m_boneParents.size()) ? m_boneParents[bi] : -1;
 		float lq[4], lt[3];
 		if (qa[bi] || ta[bi]) {
@@ -646,7 +646,7 @@ Matrix3D W3XRenderObjClass::Get_Bone_Transform_Model_Anim(const W3XAnimation *an
 			lq[0] = m_boneLocalQuat[bi*4+0]; lq[1] = m_boneLocalQuat[bi*4+1]; lq[2] = m_boneLocalQuat[bi*4+2]; lq[3] = m_boneLocalQuat[bi*4+3];
 			lt[0] = m_boneLocalTrans[bi*3+0]; lt[1] = m_boneLocalTrans[bi*3+1]; lt[2] = m_boneLocalTrans[bi*3+2];
 		}
-		if (pj >= 0 && pj < kMaxBones) {
+		if (pj >= 0 && pj < kMaxRigBones) {
 			W3XQuatMultiply(&comp[bi*8], &comp[pj*8], lq);
 			float r[3];
 			W3XQuatRotateVector(r, &comp[pj*8], lt);
@@ -684,7 +684,7 @@ void W3XRenderObjClass::Control_Bone(int bindex, const Matrix3D &objtm, bool /*w
 	// Store the bone's local rotation as a quaternion override. This mirrors the
 	// W3D HTree turret control: the turret/barrel bone rotates by the given
 	// matrix on top of its bind pose, and the composition happens in Render().
-	if (bindex < 0 || bindex >= kMaxBones) return;
+	if (bindex < 0 || bindex >= kMaxRigBones) return;
 	float q[4];
 	W3XMatrix3DToQuat(objtm, q);
 	m_boneCtrlQuat[bindex][0] = q[0];
@@ -696,7 +696,7 @@ void W3XRenderObjClass::Control_Bone(int bindex, const Matrix3D &objtm, bool /*w
 
 void W3XRenderObjClass::SetBoneAnimQuat(int bindex, const float q[4])
 {
-	if (bindex < 0 || bindex >= kMaxBones) return;
+	if (bindex < 0 || bindex >= kMaxRigBones) return;
 	// Animation channel quat goes to its OWN slot (m_boneAnimQuat), separate
 	// from the game-logic turret control (m_boneCtrlQuat via Control_Bone) so an
 	// animated bone and a turret-controlled bone never overwrite each other.
@@ -709,7 +709,7 @@ void W3XRenderObjClass::SetBoneAnimQuat(int bindex, const float q[4])
 
 void W3XRenderObjClass::SetBoneAnimTrans(int bindex, const float t[3])
 {
-	if (bindex < 0 || bindex >= kMaxBones) return;
+	if (bindex < 0 || bindex >= kMaxRigBones) return;
 	m_boneAnimTrans[bindex][0] = t[0];
 	m_boneAnimTrans[bindex][1] = t[1];
 	m_boneAnimTrans[bindex][2] = t[2];
@@ -721,7 +721,7 @@ void W3XRenderObjClass::ResetAnimationBones(void)
 	// Clear only the animation overrides; turret Control_Bone (m_boneCtrlActive)
 	// is intentionally left alone so handleClientTurretPositioning's rotation
 	// survives an animation update.
-	for (int i = 0; i < kMaxBones; i++) {
+	for (int i = 0; i < kMaxRigBones; i++) {
 		m_boneAnimQuatActive[i] = false;
 		m_boneAnimTransActive[i] = false;
 	}
@@ -1076,17 +1076,43 @@ static void BindW3XBones(ID3DXEffect *effect, float *bones, int boneCount, const
 			float wq[4];
 			W3XMatrix3DToQuat(worldTransform, wq);
 			Vector3 wtrans = worldTransform.Get_Translation();
-			float wb[64 * 8];	// enough for up to 64 bones
-			for (int bi = 0; bi < boneCount && bi < 64; bi++) {
-				const float *bq = &bones[bi*8 + 0];
-				const float *bo = &bones[bi*8 + 4];
+			// How many bones the shader can hold. head0-COMMON.FXH declares
+			// "float4 WorldBones[128]" together with "#define MaxSkinningBones 64";
+			// a bone costs 2 float4 (quat + offset/alpha), so 128/2 = 64 bones,
+			// living in registers C128-C255.
+			//
+			// FIXED 2026-09-30: the old code filled only the first 64 bones but
+			// then uploaded boneCount*8 floats. For any rig with more than 64
+			// bones (the Celestial mech rigs carry 72) that both read PAST this
+			// stack buffer and pushed uninitialised stack memory to the shader.
+			// Everything skinned to bones 64..N -- the mech's whole upper body --
+			// got garbage and collapsed. Now the array is filled completely and
+			// only what we own is sent.
+			//
+			// Slots past the real bone count get the IDENTITY transform rather
+			// than whatever was left over, so a >64-bone rig fails in a stable,
+			// diagnosable way instead of picking up the previous draw's bones.
+			// Lifting the 64-bone ceiling itself is a separate change: it needs
+			// MaxSkinningBones / WorldBones[] raised in the shader to match.
+			const int kMaxUploadBones = 64;	// must match MaxSkinningBones
+			float wb[kMaxUploadBones * 8];
+			for (int bi = 0; bi < kMaxUploadBones; bi++) {
 				float *wo = &wb[bi*8];
-				W3XQuatMultiply(&wo[0], wq, bq);				// worldRot = W_rot * boneRot
-				W3XQuatRotateVector(&wo[4], wq, bo);			// rotate offset by W_rot
-				wo[4] += wtrans.X; wo[5] += wtrans.Y; wo[6] += wtrans.Z;	// + W_trans
-				wo[7] = bo[3];									// alpha
+				if (bi < boneCount) {
+					const float *bq = &bones[bi*8 + 0];
+					const float *bo = &bones[bi*8 + 4];
+					W3XQuatMultiply(&wo[0], wq, bq);			// worldRot = W_rot * boneRot
+					W3XQuatRotateVector(&wo[4], wq, bo);		// rotate offset by W_rot
+					wo[4] += wtrans.X; wo[5] += wtrans.Y; wo[6] += wtrans.Z;	// + W_trans
+					wo[7] = bo[3];								// alpha
+				} else {
+					wo[0] = 0.0f; wo[1] = 0.0f; wo[2] = 0.0f; wo[3] = 1.0f;	// identity quat
+					wo[4] = 0.0f; wo[5] = 0.0f; wo[6] = 0.0f; wo[7] = 1.0f;
+				}
 			}
-			HRESULT hb = effect->SetFloatArray(hBones, wb, boneCount * 8);
+			// Upload the whole array (512 floats == WorldBones[128]) so no stale
+			// constants from a previous draw can be indexed by an out-of-range bone.
+			HRESULT hb = effect->SetFloatArray(hBones, wb, kMaxUploadBones * 8);
 			// CAST BONES DIAG (09-05): Release-visible ground truth of the upload.
 			// A model whose cast VS gets zeros/garbage WorldBones collapses every
 			// vertex to ONE point (zero-area triangles) -> CAST-DRAW "succeeds"
@@ -1428,7 +1454,7 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 			{
 				float bmn[3] = { 1e30f, 1e30f, 1e30f };
 				float bmx[3] = { -1e30f, -1e30f, -1e30f };
-				for (int bi = 0; bi < m_boneCount && bi < kMaxBones; bi++) {
+				for (int bi = 0; bi < m_boneCount && bi < kMaxRigBones; bi++) {
 					for (int a = 0; a < 3; a++) {
 						float v = m_bones[bi * 8 + 4 + a];
 						if (v < bmn[a]) bmn[a] = v;
@@ -1533,7 +1559,7 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 	//   child_new = parent_new * (parent_base^-1 * child_base)
 	// Because bone indices are parent-before-child (loadHierarchy guarantees
 	// parentIndex < i), a forward 0..n pass updates parents before children.
-	float ctrlBones[kMaxBones * 8];
+	float ctrlBones[kMaxRigBones * 8];
 	const float *srcBones = m_bones;
 	if (m_boneCount > 0 && m_bones) {
 		composeControlledBones(ctrlBones);
@@ -2019,6 +2045,40 @@ void W3XRenderObjClass::Render(RenderInfoClass &rinfo)
 #else
 			(void)vres;	// keep C4189 away when DEBUG_LOG is compiled out
 #endif
+		}
+
+		// Per-sub-mesh COMPACT bone table (RA3-style re-indexing).
+		//
+		// A rig may carry more bones than a single draw can upload: the shader's
+		// WorldBones[] holds kMaxBones (64). Celestial mech rigs have 72 bones,
+		// and their upper-body mesh references bones 64..71 -- previously those
+		// fell outside the array entirely and the mesh collapsed.
+		//
+		// At load, any mesh whose bone set does not fit the budget has its vertex
+		// bone indices rewritten to compact slots (0..n-1) and the corresponding
+		// GLOBAL indices stored in sm.boneRemap. Here we gather just those bones
+		// out of the composed pose and upload that. Meshes that already fit keep
+		// boneRemap empty and use the model-wide upload, exactly as before.
+		if (!sm.boneRemap.empty()) {
+			const int n = (int)sm.boneRemap.size() < kMaxBones
+				? (int)sm.boneRemap.size() : kMaxBones;
+			float compact[kMaxBones * 8];
+			for (int bi = 0; bi < n; bi++) {
+				const int src = sm.boneRemap[bi];
+				if (src >= 0 && src < kMaxRigBones && src < m_boneCount) {
+					memcpy(&compact[bi*8], &ctrlBones[src*8], 8 * sizeof(float));
+				} else {
+					// out-of-rig slot: identity (never a stale bone from another draw)
+					compact[bi*8+0] = 0.0f; compact[bi*8+1] = 0.0f;
+					compact[bi*8+2] = 0.0f; compact[bi*8+3] = 1.0f;
+					compact[bi*8+4] = 0.0f; compact[bi*8+5] = 0.0f;
+					compact[bi*8+6] = 0.0f; compact[bi*8+7] = 1.0f;
+				}
+			}
+			// ctrlBones is object-local; BindW3XBones applies the world transform
+			// and does the upload (same conversion the model-wide pass uses).
+			BindW3XBones(drawEffect, compact, n, m_worldTransform);
+			drawEffect->CommitChanges();
 		}
 
 		// Soft-bound sub-meshes use the 128-byte W3XSoftVertex format (dual
