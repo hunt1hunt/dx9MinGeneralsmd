@@ -6853,13 +6853,25 @@ extern "C" bool PBR_IsSunGlowEnabled(void)
 extern "C" void PBR_RenderSunGlow(void)
 {
 	static Bool s_firstRender = TRUE;
+	// The skip diagnostics below are one-shot. They used to fire EVERY frame:
+	// s_firstRender is only cleared at the "FIRST RENDER" block further down,
+	// and PBR_IsSunGlowEnabled() hard-returns false, so the very first branch
+	// is always taken and every statement past it -- including that clear --
+	// is unreachable. Measured cost: 25,745 synchronous TerrainDiag
+	// fopen/fprintf/fclose writes in ONE session, on the render thread
+	// (PBR_RenderSunGlow is called once per RTS3DScene::Render).
+	// Separate flag rather than fixing the s_firstRender clear: the early
+	// return means no render state is ever touched here, so the only variable
+	// behaviour was the logging frequency. Render output is unchanged.
+	static Bool s_skipLogged = FALSE;
 	// Gate on PBR_IsSunGlowEnabled() so the existing disable flag actually
 	// takes effect. The sun glow has never rendered successfully (crashed at
 	// DrawPrimitiveUP — shader c0/c1 constants were never set and the device
 	// still had a PBR vertex shader bound, so the XYZRHW quad fed garbage).
 	// Skip it; re-enable by flipping PBR_IsSunGlowEnabled() to true.
 	if (!PBR_IsSunGlowEnabled() || !w3dPBRShader.m_sunGlowEnabled || !w3dPBRShader.m_dwSunGlowShader) {
-		if (s_firstRender) {
+		if (!s_skipLogged) {
+			s_skipLogged = TRUE;
 			DEBUG_LOG(("Sun Glow: skipped (disabled)\n"));
 			TerrainDiag("sun_glow_skip_disabled");
 		}
@@ -6868,7 +6880,8 @@ extern "C" void PBR_RenderSunGlow(void)
 
 	IDirect3DDevice8 *dev = DX8Wrapper::_Get_D3D_Device8();
 	if (!dev) {
-		if (s_firstRender) {
+		if (!s_skipLogged) {
+			s_skipLogged = TRUE;
 			DEBUG_LOG(("Sun Glow: skipped (no device)\n"));
 			TerrainDiag("sun_glow_skip_nodevice");
 		}

@@ -1629,7 +1629,20 @@ Int W3XModelDraw::getPristineBonePositionsForConditionState(
 	// caller concatenates the object transform.
 	const W3XModelDrawModuleData *md = (const W3XModelDrawModuleData *)getModuleData();
 	const W3XConditionInfo *state = md ? md->findBestConditionState(condition) : NULL;
-	if (!state || !positions) return 0;
+	// positions is OPTIONAL. The original
+	// W3DModelDraw::getPristineBonePositionsForConditionState() bails ONLY when no
+	// condition state matches, substitutes a scratch buffer when transforms are
+	// absent, and returns the bone COUNT even when the caller passes
+	// positions == NULL. Callers that want transforms only do exactly that:
+	// SpawnPointProductionExitUpdate::initializeBonePositions() and
+	// OpenContain::putObjAtNextFirePoint() both pass positions == NULL.
+	// Requiring positions here made every such lookup return 0, so a W3X building
+	// could never reserve an exit door (m_spawnPointCount stayed 0 ->
+	// reserveDoorForExit() always returned DOOR_NONE_AVAILABLE ->
+	// SpawnBehavior::createSpawn() bailed) and FIREPOINT lookups always came back
+	// empty. The body below already guards both outputs individually, so the
+	// early-out only has to reject the case where there is nothing to fill.
+	if (!state || (!positions && !transforms)) return 0;
 
 	Int count = 0;
 	// Scan ALL bones from startIndex (not just a startIndex..startIndex+maxBones

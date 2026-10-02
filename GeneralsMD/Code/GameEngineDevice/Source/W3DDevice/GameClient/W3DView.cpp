@@ -1777,7 +1777,13 @@ void W3DView::draw( void )
 
 	// Render 2D scene
 	W3DDisplay::m_2DScene->doRender( m_2DCamera );
-	{ FILE *f = fopen(GetTerrainDiagLogPath(), "a"); if (f) { fprintf(f, "[%u] VIEW_2D_DONE\n", (unsigned)GetTickCount()); fclose(f); } }
+	// The per-frame VIEW_2D_DONE fopen probe that used to sit here is REMOVED.
+	// It ran AFTER doRender() had already returned, so it never observed or
+	// affected any rendering -- it only appended one line to terrain_diag.log
+	// per frame on the render thread: measured 16,567 synchronous
+	// fopen/fprintf/fclose calls in ONE session. Commit 1a81b2df (2026-09-16)
+	// cleaned the VIEW_3D_DONE_1/_2 twins to get this fopen off the hot path
+	// but missed this one.
 }
 
 // ------------------------------------------------------------------------------------------------

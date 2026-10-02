@@ -995,7 +995,29 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 	Render2DClass::Set_Screen_Resolution( RectClass( 0, 0, ResolutionWidth, ResolutionHeight ) );
 
 	if (bits != -1)		BitDepth = bits;
-	if (windowed != -1)	IsWindowed = (windowed != 0);
+	// Force a WINDOWED device whatever the caller asked for (the 'windowed'
+	// parameter is deliberately ignored). Two independent reasons, both
+	// measured on this stack:
+	//
+	// 1) RENDERING (2026-09-27, single-variable A/B verified). With a dgVoodoo
+	//    "FullscreenAttributes = fake" + ReShade/DLSS injection layer, an
+	//    EXCLUSIVE-FULLSCREEN device silently loses the terrain's
+	//    antialiasing and the W3X texture-shadow pass stops producing output
+	//    (jagged terrain, shadows gone). The windowed device renders
+	//    correctly. Same config, same assets, only this line differing:
+	//    the 21:38 build (windowed) was good, the 22:37 build (fullscreen)
+	//    was broken. So this is NOT only an Alt+Tab workaround -- do not
+	//    remove it on the assumption that it is.
+	// 2) ALT+TAB. An exclusive-fullscreen device is lost on Alt+Tab and
+	//    IDirect3DDevice9::Reset() then fails with D3DERR_INVALIDCALL
+	//    permanently. A windowed device is simply never lost.
+	//
+	// The Win32 window is still created as a screen-sized topmost popup
+	// (ApplicationIsWindowed stays false), so the game keeps filling the
+	// screen -- the same trick Windows' own "fullscreen optimizations" play
+	// on legacy titles.
+	//   (was: if (windowed != -1)	IsWindowed = (windowed != 0);)
+	IsWindowed = true;
 	DX8Wrapper_IsWindowed = IsWindowed;
 
 	WWDEBUG_SAY(("Attempting Set_Render_Device: name: %s (%s:%s), width: %d, height: %d, windowed: %d\n",
