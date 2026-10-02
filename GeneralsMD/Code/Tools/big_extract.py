@@ -22,11 +22,21 @@ Archive layout (all BE except the archive-size field):
     exactly 8 + strlen(name) + 1). The reader matches both layouts and picks
     whichever reproduces the archive's header size.
 
-Usage:
+Two front ends are supported (kept merged so older callers keep working):
+
+  # flag style
   python big_extract.py <archive.big> --list [PATTERN]
   python big_extract.py <archive.big> --extract <out_dir> [PATTERN]
     PATTERN  case-insensitive substring match on the archived path.
              Omit to operate on every entry.
+
+  # subcommand style
+  python big_extract.py list   <archive.big> [PATTERN]
+  python big_extract.py cat    <archive.big> <inner path>          # -> stdout
+  python big_extract.py get    <archive.big> <inner path> <outfile>
+  python big_extract.py getall <archive.big> <out_dir> [prefix]
+    inner paths are case-insensitive, / or \\ both accepted
+    (e.g. "Data\\INI\\Upgrade.ini").
 """
 import os
 import struct
@@ -34,13 +44,13 @@ import sys
 
 
 def read_entries(path):
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         data = f.read()
-    if data[:4] != b'BIGF':
-        raise ValueError('not a BIGF archive: %s' % path)
-    total, = struct.unpack_from('<I', data, 4)
-    count, = struct.unpack_from('>I', data, 8)
-    header, = struct.unpack_from('>I', data, 12)
+    if data[:4] != b"BIGF":
+        raise ValueError("not a BIGF archive: %s" % path)
+    total, = struct.unpack_from("<I", data, 4)
+    count, = struct.unpack_from(">I", data, 8)
+    header, = struct.unpack_from(">I", data, 12)
 
     def parse(padded):
         entries = []
@@ -48,12 +58,12 @@ def read_entries(path):
         for _ in range(count):
             if pos + 8 > len(data):
                 return None
-            off, size = struct.unpack_from('>II', data, pos)
+            off, size = struct.unpack_from(">II", data, pos)
             pos += 8
-            end = data.find(b'\0', pos)
+            end = data.find(b"\0", pos)
             if end < 0:
                 return None
-            name = data[pos:end].decode('latin-1')
+            name = data[pos:end].decode("latin-1")
             pos = end + 1
             if padded:
                 entry_len = 8 + len(name) + 1
@@ -82,56 +92,129 @@ def read_entries(path):
     if best is None:
         r = parse(False)
         if not r:
-            raise ValueError('cannot parse entries in %s' % path)
+            raise ValueError("cannot parse entries in %s" % path)
         best = (r[0], False)
-        print('WARN: could not validate against header size %d' % header)
+        print("WARN: could not validate against header size %d" % header)
     entries, padded = best
     if padded:
-        print('note: archive uses 8-byte padded entry names')
+        print("note: archive uses 8-byte padded entry names")
     return data, entries
+
+
+# --- helpers used by the subcommand front end -------------------------------
+
+def _norm(s):
+    # archived names use backslashes; accept either separator
+    return s.replace("/", "\\").lower()
+
+
+def _find(entries, want):
+    w = _norm(want)
+    for name, off, size in entries:
+        if _norm(name) == w:
+            return name, off, size
+    base = w.rsplit("\\", 1)[-1]
+    hits = [(n, o, s) for n, o, s in entries
+            if _norm(n).rsplit("\\", 1)[-1] == base]
+    return hits[0] if len(hits) == 1 else None
 
 
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(2)
-    path = sys.argv[1]
-    mode = sys.argv[2]
-    rest = sys.argv[3:]
-    if not os.path.isfile(path):
-        print('ERROR: archive not found: %s' % path)
-        sys.exit(1)
 
-    data, entries = read_entries(path)
-    print('archive %s: %d entry/entries, %d bytes, header %d'
-          % (os.path.basename(path), len(entries), len(data), 16))
+    a0 = sys.argv[1]
+    # subcommand style: first arg is a verb, archive is argv[2]
+    if a0 in ("list", "cat", "get", "getall"):
+        cmd, path, rest = a0, sys.argv[2], sys.argv[3:]
+        if not os.path.isfile(path):
+            print("ERROR: archive not found: %s" % path)
+            sys.exit(1)
+        data, entries = read_entries(path)
 
-    def norm(s):
-        # archived names use backslashes; accept either separator in PATTERN
-        return s.lower().replace('/', '\\')
+        if cmd == "list":
+            pat = _norm(rest[0]) if rest else ""
+            n = 0
+            for name, off, size in entries:
+                if pat and pat not in _norm(name):
+                    continue
+                print("  %9d  %s" % (size, name))
+                n += 1
+            print("  %d match(es)" % n)
+            return 0
 
-    if mode == '--list':
-        pat = norm(rest[0]) if rest else ''
+        if cmd in ("cat", "get"):
+            if not rest:
+                print("need <inner path>")
+                return 2
+            hit = _find(entries, rest[0])
+            if not hit:
+                print("[MISS] %s" % rest[0])
+                return 1
+            name, off, size = hit
+            blob = data[off:off + size]
+            if cmd == "cat":
+                sys.stdout.write(blob.decode("latin1"))
+            else:
+                out = rest[1] if len(rest) > 1 else os.path.basename(name)
+                d = os.path.dirname(out)
+                if d and not os.path.isdir(d):
+                    os.makedirs(d)
+                with open(out, "wb") as fh:
+                    fh.write(blob)
+                print("[OK] %s -> %s (%d bytes)" % (name, out, len(blob)))
+            return 0
+
+        # getall
+        outdir = rest[0] if rest else "."
+        prefix = _norm(rest[1]) if len(rest) > 1 else ""
         n = 0
         for name, off, size in entries:
-            if pat and pat not in name.lower():
+            key = _norm(name)
+            if prefix and not key.startswith(prefix):
                 continue
-            print('  %9d  %s' % (size, name))
+            dst = os.path.join(outdir, name.replace("/", os.sep).replace("\\", os.sep))
+            d = os.path.dirname(dst)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with open(dst, "wb") as fh:
+                fh.write(data[off:off + size])
             n += 1
-        print('  %d match(es)' % n)
-        return
+        print("[OK] extracted %d files -> %s" % (n, outdir))
+        return 0
 
-    if mode != '--extract':
+    # flag style: big_extract.py <archive> --list|--extract ...
+    path, mode, rest = a0, sys.argv[2], sys.argv[3:]
+    if not os.path.isfile(path):
+        print("ERROR: archive not found: %s" % path)
+        sys.exit(1)
+    data, entries = read_entries(path)
+    print("archive %s: %d entry/entries, %d bytes, header %d"
+          % (os.path.basename(path), len(entries), len(data), 16))
+
+    if mode == "--list":
+        pat = _norm(rest[0]) if rest else ""
+        n = 0
+        for name, off, size in entries:
+            if pat and pat not in _norm(name):
+                continue
+            print("  %9d  %s" % (size, name))
+            n += 1
+        print("  %d match(es)" % n)
+        return 0
+
+    if mode != "--extract":
         print(__doc__)
         sys.exit(2)
 
-    out_dir = rest[0] if rest else '.'
-    pat = norm(rest[1]) if len(rest) > 1 else ''
+    out_dir = rest[0] if rest else "."
+    pat = _norm(rest[1]) if len(rest) > 1 else ""
     n = skipped = 0
     for name, off, size in entries:
-        if pat and pat not in name.lower():
+        if pat and pat not in _norm(name):
             continue
-        rel = name.replace('\\', '/').lstrip('/')
+        rel = name.replace("\\", "/").lstrip("/")
         dst = os.path.join(out_dir, rel)
         if os.path.exists(dst):
             skipped += 1
@@ -139,12 +222,13 @@ def main():
         d = os.path.dirname(dst)
         if d and not os.path.isdir(d):
             os.makedirs(d)
-        with open(dst, 'wb') as f:
+        with open(dst, "wb") as f:
             f.write(data[off:off + size])
         n += 1
-    print('extracted %d file(s) to %s (%d already present)'
+    print("extracted %d file(s) to %s (%d already present)"
           % (n, os.path.abspath(out_dir), skipped))
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())
